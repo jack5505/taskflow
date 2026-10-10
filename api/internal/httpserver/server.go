@@ -24,9 +24,10 @@ import (
 
 // Server держит зависимости обработчиков. Домены добавляют сюда свои сервисы.
 type Server struct {
-	cfg   *config.Config
-	db    *gorm.DB
-	redis *redis.Client
+	cfg    *config.Config
+	db     *gorm.DB
+	redis  *redis.Client
+	mounts []func(api *gin.RouterGroup)
 }
 
 // New собирает сервер с зависимостями.
@@ -83,9 +84,18 @@ func (s *Server) Router() *gin.Engine {
 
 	api := r.Group("/api/v1")
 	api.GET("/ping", s.pingHandler)
+	for _, m := range s.mounts {
+		m(api)
+	}
 
 	mountSPA(r)
 	return r
+}
+
+// Mount регистрирует маршруты домена в группе /api/v1 (вызывается до Router).
+func (s *Server) Mount(m func(api *gin.RouterGroup)) *Server {
+	s.mounts = append(s.mounts, m)
+	return s
 }
 
 // docsRedirect ведёт на UI. 302, а не 301: браузер не должен кэшировать внутренний редирект навсегда.
