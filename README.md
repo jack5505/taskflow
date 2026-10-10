@@ -34,7 +34,7 @@ Makefile             сборка и тесты через docker, без лок
 ```bash
 cp .env.example .env        # заполнить секреты
 make up                     # docker compose up -d --build --wait
-curl -s localhost:8090/health
+curl -s localhost:8100/health
 ```
 
 Снаружи сервис открывается через nginx сервера по адресу https://tasks.157.173.109.181.nip.io (ТЗ §10.2).
@@ -46,7 +46,7 @@ make build        # go build в контейнере golang:1.25
 make test         # go test ./...
 make lint         # golangci-lint
 make web-install  # npm ci
-make web-dev      # Vite dev-сервер, /api проксируется на localhost:8090
+make web-dev      # Vite dev-сервер, /api проксируется на localhost:8100
 make web-build    # сборка в api/internal/web/dist
 make swag         # Swagger 2.0 из аннотаций → /api/docs
 ```
