@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
+	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/web"
 )
@@ -64,7 +65,12 @@ func (s *Server) Run(ctx context.Context) error {
 // Router собирает маршруты. Базовый путь API — /api/v1 (ТЗ §9).
 func (s *Server) Router() *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery(), requestID(), accessLog())
+	// accessLog снаружи recovery: строка лога пишется и для запроса, который упал с паникой.
+	r.Use(requestID(), accessLog(), recovery())
+	r.HandleMethodNotAllowed = true
+	r.NoMethod(func(c *gin.Context) {
+		Abort(c, apierr.New(http.StatusMethodNotAllowed, apierr.CodeMethodNotAllowed, "Метод не поддерживается"))
+	})
 
 	r.GET("/health", s.healthHandler)
 
@@ -78,7 +84,8 @@ func (s *Server) Router() *gin.Engine {
 }
 
 // mountSPA отдаёт собранный веб-интерфейс, встроенный в бинарник (ТЗ §10.2).
-// Любой путь вне /api и /health возвращает index.html — маршрутизация на стороне React.
+// Любой путь вне /api и /health возвращает index.html — маршрутизация на стороне React;
+// неизвестный путь под /api отвечает 404 в формате §9.3.
 func mountSPA(r *gin.Engine) {
 	dist, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
@@ -89,7 +96,7 @@ func mountSPA(r *gin.Engine) {
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
 		if strings.HasPrefix(p, "/api/") {
-			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "NOT_FOUND", "message": "route not found"}})
+			Abort(c, apierr.NotFound("Маршрут не найден"))
 			return
 		}
 		if _, err := fs.Stat(dist, strings.TrimPrefix(p, "/")); err == nil && p != "/" {
