@@ -94,7 +94,7 @@ func runAPI(ctx context.Context, cfg *config.Config) error {
 	rdb := queue.NewRedis(cfg.RedisAddr)
 	defer func() { _ = rdb.Close() }()
 
-	authHandlers := auth.NewHandlers(auth.NewService(cfg, g, rdb), cfg.Env == "production")
+	authHandlers := auth.NewHandlers(auth.NewService(cfg, g, rdb), auth.SecureCookies(cfg.BaseURL))
 	return httpserver.New(cfg, g, rdb).Mount(authHandlers.Register).Run(ctx)
 }
 

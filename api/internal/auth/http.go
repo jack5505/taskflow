@@ -1,19 +1,15 @@
 package auth
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm/clause"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
-
-var forUpdate = clause.Locking{Strength: "UPDATE"}
 
 const (
 	// RefreshCookie — httpOnly cookie с refresh-токеном (ТЗ §9.1). Path ограничивает её маршрутами auth.
@@ -24,7 +20,8 @@ const (
 	csrfHeader = "X-Requested-With"
 )
 
-// Handlers — HTTP-обработчики входа. secureCookie=true на HTTPS (production).
+// Handlers — HTTP-обработчики входа. secureCookie — флаг Secure у cookie; берётся из схемы
+// APP_BASE_URL (SecureCookies), а не из APP_ENV: стенд работает по HTTPS и не в production.
 type Handlers struct {
 	svc          *Service
 	secureCookie bool
@@ -33,6 +30,11 @@ type Handlers struct {
 
 func NewHandlers(svc *Service, secureCookie bool) *Handlers {
 	return &Handlers{svc: svc, secureCookie: secureCookie, refreshTTL: int(svc.refreshTTL.Seconds())}
+}
+
+// SecureCookies сообщает, ставить ли Secure на cookie: да, если приложение открыто по HTTPS.
+func SecureCookies(baseURL string) bool {
+	return strings.HasPrefix(strings.ToLower(baseURL), "https://")
 }
 
 // Register добавляет маршруты /auth/* в группу /api/v1.
@@ -100,7 +102,11 @@ func (h *Handlers) refresh(c *gin.Context) {
 	}
 	s, err := h.svc.Refresh(c.Request.Context(), token, c.Request.UserAgent())
 	if err != nil {
-		h.clearCookie(c)
+		// Cookie стираем только при отказе по существу (401/403): при сбое базы токен ещё жив,
+		// и клиент повторит запрос.
+		if apierr.From(err).Status < http.StatusInternalServerError {
+			h.clearCookie(c)
+		}
 		httpserver.Abort(c, err)
 		return
 	}
@@ -185,10 +191,6 @@ func (h *Handlers) RequireAuth() gin.HandlerFunc {
 		}
 		u, err := h.svc.Authenticate(c.Request.Context(), token)
 		if err != nil {
-			var e *apierr.Error
-			if !errors.As(err, &e) {
-				err = apierr.Internal(err)
-			}
 			httpserver.Abort(c, err)
 			return
 		}

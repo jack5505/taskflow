@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"sync"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/config"
@@ -32,6 +33,7 @@ type RefreshToken struct {
 	TokenHash string    `gorm:"not null;uniqueIndex"`
 	ExpiresAt time.Time `gorm:"not null"`
 	RevokedAt *time.Time
+	Rotated   bool
 	UserAgent string    `gorm:"not null"`
 	CreatedAt time.Time `gorm:"not null"`
 }
@@ -86,7 +88,7 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		// Хеш сравниваем и для несуществующего email: время ответа не выдаёт, есть ли пользователь.
-		CheckPassword(dummyHash, password)
+		CheckPassword(dummyHash(), password)
 		return nil, s.failed(ctx, email)
 	case err != nil:
 		return nil, fmt.Errorf("auth: find user: %w", err)
@@ -110,21 +112,33 @@ func (s *Service) failed(ctx context.Context, email string) error {
 	return ErrBadCredentials
 }
 
-// Refresh обменивает refresh-токен на новую пару: старый отзывается (ротация),
-// утёкший токен сработает один раз и выдаст себя при повторе.
+// Refresh обменивает refresh-токен на новую пару: старый отзывается (ротация) и помечается
+// rotated. Повторное использование уже отозванного ротацией токена значит, что он есть
+// у двоих — у владельца и у того, кто его украл; тогда отзываются все сессии пользователя.
+// Отзыв logout/«Выйти везде» rotated не ставит: его повтор — просто устаревшая сессия.
 func (s *Service) Refresh(ctx context.Context, refreshToken, userAgent string) (*Session, error) {
 	var session *Session
+	var reusedBy uuid.UUID
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var rt RefreshToken
-		err := tx.Clauses(forUpdate).Where("token_hash = ?", hashToken(refreshToken)).First(&rt).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		res := tx.Raw(`SELECT id, user_id, token_hash, expires_at, revoked_at, rotated, user_agent, created_at
+			FROM refresh_tokens WHERE token_hash = ? FOR UPDATE`, hashToken(refreshToken)).Scan(&rt)
+		if res.Error != nil {
+			return fmt.Errorf("auth: find refresh: %w", res.Error)
+		}
+		if res.RowsAffected == 0 {
 			return ErrBadRefresh
 		}
-		if err != nil {
-			return fmt.Errorf("auth: find refresh: %w", err)
-		}
 		now := s.now()
-		if rt.RevokedAt != nil || !rt.ExpiresAt.After(now) {
+		if rt.RevokedAt != nil {
+			if rt.Rotated {
+				// Отзыв делаем отдельной транзакцией (ниже, после этой): эта закончится
+				// возвратом ErrBadRefresh и откатится, вместе с ней откатился бы и отзыв.
+				reusedBy = rt.UserID
+			}
+			return ErrBadRefresh
+		}
+		if !rt.ExpiresAt.After(now) {
 			return ErrBadRefresh
 		}
 		var u user.User
@@ -134,13 +148,22 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, userAgent string) (
 		if !u.IsActive {
 			return ErrUserInactive
 		}
-		if err := tx.Model(&rt).Update("revoked_at", now).Error; err != nil {
+		if err := tx.Model(&rt).Updates(map[string]any{"revoked_at": now, "rotated": true}).Error; err != nil {
 			return fmt.Errorf("auth: revoke refresh: %w", err)
 		}
+		var err error
 		session, err = s.issueTx(tx, &u, userAgent)
 		return err
 	})
-	return session, err
+	if reusedBy != uuid.Nil {
+		if revokeErr := s.RevokeAll(ctx, reusedBy); revokeErr != nil {
+			return nil, fmt.Errorf("auth: revoke all after reuse: %w", revokeErr)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 // Logout отзывает один refresh-токен; неизвестный токен — не ошибка.
@@ -205,7 +228,11 @@ func (s *Service) issueTx(tx *gorm.DB, u *user.User, userAgent string) (*Session
 }
 
 // dummyHash — хеш для сравнения при неизвестном email (постоянное время ответа).
-var dummyHash = func() string {
-	h, _ := HashPassword("dummy-password-for-timing")
+// Считается лениво и один раз: bcrypt cost 12 на старте каждого процесса ни к чему.
+var dummyHash = sync.OnceValue(func() string {
+	h, err := HashPassword("dummy-password-for-timing")
+	if err != nil {
+		panic(err)
+	}
 	return h
-}()
+})

@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,8 @@ func newFixture(t *testing.T) *fixture {
 func TestHashPassword(t *testing.T) {
 	_, err := auth.HashPassword("short")
 	require.ErrorIs(t, err, auth.ErrPasswordTooShort)
+	_, err = auth.HashPassword(strings.Repeat("пароль", 7)) // 42 символа, 84 байта — за пределом bcrypt
+	require.ErrorIs(t, err, auth.ErrPasswordTooLong)
 	hash, err := auth.HashPassword(password)
 	require.NoError(t, err)
 	require.True(t, auth.CheckPassword(hash, password))
@@ -138,6 +141,37 @@ func TestRefreshRotatesAndOldTokenDies(t *testing.T) {
 }
 
 // Критерий #9: после деактивации старый refresh не продлевает сессию, access тоже не работает.
+// Украденный refresh: злоумышленник обновился первым, владелец пробует старый токен —
+// повтор отозванного токена отзывает все сессии, включая злоумышленника.
+func TestRefreshReuseRevokesAllSessions(t *testing.T) {
+	f := newFixture(t)
+	victim, err := f.svc.Login(context.Background(), f.u.Email, password, "victim")
+	require.NoError(t, err)
+	attacker, err := f.svc.Refresh(context.Background(), victim.RefreshToken, "attacker")
+	require.NoError(t, err)
+
+	_, err = f.svc.Refresh(context.Background(), victim.RefreshToken, "victim")
+	require.ErrorIs(t, err, auth.ErrBadRefresh)
+	_, err = f.svc.Refresh(context.Background(), attacker.RefreshToken, "attacker")
+	require.ErrorIs(t, err, auth.ErrBadRefresh, "сессия злоумышленника отозвана вместе с остальными")
+}
+
+// Повтор токена, отозванного обычным logout (не ротацией), — не сигнал кражи:
+// другие сессии пользователя трогать не нужно (ветка проверена в TestLogoutAndRevokeAll).
+func TestRefreshAfterLogoutDoesNotRevokeOtherSessions(t *testing.T) {
+	f := newFixture(t)
+	s1, err := f.svc.Login(context.Background(), f.u.Email, password, "a")
+	require.NoError(t, err)
+	s2, err := f.svc.Login(context.Background(), f.u.Email, password, "b")
+	require.NoError(t, err)
+
+	require.NoError(t, f.svc.Logout(context.Background(), s1.RefreshToken))
+	_, err = f.svc.Refresh(context.Background(), s1.RefreshToken, "a")
+	require.ErrorIs(t, err, auth.ErrBadRefresh)
+	_, err = f.svc.Refresh(context.Background(), s2.RefreshToken, "b")
+	require.NoError(t, err, "logout чужого токена не должен отзывать эту сессию")
+}
+
 func TestDeactivationKillsRefreshAndAccess(t *testing.T) {
 	f := newFixture(t)
 	s, err := f.svc.Login(context.Background(), f.u.Email, password, "")
@@ -174,7 +208,9 @@ func TestAuthenticateRejectsForeignAndMalformedTokens(t *testing.T) {
 		_, err := f.svc.Authenticate(context.Background(), tok)
 		require.ErrorIs(t, err, auth.ErrNoToken, tok)
 	}
-	other := auth.NewService(&config.Config{JWTSecret: "another-secret-another-secret-xx", JWTAccessTTL: time.Minute, JWTRefreshTTL: time.Hour}, f.db, queue.NewRedis(testutil.SharedRedisAddr(t)))
+	rdb := queue.NewRedis(testutil.SharedRedisAddr(t))
+	t.Cleanup(func() { _ = rdb.Close() })
+	other := auth.NewService(&config.Config{JWTSecret: "another-secret-another-secret-xx", JWTAccessTTL: time.Minute, JWTRefreshTTL: time.Hour}, f.db, rdb)
 	s, err := other.Login(context.Background(), f.u.Email, password, "")
 	require.NoError(t, err)
 	_, err = f.svc.Authenticate(context.Background(), s.AccessToken)

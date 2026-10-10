@@ -14,12 +14,21 @@ const bcryptCost = 12
 // MinPasswordLength — ТЗ §7.1: пароль не короче 10 символов.
 const MinPasswordLength = 10
 
-var ErrPasswordTooShort = errors.New("пароль короче 10 символов")
+// MaxPasswordBytes — предел bcrypt: более длинный пароль он либо обрезает, либо отвергает.
+const MaxPasswordBytes = 72
+
+var (
+	ErrPasswordTooShort = errors.New("пароль короче 10 символов")
+	ErrPasswordTooLong  = errors.New("пароль длиннее 72 байт")
+)
 
 // HashPassword проверяет длину и хеширует пароль bcrypt с cost 12.
 func HashPassword(password string) (string, error) {
 	if utf8.RuneCountInString(password) < MinPasswordLength {
 		return "", ErrPasswordTooShort
+	}
+	if len(password) > MaxPasswordBytes {
+		return "", ErrPasswordTooLong
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {

@@ -30,7 +30,9 @@ func newHTTPFixture(t *testing.T) *httpFixture {
 	t.Helper()
 	f := newFixture(t)
 	h := auth.NewHandlers(f.svc, false)
-	srv := httpserver.New(&config.Config{Env: "test"}, f.db, queue.NewRedis(testutil.SharedRedisAddr(t))).Mount(h.Register)
+	rdb := queue.NewRedis(testutil.SharedRedisAddr(t))
+	t.Cleanup(func() { _ = rdb.Close() })
+	srv := httpserver.New(&config.Config{Env: "test"}, f.db, rdb).Mount(h.Register)
 	srv.Mount(func(api *gin.RouterGroup) {
 		api.GET("/_test/me", h.RequireAuth(), func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"email": auth.CurrentUser(c).Email})
@@ -188,4 +190,11 @@ func TestRequireAuthVariants(t *testing.T) {
 	require.NoError(t, f.db.Model(f.u).Update("is_active", true).Error)
 	rec, _ = f.do(t, req{method: "GET", path: "/api/v1/_test/me", bearer: access})
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "истёкший access-токен")
+}
+
+func TestSecureCookiesFollowsBaseURLScheme(t *testing.T) {
+	require.True(t, auth.SecureCookies("https://tasks.157.173.109.181.nip.io"))
+	require.True(t, auth.SecureCookies("HTTPS://example.com"))
+	require.False(t, auth.SecureCookies("http://localhost:8100"))
+	require.False(t, auth.SecureCookies(""))
 }
