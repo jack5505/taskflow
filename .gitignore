@@ -26,3 +26,9 @@ api/internal/web/dist/*
 .idea/
 .vscode/
 .DS_Store
+
+# Стенд
+/backups/
+/deploy/rclone.conf
+.deploy.lock
+.deployed

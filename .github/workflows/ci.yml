@@ -51,6 +51,13 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  scripts:
+    name: Скрипты (shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -s bash deploy/*.sh && shellcheck -s sh api/scripts/*.sh
+
   image:
     name: Docker image
     runs-on: ubuntu-latest

@@ -54,6 +54,6 @@ make swag         # Swagger 2.0 из аннотаций → /api/docs
 
 Первый администратор создаётся командой `docker compose exec api /app/taskflow admin create --email <email>` (ТЗ §7.1).
 
-## CI/CD
+## CI/CD и стенд
 
-GitHub Actions на каждый PR: `go vet`, golangci-lint, `go test`, eslint, сборка фронтенда и Docker-образа. Выкладка на стенд — по git-тегу `vX.Y.Z` (ТЗ §10.2).
+GitHub Actions на каждый PR: `go vet`, golangci-lint, тесты с порогом покрытия 80%, eslint, сборка фронтенда и Docker-образа, shellcheck. Тег `vX.Y.Z` публикует образ в GHCR и создаёт GitHub Release; выкладка на стенд — `deploy/deploy.sh vX.Y.Z` с откатом при неудаче `/health`. Бэкап, восстановление, nginx и сертификат — в [deploy/README.md](deploy/README.md).
