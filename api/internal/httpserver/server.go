@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/config"
@@ -19,13 +20,14 @@ import (
 
 // Server держит зависимости обработчиков. Домены добавляют сюда свои сервисы.
 type Server struct {
-	cfg *config.Config
-	db  *gorm.DB
+	cfg   *config.Config
+	db    *gorm.DB
+	redis *redis.Client
 }
 
 // New собирает сервер с зависимостями.
-func New(cfg *config.Config, g *gorm.DB) *Server {
-	return &Server{cfg: cfg, db: g}
+func New(cfg *config.Config, g *gorm.DB, rdb *redis.Client) *Server {
+	return &Server{cfg: cfg, db: g, redis: rdb}
 }
 
 // Run поднимает HTTP-сервер и ждёт отмены контекста.
