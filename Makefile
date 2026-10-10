@@ -3,9 +3,9 @@ GO_RUN   := docker run --rm -v $(CURDIR)/api:/src -w /src -e GOFLAGS=-mod=mod -e
 # Тесты: testcontainers внутри контейнера golang — нужен docker.sock и адрес хоста для портов контейнеров.
 GO_TEST  := docker run --rm -v $(CURDIR)/api:/src -w /src -e GOFLAGS=-mod=mod -e GOCACHE=/tmp/gocache -v taskflow-gocache:/tmp/gocache -v taskflow-gomod:/go/pkg/mod \
 	-v /var/run/docker.sock:/var/run/docker.sock --add-host=host.docker.internal:host-gateway \
-	-e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal -e TESTCONTAINERS_RYUK_DISABLED=true $(GO_IMAGE)
+	-e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal $(GO_IMAGE)
 
-.PHONY: help build test lint fmt swag migrate-new web-install web-dev web-build up down logs
+.PHONY: help build test test-short lint fmt swag migrate-new web-install web-dev web-build up down logs
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'

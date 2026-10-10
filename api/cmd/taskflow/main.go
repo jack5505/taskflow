@@ -63,17 +63,19 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: taskflow <api|worker|admin> [args]")
 }
 
-// runAPI: миграции при старте (ТЗ §10.2), затем HTTP-сервер.
+// runAPI: подключение к базе, миграции при старте (ТЗ §10.2), затем HTTP-сервер.
 func runAPI(ctx context.Context, cfg *config.Config) error {
-	if err := db.Migrate(cfg.DatabaseURL, migrations.FS); err != nil {
-		return err
-	}
 	g, err := openDB(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = db.Close(g) }()
 
+	migrateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := db.Migrate(migrateCtx, cfg.DatabaseURL, migrations.FS); err != nil {
+		return err
+	}
 	return httpserver.New(cfg, g).Run(ctx)
 }
 

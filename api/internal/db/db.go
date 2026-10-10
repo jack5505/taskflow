@@ -3,6 +3,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,26 +11,21 @@ import (
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5" // драйвер pgx5 для golang-migrate
+	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-// Open открывает пул соединений GORM и проверяет связь с базой.
+const defaultConnectTimeout = 10 * time.Second
+
+// Open открывает пул соединений GORM и проверяет связь с базой в пределах ctx.
+// Автопинг GORM отключён: иначе первое подключение шло бы без таймаута и не прерывалось по SIGTERM.
 func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
-	if databaseURL == "" {
-		return nil, errors.New("DATABASE_URL не задан")
-	}
-	g, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{
-		Logger:         logger.Discard,
-		TranslateError: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("gorm open: %w", err)
-	}
-	sqlDB, err := g.DB()
+	sqlDB, err := openPool(ctx, databaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -37,9 +33,14 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 	sqlDB.SetMaxIdleConns(5)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
-	if err := sqlDB.PingContext(ctx); err != nil {
+	g, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{
+		Logger:               logger.Discard,
+		TranslateError:       true,
+		DisableAutomaticPing: true,
+	})
+	if err != nil {
 		_ = sqlDB.Close()
-		return nil, fmt.Errorf("postgres ping: %w", err)
+		return nil, fmt.Errorf("gorm open: %w", err)
 	}
 	return g, nil
 }
@@ -63,8 +64,9 @@ func Close(g *gorm.DB) error {
 }
 
 // Migrate применяет все миграции из src (каталог с *.sql) вверх до последней.
-func Migrate(databaseURL string, src fs.FS) error {
-	m, err := newMigrate(databaseURL, src)
+// Подключение ограничено ctx; на время миграций открывается отдельное соединение.
+func Migrate(ctx context.Context, databaseURL string, src fs.FS) error {
+	m, err := newMigrate(ctx, databaseURL, src)
 	if err != nil {
 		return err
 	}
@@ -82,8 +84,8 @@ func Migrate(databaseURL string, src fs.FS) error {
 }
 
 // MigrateDown откатывает все миграции — нужен тестам и для проверки down-скриптов.
-func MigrateDown(databaseURL string, src fs.FS) error {
-	m, err := newMigrate(databaseURL, src)
+func MigrateDown(ctx context.Context, databaseURL string, src fs.FS) error {
+	m, err := newMigrate(ctx, databaseURL, src)
 	if err != nil {
 		return err
 	}
@@ -96,8 +98,8 @@ func MigrateDown(databaseURL string, src fs.FS) error {
 }
 
 // Version возвращает текущую версию схемы; ok=false, если миграции ещё не применялись.
-func Version(databaseURL string, src fs.FS) (version uint, ok bool, err error) {
-	m, err := newMigrate(databaseURL, src)
+func Version(ctx context.Context, databaseURL string, src fs.FS) (version uint, ok bool, err error) {
+	m, err := newMigrate(ctx, databaseURL, src)
 	if err != nil {
 		return 0, false, err
 	}
@@ -113,33 +115,51 @@ func Version(databaseURL string, src fs.FS) (version uint, ok bool, err error) {
 	return v, true, nil
 }
 
-func newMigrate(databaseURL string, src fs.FS) (*migrate.Migrate, error) {
+// openPool открывает *sql.DB через pgx с таймаутом подключения и проверяет его в пределах ctx.
+func openPool(ctx context.Context, databaseURL string) (*sql.DB, error) {
+	cfg, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("DATABASE_URL: %w", err)
+	}
+	if cfg.ConnectTimeout == 0 {
+		cfg.ConnectTimeout = defaultConnectTimeout
+	}
+	sqlDB := stdlib.OpenDB(*cfg)
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("postgres ping: %w", err)
+	}
+	return sqlDB, nil
+}
+
+// newMigrate открывает отдельное соединение: драйвер golang-migrate закрывает его в Close,
+// поэтому пул GORM ему отдавать нельзя.
+func newMigrate(ctx context.Context, databaseURL string, src fs.FS) (*migrate.Migrate, error) {
+	sqlDB, err := openPool(ctx, databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	driver, err := pgxmigrate.WithInstance(sqlDB, &pgxmigrate.Config{})
+	if err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("migrate driver: %w", err)
+	}
 	d, err := iofs.New(src, ".")
 	if err != nil {
+		_ = driver.Close()
 		return nil, fmt.Errorf("migrations source: %w", err)
 	}
-	m, err := migrate.NewWithSourceInstance("iofs", d, pgxURL(databaseURL))
+	m, err := migrate.NewWithInstance("iofs", d, "pgx5", driver)
 	if err != nil {
+		_ = driver.Close()
 		return nil, fmt.Errorf("migrate init: %w", err)
 	}
 	return m, nil
 }
 
+// closeMigrate закрывает источник и соединение миграций.
 func closeMigrate(m *migrate.Migrate) {
 	if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
 		slog.Warn("db: migrate close", "src", srcErr, "db", dbErr)
 	}
-}
-
-// pgxURL переводит postgres:// в схему драйвера pgx5 golang-migrate.
-func pgxURL(u string) string {
-	const prefix = "postgres://"
-	if len(u) > len(prefix) && u[:len(prefix)] == prefix {
-		return "pgx5://" + u[len(prefix):]
-	}
-	const prefix2 = "postgresql://"
-	if len(u) > len(prefix2) && u[:len(prefix2)] == prefix2 {
-		return "pgx5://" + u[len(prefix2):]
-	}
-	return u
 }

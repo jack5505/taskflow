@@ -3,46 +3,96 @@ package testutil
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"gorm.io/gorm"
+
+	"github.com/jack5505/taskflow/api/internal/db"
+	"github.com/jack5505/taskflow/api/migrations"
 )
 
-// StartPostgres поднимает контейнер postgres:16-alpine и возвращает DSN.
-// Контейнер останавливается по завершении теста. В режиме -short тест пропускается.
-func StartPostgres(t *testing.T) string {
+var (
+	sharedOnce sync.Once
+	sharedDSN  string
+	sharedErr  error
+)
+
+// SharedDSN поднимает один контейнер PostgreSQL на тестовый пакет и применяет миграции.
+// Контейнер убирает Ryuk по завершении процесса `go test`. В режиме -short тест пропускается.
+func SharedDSN(t *testing.T) string {
+	t.Helper()
+	skipIfShort(t)
+
+	sharedOnce.Do(func() {
+		sharedDSN, sharedErr = startContainer(context.Background())
+		if sharedErr != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		sharedErr = db.Migrate(ctx, sharedDSN, migrations.FS)
+	})
+	if sharedErr != nil {
+		t.Fatalf("shared postgres: %v", sharedErr)
+	}
+	return sharedDSN
+}
+
+// SharedDB возвращает пул GORM к общей базе пакета с применёнными миграциями.
+func SharedDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	g, err := openDB(SharedDSN(t))
+	if err != nil {
+		t.Fatalf("open shared db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close(g) })
+	return g
+}
+
+// FreshDSN поднимает отдельный пустой контейнер без миграций — для тестов самих миграций.
+func FreshDSN(t *testing.T) string {
+	t.Helper()
+	skipIfShort(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	dsn, err := startContainer(ctx)
+	if err != nil {
+		t.Fatalf("postgres container: %v", err)
+	}
+	return dsn
+}
+
+func skipIfShort(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("интеграционный тест: пропущен в -short")
 	}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
+func startContainer(ctx context.Context) (string, error) {
 	c, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 		tcpostgres.WithDatabase("taskflow_test"),
 		tcpostgres.WithUsername("taskflow"),
 		tcpostgres.WithPassword("taskflow"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(60*time.Second),
-		),
+		tcpostgres.BasicWaitStrategies(),
 	)
 	if err != nil {
-		t.Fatalf("postgres container: %v", err)
+		return "", err
 	}
-	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(c); err != nil {
-			t.Logf("terminate postgres: %v", err)
-		}
-	})
-
-	dsn, err := c.ConnectionString(ctx, "sslmode=disable")
+	dsn, err := c.ConnectionString(ctx, "sslmode=disable", "connect_timeout=5")
 	if err != nil {
-		t.Fatalf("postgres dsn: %v", err)
+		return "", fmt.Errorf("postgres dsn: %w", err)
 	}
-	return dsn
+	return dsn, nil
+}
+
+func openDB(dsn string) (*gorm.DB, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return db.Open(ctx, dsn)
 }

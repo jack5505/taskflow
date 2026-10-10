@@ -1,12 +1,10 @@
 package httpserver_test
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -38,23 +36,21 @@ func TestHealthWithoutDatabase(t *testing.T) {
 }
 
 func TestHealthWithDatabase(t *testing.T) {
-	dsn := testutil.StartPostgres(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	g, err := db.Open(ctx, dsn)
-	require.NoError(t, err)
-
+	g := testutil.SharedDB(t)
 	s := httpserver.New(&config.Config{Env: "test"}, g)
 
 	rec, body := get(t, s, "/health")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "ok", body["status"])
 
-	// База ушла — /health должен отвечать 503 (ТЗ §10.3).
+	// База ушла — /health должен отвечать 503 без деталей подключения (ТЗ §10.3).
 	require.NoError(t, db.Close(g))
 	rec, body = get(t, s, "/health")
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Equal(t, "degraded", body["status"])
+	checks := body["checks"].(map[string]any)
+	require.Equal(t, "unavailable", checks["postgres"])
+	require.NotContains(t, rec.Body.String(), "taskflow_test", "строка подключения не должна утекать наружу")
 }
 
 func TestAPINotFoundIsJSON(t *testing.T) {
