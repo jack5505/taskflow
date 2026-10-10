@@ -41,7 +41,9 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{db: g, now: time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)}
 	cfg := &config.Config{BaseURL: "https://tasks.example/", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: 30 * 24 * time.Hour}
 	f.mail = &captureMailer{}
-	f.svc = auth.NewService(cfg, g, rdb).WithClock(func() time.Time { return f.now }).WithMailer(f.mail)
+	jobs := queue.NewClient(testutil.SharedRedisAddr(t))
+	t.Cleanup(func() { _ = jobs.Close() })
+	f.svc = auth.NewService(cfg, g, rdb).WithClock(func() time.Time { return f.now }).WithMailer(f.mail).WithQueue(jobs)
 	f.tick = func(d time.Duration) { f.now = f.now.Add(d) }
 
 	hash, err := auth.HashPassword(password)

@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -209,6 +210,8 @@ func TestPasswordResetAndSetEndpoints(t *testing.T) {
 
 	rec, _ = f.do(t, req{method: "POST", path: "/api/v1/auth/password-reset", body: `{"email":"` + f.u.Email + `"}`})
 	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, 1, pendingResets(t, f.u.Email))
+	require.NoError(t, f.svc.SendPasswordReset(context.Background(), f.u.Email)) // работа воркера
 	msgs := f.mail.messages()
 	require.Len(t, msgs, 1)
 	token := strings.SplitN(linkRe.FindString(msgs[0].Text), "token=", 2)[1]

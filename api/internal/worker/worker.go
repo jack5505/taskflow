@@ -46,15 +46,16 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	if err != nil {
 		return fmt.Errorf("worker: %w", err)
 	}
+	authSvc := auth.NewService(cfg, g, rdb).WithMailer(mail.NewQueue(client))
 	mux := d.Mux()
 	mux.Handle(mail.TaskType, mail.Handler(smtp))
+	mux.Handle(auth.TaskPasswordReset, auth.PasswordResetHandler(authSvc))
 
 	srv := queue.NewServer(cfg.RedisAddr, 10)
 	if err := srv.Start(mux); err != nil {
 		return err
 	}
 
-	authSvc := auth.NewService(cfg, g, rdb)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

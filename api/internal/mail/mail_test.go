@@ -2,14 +2,25 @@ package mail
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"mime"
 	"net/http"
 	netmail "net/mail"
+	"net/textproto"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +109,13 @@ func TestHandler(t *testing.T) {
 
 	err := Handler(fakeSender{})(context.Background(), asynq.NewTask(TaskType, []byte("{")))
 	require.ErrorIs(t, err, asynq.SkipRetry, "битое задание не повторяется")
+
+	err = Handler(fakeSender{err: &textproto.Error{Code: 550, Msg: "no such mailbox"}})(context.Background(), task(t, m))
+	require.ErrorIs(t, err, asynq.SkipRetry, "отказ 5xx не повторяется")
+	err = Handler(fakeSender{err: &textproto.Error{Code: 451, Msg: "try later"}})(context.Background(), task(t, m))
+	require.NotErrorIs(t, err, asynq.SkipRetry, "временный отказ 4xx повторяется")
+	err = Handler(fakeSender{err: errHeaderInjection})(context.Background(), task(t, m))
+	require.ErrorIs(t, err, asynq.SkipRetry)
 }
 
 // Критерий #10: письмо уходит через очередь с повторами.
@@ -130,32 +148,80 @@ func TestSMTPUnavailable(t *testing.T) {
 	require.Error(t, s.Send(ctx, Message{To: "a@example.com", Subject: "s", Text: "t"}))
 }
 
-// Настоящая отправка: SMTP-сервер mailpit в контейнере принимает письмо, его API отдаёт его обратно.
-func TestSMTPSendsToRealServer(t *testing.T) {
+// mailpit поднимает SMTP-сервер mailpit; с certDir — со STARTTLS по сертификату из каталога.
+func mailpit(t *testing.T, certDir string) (host, smtpPort, apiURL string) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("нужен docker")
 	}
 	ctx := context.Background()
-	c, err := testcontainers.Run(ctx, "axllent/mailpit:v1.21.0",
+	opts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithExposedPorts("1025/tcp", "8025/tcp"),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/livez").WithPort("8025/tcp").WithStartupTimeout(time.Minute)),
-	)
+	}
+	if certDir != "" {
+		opts = append(opts,
+			testcontainers.WithFiles(
+				testcontainers.ContainerFile{HostFilePath: filepath.Join(certDir, "cert.pem"), ContainerFilePath: "/certs/cert.pem", FileMode: 0o644},
+				testcontainers.ContainerFile{HostFilePath: filepath.Join(certDir, "key.pem"), ContainerFilePath: "/certs/key.pem", FileMode: 0o644},
+			),
+			testcontainers.WithEnv(map[string]string{"MP_SMTP_TLS_CERT": "/certs/cert.pem", "MP_SMTP_TLS_KEY": "/certs/key.pem"}),
+		)
+	}
+	c, err := testcontainers.Run(ctx, "axllent/mailpit:v1.21.0", opts...)
 	testcontainers.CleanupContainer(t, c)
 	require.NoError(t, err)
-	host, err := c.Host(ctx)
+	host, err = c.Host(ctx)
 	require.NoError(t, err)
-	smtpPort, err := c.MappedPort(ctx, "1025/tcp")
+	sp, err := c.MappedPort(ctx, "1025/tcp")
 	require.NoError(t, err)
-	apiPort, err := c.MappedPort(ctx, "8025/tcp")
+	ap, err := c.MappedPort(ctx, "8025/tcp")
 	require.NoError(t, err)
+	return host, sp.Port(), fmt.Sprintf("http://%s:%s/api/v1", host, ap.Port())
+}
 
-	s, err := NewSMTP(&config.Config{SMTPHost: host, SMTPPort: smtpPort.Port(), SMTPFrom: "TaskFlow <noreply@tasks.example>"})
+// selfSignedCert пишет в каталог сертификат для имени serverName и возвращает пул с ним.
+func selfSignedCert(t *testing.T, serverName string) (string, *x509.CertPool) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: serverName},
+		DNSNames:     []string{serverName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cert.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o644))
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	pool := x509.NewCertPool()
+	pool.AddCert(cert)
+	return dir, pool
+}
+
+// Настоящая отправка через STARTTLS: mailpit принимает письмо, его API отдаёт его обратно.
+func TestSMTPSendsToRealServer(t *testing.T) {
+	certDir, pool := selfSignedCert(t, "mailpit.test")
+	host, port, api := mailpit(t, certDir)
+
+	sender, err := NewSMTP(&config.Config{SMTPHost: host, SMTPPort: port, SMTPFrom: "TaskFlow <noreply@tasks.example>"})
+	require.NoError(t, err)
+	s := sender.(*SMTP)
+	s.tlsConfig = &tls.Config{ServerName: "mailpit.test", RootCAs: pool, MinVersion: tls.VersionTLS12}
+
 	m, err := PasswordReset("ivan@example.com", "Иван Петров", "https://tasks.example/password-set?token=abc")
 	require.NoError(t, err)
-	require.NoError(t, s.Send(ctx, m))
+	require.NoError(t, s.Send(context.Background(), m))
 
-	api := fmt.Sprintf("http://%s:%s/api/v1", host, apiPort.Port())
 	var list struct {
 		Messages []struct {
 			ID      string
@@ -171,6 +237,19 @@ func TestSMTPSendsToRealServer(t *testing.T) {
 	var full struct{ Text string }
 	getJSON(t, api+"/message/"+list.Messages[0].ID, &full)
 	require.Contains(t, full.Text, "https://tasks.example/password-set?token=abc")
+}
+
+// Без STARTTLS письмо со ссылкой открытым текстом не уходит.
+func TestSMTPRefusesPlaintext(t *testing.T) {
+	host, port, api := mailpit(t, "")
+	s, err := NewSMTP(&config.Config{SMTPHost: host, SMTPPort: port, SMTPFrom: "noreply@tasks.example"})
+	require.NoError(t, err)
+	err = s.Send(context.Background(), Message{To: "ivan@example.com", Subject: "s", Text: "t"})
+	require.ErrorIs(t, err, errNoStartTLS)
+
+	var list struct{ Messages []struct{ ID string } }
+	getJSON(t, api+"/messages", &list)
+	require.Empty(t, list.Messages)
 }
 
 func getJSON(t *testing.T, url string, v any) {

@@ -34,7 +34,6 @@ import (
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/db"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
-	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/queue"
 	"github.com/jack5505/taskflow/api/internal/worker"
 	"github.com/jack5505/taskflow/api/migrations"
@@ -98,7 +97,7 @@ func runAPI(ctx context.Context, cfg *config.Config) error {
 	mq := queue.NewClient(cfg.RedisAddr)
 	defer func() { _ = mq.Close() }()
 
-	authSvc := auth.NewService(cfg, g, rdb).WithMailer(mail.NewQueue(mq))
+	authSvc := auth.NewService(cfg, g, rdb).WithQueue(mq)
 	authHandlers := auth.NewHandlers(authSvc, auth.SecureCookies(cfg.BaseURL))
 	return httpserver.New(cfg, g, rdb).Mount(authHandlers.Register).Run(ctx)
 }
