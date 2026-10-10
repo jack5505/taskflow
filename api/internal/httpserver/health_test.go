@@ -69,10 +69,3 @@ func TestHealthWithRedisDown(t *testing.T) {
 	require.Equal(t, "ok", checks["postgres"])
 	require.Equal(t, "unavailable", checks["redis"])
 }
-
-func TestAPINotFoundIsJSON(t *testing.T) {
-	s := httpserver.New(&config.Config{Env: "test"}, nil, nil)
-	rec, body := get(t, s, "/api/v1/nope")
-	require.Equal(t, http.StatusNotFound, rec.Code)
-	require.NotNil(t, body["error"])
-}

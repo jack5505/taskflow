@@ -25,7 +25,7 @@ import (
 func (s *Server) healthHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
-	requestID := c.GetString("request_id")
+	requestID := RequestID(c)
 
 	checks := gin.H{}
 	ok := true
