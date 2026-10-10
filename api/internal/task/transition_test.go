@@ -3,6 +3,7 @@ package task_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -190,6 +191,9 @@ func TestReopen(t *testing.T) {
 	code, _ = f.move(t, f.manager, key3, `{"to":"in_progress","assignee_id":"`+f.memberU.ID.String()+`"}`)
 	require.Equal(t, 200, *code)
 	require.Equal(t, f.memberU.ID, *f.get(t, key3).AssigneeID)
+	var assigned int64
+	require.NoError(t, f.db.Raw(`SELECT count(*) FROM outbox_events WHERE type = 'task.assigned' AND payload->>'key' = ?`, key3).Scan(&assigned).Error)
+	require.EqualValues(t, 1, assigned, "новому исполнителю уйдёт уведомление")
 }
 
 func TestTake(t *testing.T) {
@@ -220,8 +224,26 @@ func TestTake(t *testing.T) {
 	require.Equal(t, 409, code, "назначенную на другого не взять")
 	require.Equal(t, apierr.CodeTaskAlreadyTaken, errCode(b))
 	code, b = take(f.manager, assigned)
-	require.Equal(t, 200, code, "менеджер берёт себе")
-	require.Equal(t, f.managerU.ID.String(), b["assignee_id"])
+	require.Equal(t, 409, code, "и менеджеру — переназначают через PATCH")
+	require.Equal(t, apierr.CodeTaskAlreadyTaken, errCode(b))
+
+	review := f.state(t, f.memberU, "review", f.memberU)
+	code, b = take(f.member, review)
+	require.Equal(t, 409, code)
+	require.Equal(t, apierr.CodeInvalidTransition, errCode(b), "на проверке — не «уже в работе»")
+	require.Contains(t, b["error"].(map[string]any)["message"], "в статусе На проверке")
+
+	orphan := f.state(t, f.memberU, "in_progress", nil)
+	code, b = take(otherToken, orphan)
+	require.Equal(t, 200, code, "в работе без исполнителя — берёт любой участник: %v", b)
+	require.Equal(t, other.ID.String(), b["assignee_id"])
+	require.Equal(t, "in_progress", b["status"])
+
+	free := f.state(t, f.memberU, "todo", nil)
+	code, _ = take(f.admin, free)
+	require.Equal(t, 403, code, "администратор — не участник, исполнителем не станет")
+	adminMove, _ := f.move(t, f.admin, free, `{"to":"in_progress"}`)
+	require.Equal(t, 403, *adminMove)
 
 	done := f.state(t, f.memberU, "done", f.memberU)
 	code, b = take(otherToken, done)
@@ -310,4 +332,44 @@ func TestDeactivationReleasesTasks(t *testing.T) {
 	require.NoError(t, f.db.Raw(`SELECT jsonb_array_elements_text(payload->'released_tasks') FROM outbox_events
 		WHERE type = 'user.deactivated' AND payload->>'user_id' = ?`, gone.ID.String()).Scan(&released).Error)
 	require.ElementsMatch(t, []string{inProgress, todo}, released)
+}
+
+// Ревью #85: смена статуса своей задачи и деактивация того же пользователя одновременно —
+// без deadlock: деактивация проходит, переход либо успевает, либо получает 401.
+func TestTransitionVsDeactivationNoDeadlock(t *testing.T) {
+	f := newFixture(t)
+	svc := task.NewService(f.db, project.NewService(f.db))
+	usersSvc := users.NewService(f.db, auth.NewService(&config.Config{}, f.db, nil))
+	off := false
+	for range 20 {
+		u, _ := f.user(t, false)
+		f.join(t, u, project.RoleMember)
+		key := f.state(t, f.memberU, "in_progress", u)
+		var wg sync.WaitGroup
+		var moveErr, deactErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, moveErr = svc.Transition(context.Background(), u, key, task.TransitionInput{To: task.StatusReview})
+		}()
+		go func() {
+			defer wg.Done()
+			_, deactErr = usersSvc.Update(context.Background(), u.ID, users.UpdateInput{IsActive: &off})
+		}()
+		wg.Wait()
+		require.NoError(t, deactErr)
+		if moveErr != nil {
+			require.Equal(t, apierr.CodeUnauthorized, apierr.From(moveErr).Code, moveErr.Error())
+		}
+		tk := f.get(t, key)
+		require.Nil(t, tk.AssigneeID, "деактивация освободила задачу")
+	}
+}
+
+func TestReasonLengthCheckedByService(t *testing.T) {
+	f := newFixture(t)
+	key := f.state(t, f.memberU, "todo", nil)
+	_, err := task.NewService(f.db, project.NewService(f.db)).Transition(context.Background(), f.managerU, key,
+		task.TransitionInput{To: task.StatusCancelled, Comment: strings.Repeat("я", 5001)})
+	require.Equal(t, apierr.CodeValidation, apierr.From(err).Code)
 }

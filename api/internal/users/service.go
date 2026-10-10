@@ -155,12 +155,15 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 		// иначе две такие транзакции навстречу друг другу встанут в deadlock).
 		var admins []uuid.UUID
 		if (in.IsActive != nil && !*in.IsActive) || (in.IsSystemAdmin != nil && !*in.IsSystemAdmin) {
-			if err := tx.Raw(`SELECT id FROM users WHERE is_system_admin AND is_active ORDER BY id FOR UPDATE`).
+			if err := tx.Raw(`SELECT id FROM users WHERE is_system_admin AND is_active ORDER BY id FOR NO KEY UPDATE`).
 				Scan(&admins).Error; err != nil {
 				return fmt.Errorf("users: lock admins: %w", err)
 			}
 		}
-		res := tx.Raw(`SELECT * FROM users WHERE id = ? FOR UPDATE`, id).Scan(&u)
+		// FOR NO KEY UPDATE, а не FOR UPDATE: проверки внешних ключей (история, комментарии со
+		// ссылкой на пользователя) берут FOR KEY SHARE и с ним не конфликтуют — иначе
+		// смена статуса задачи этого пользователя и его деактивация встали бы в deadlock.
+		res := tx.Raw(`SELECT * FROM users WHERE id = ? FOR NO KEY UPDATE`, id).Scan(&u)
 		if res.Error != nil {
 			return fmt.Errorf("users: find: %w", res.Error)
 		}

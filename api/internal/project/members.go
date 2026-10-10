@@ -196,10 +196,11 @@ type userRow struct {
 	DisplayName string
 }
 
-// lockUser — строка пользователя-цели FOR UPDATE.
+// lockUser — строка пользователя-цели FOR NO KEY UPDATE (как у деактивации; с проверками
+// внешних ключей не конфликтует).
 func lockUser(tx *gorm.DB, userID uuid.UUID) (*userRow, error) {
 	var rows []userRow
-	if err := tx.Raw(`SELECT is_active, email, display_name FROM users WHERE id = ? FOR UPDATE`, userID).
+	if err := tx.Raw(`SELECT is_active, email, display_name FROM users WHERE id = ? FOR NO KEY UPDATE`, userID).
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("project: user: %w", err)
 	}
