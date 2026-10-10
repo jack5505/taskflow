@@ -9,6 +9,7 @@ package apierr
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 )
 
@@ -37,6 +38,9 @@ const (
 )
 
 // Error — ошибка с HTTP-статусом, кодом и деталями для клиента.
+// Значение неизменяемое: With и Wrap возвращают копию, поэтому доменные пакеты могут
+// держать sentinel-ошибки (var ErrInvalidTransition = apierr.Conflict(…)) и дополнять их
+// деталями в каждом запросе, не трогая общий экземпляр.
 type Error struct {
 	Status  int
 	Code    string
@@ -55,19 +59,33 @@ func (e *Error) Error() string {
 // Unwrap отдаёт исходную ошибку для errors.Is/As.
 func (e *Error) Unwrap() error { return e.cause }
 
-// With добавляет поле в details и возвращает ту же ошибку (удобно в цепочке).
-func (e *Error) With(key string, value any) *Error {
-	if e.Details == nil {
-		e.Details = map[string]any{}
-	}
-	e.Details[key] = value
-	return e
+// Is позволяет сравнивать копии с исходной sentinel-ошибкой: errors.Is(err, ErrInvalidTransition).
+func (e *Error) Is(target error) bool {
+	t, ok := target.(*Error)
+	return ok && t.Status == e.Status && t.Code == e.Code
 }
 
-// Wrap сохраняет исходную ошибку для логов; клиенту она не показывается.
+func (e *Error) clone() *Error {
+	c := *e
+	c.Details = maps.Clone(e.Details)
+	return &c
+}
+
+// With возвращает копию ошибки с добавленным полем в details.
+func (e *Error) With(key string, value any) *Error {
+	c := e.clone()
+	if c.Details == nil {
+		c.Details = map[string]any{}
+	}
+	c.Details[key] = value
+	return c
+}
+
+// Wrap возвращает копию с исходной ошибкой для логов; клиенту она не показывается.
 func (e *Error) Wrap(cause error) *Error {
-	e.cause = cause
-	return e
+	c := e.clone()
+	c.cause = cause
+	return c
 }
 
 // New — произвольная ошибка с явным статусом и кодом.

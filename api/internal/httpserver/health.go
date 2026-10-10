@@ -2,13 +2,13 @@ package httpserver
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/jack5505/taskflow/api/internal/db"
+	"github.com/jack5505/taskflow/api/internal/logx"
 	"github.com/jack5505/taskflow/api/internal/queue"
 )
 
@@ -25,7 +25,7 @@ import (
 func (s *Server) healthHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
-	requestID := RequestID(c)
+	log := logx.From(c.Request.Context())
 
 	checks := gin.H{}
 	ok := true
@@ -34,7 +34,7 @@ func (s *Server) healthHandler(c *gin.Context) {
 		checks["postgres"] = "not configured"
 		ok = false
 	} else if err := db.Ping(ctx, s.db); err != nil {
-		slog.Error("health: postgres", "request_id", requestID, "err", err)
+		log.Error("health: postgres", "err", err)
 		checks["postgres"] = "unavailable"
 		ok = false
 	} else {
@@ -45,7 +45,7 @@ func (s *Server) healthHandler(c *gin.Context) {
 		checks["redis"] = "not configured"
 		ok = false
 	} else if err := queue.Ping(ctx, s.redis); err != nil {
-		slog.Error("health: redis", "request_id", requestID, "err", err)
+		log.Error("health: redis", "err", err)
 		checks["redis"] = "unavailable"
 		ok = false
 	} else {

@@ -44,3 +44,17 @@ func TestConstructorsStatuses(t *testing.T) {
 		require.NotEmpty(t, e.Error())
 	}
 }
+
+func TestWithAndWrapDoNotMutateSentinel(t *testing.T) {
+	sentinel := apierr.Conflict(apierr.CodeInvalidTransition, "Переход не разрешён")
+
+	a := sentinel.With("from", "done")
+	b := sentinel.With("from", "review").Wrap(errors.New("причина"))
+
+	require.Nil(t, sentinel.Details, "sentinel остался без деталей")
+	require.Equal(t, "done", a.Details["from"])
+	require.Equal(t, "review", b.Details["from"])
+	require.NoError(t, sentinel.Unwrap())
+	require.ErrorIs(t, a, sentinel, "копия сравнивается с sentinel через errors.Is")
+	require.ErrorIs(t, b, sentinel)
+}

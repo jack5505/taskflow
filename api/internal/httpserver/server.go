@@ -65,7 +65,8 @@ func (s *Server) Run(ctx context.Context) error {
 // Router собирает маршруты. Базовый путь API — /api/v1 (ТЗ §9).
 func (s *Server) Router() *gin.Engine {
 	r := gin.New()
-	r.Use(requestID(), recovery(), accessLog())
+	// accessLog снаружи recovery: строка лога пишется и для запроса, который упал с паникой.
+	r.Use(requestID(), accessLog(), recovery())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(func(c *gin.Context) {
 		Abort(c, apierr.New(http.StatusMethodNotAllowed, apierr.CodeMethodNotAllowed, "Метод не поддерживается"))
@@ -78,14 +79,14 @@ func (s *Server) Router() *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"pong": true})
 	})
 
-	s.mountSPA(r)
+	mountSPA(r)
 	return r
 }
 
 // mountSPA отдаёт собранный веб-интерфейс, встроенный в бинарник (ТЗ §10.2).
 // Любой путь вне /api и /health возвращает index.html — маршрутизация на стороне React;
 // неизвестный путь под /api отвечает 404 в формате §9.3.
-func (s *Server) mountSPA(r *gin.Engine) {
+func mountSPA(r *gin.Engine) {
 	dist, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
 		panic(err)

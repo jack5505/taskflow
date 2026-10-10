@@ -44,10 +44,12 @@ func RequestID(c *gin.Context) string { return c.GetString(ctxRequestID) }
 func accessLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+		// Путь берём до обработчика: NoRoute для SPA переписывает его на "/".
+		method, path := c.Request.Method, c.Request.URL.Path
 		c.Next()
 		attrs := []any{
-			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
+			"method", method,
+			"path", path,
 			"status", c.Writer.Status(),
 			"duration_ms", time.Since(start).Milliseconds(),
 		}

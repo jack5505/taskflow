@@ -19,10 +19,15 @@ import (
 	"github.com/jack5505/taskflow/api/internal/logx"
 )
 
+type itemReq struct {
+	Title string `json:"title" binding:"required"`
+}
+
 type createReq struct {
-	Title    string `json:"title" binding:"required,min=1,max=200"`
-	Priority string `json:"priority" binding:"omitempty,oneof=low medium high critical"`
-	Estimate int    `json:"estimate_minutes" binding:"omitempty,gte=1,lte=60000"`
+	Title    string    `json:"title" binding:"required,min=1,max=200"`
+	Priority string    `json:"priority" binding:"omitempty,oneof=low medium high critical"`
+	Estimate int       `json:"estimate_minutes" binding:"omitempty,gte=1,lte=60000"`
+	Items    []itemReq `json:"items" binding:"omitempty,dive"`
 }
 
 // testRouter — роутер сервера плюс маршруты, воспроизводящие типичные ситуации обработчиков.
@@ -45,6 +50,13 @@ func testRouter(t *testing.T) *gin.Engine {
 		httpserver.Abort(c, errors.New("секретная причина: пароль базы"))
 	})
 	api.GET("/panic", func(*gin.Context) { panic("boom") })
+	api.POST("/bind-bug", func(c *gin.Context) {
+		var req createReq
+		if !httpserver.Bind(c, req) { // ошибка программиста: не указатель
+			return
+		}
+		c.Status(http.StatusOK)
+	})
 	api.GET("/log", func(c *gin.Context) {
 		logx.From(c.Request.Context()).Info("из обработчика")
 		c.Status(http.StatusNoContent)
@@ -55,13 +67,7 @@ func testRouter(t *testing.T) *gin.Engine {
 func do(t *testing.T, r *gin.Engine, method, path, body string) (*httptest.ResponseRecorder, apierr.Response) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	var rd *strings.Reader
-	if body != "" {
-		rd = strings.NewReader(body)
-	} else {
-		rd = strings.NewReader("")
-	}
-	req := httptest.NewRequest(method, path, rd)
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(rec, req)
 	var resp apierr.Response
@@ -107,9 +113,28 @@ func TestInvalidJSONAndWrongType(t *testing.T) {
 	rec, resp = do(t, r, http.MethodPost, "/api/v1/_test/bind", `{"title":"ok","estimate_minutes":"много"}`)
 	requireFormat(t, rec, resp, http.StatusBadRequest, apierr.CodeValidation)
 	require.Contains(t, rec.Body.String(), `"field":"estimate_minutes"`)
+	require.Contains(t, rec.Body.String(), "целое число", "тип в терминах JSON, а не Go")
+
+	rec, resp = do(t, r, http.MethodPost, "/api/v1/_test/bind", `[1,2]`)
+	requireFormat(t, rec, resp, http.StatusBadRequest, apierr.CodeInvalidJSON)
+	require.NotContains(t, rec.Body.String(), "createReq", "имена типов Go не утекают")
 
 	rec, _ = do(t, r, http.MethodPost, "/api/v1/_test/bind", `{"title":"ok"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestNestedFieldKeepsPath(t *testing.T) {
+	r := testRouter(t)
+	rec, resp := do(t, r, http.MethodPost, "/api/v1/_test/bind", `{"title":"x","items":[{"title":"ok"},{"title":""}]}`)
+	requireFormat(t, rec, resp, http.StatusBadRequest, apierr.CodeValidation)
+	require.Contains(t, rec.Body.String(), `"field":"items[1].title"`)
+}
+
+func TestBindProgrammerErrorIs500(t *testing.T) {
+	r := testRouter(t)
+	rec, resp := do(t, r, http.MethodPost, "/api/v1/_test/bind-bug", `{"title":"ok"}`)
+	requireFormat(t, rec, resp, http.StatusInternalServerError, apierr.CodeInternal)
+	require.NotContains(t, rec.Body.String(), "non-pointer")
 }
 
 func TestDomainErrorKeepsCodeAndDetails(t *testing.T) {
@@ -127,11 +152,31 @@ func TestUnknownErrorIs500WithoutDetails(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "пароль базы", "причина 500 не уходит клиенту")
 }
 
-func TestPanicIs500InSameFormat(t *testing.T) {
+func TestPanicIs500InSameFormatAndLogged(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	r := testRouter(t)
 	rec, resp := do(t, r, http.MethodGet, "/api/v1/_test/panic", "")
 	requireFormat(t, rec, resp, http.StatusInternalServerError, apierr.CodeInternal)
 	require.NotContains(t, rec.Body.String(), "boom")
+	require.Contains(t, buf.String(), `"msg":"panic"`)
+	require.Contains(t, buf.String(), `"msg":"http"`, "access-лог пишется и для упавшего запроса")
+	require.Contains(t, buf.String(), `"status":500`)
+}
+
+func TestAccessLogKeepsSPAPath(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	r := testRouter(t)
+	rec, _ := do(t, r, http.MethodGet, "/projects/TM/board", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, buf.String(), `"path":"/projects/TM/board"`, "NoRoute переписывает путь на /, лог должен хранить исходный")
 }
 
 func TestNotFoundAndMethodNotAllowed(t *testing.T) {

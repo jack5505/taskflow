@@ -30,20 +30,25 @@ func init() {
 	}
 }
 
-// FromBinding переводит ошибку привязки Gin (ShouldBindJSON и т. п.) в 400 по формату §9.3.
+// FromBinding переводит ошибку привязки Gin (ShouldBindJSON и т. п.) в ошибку по формату §9.3.
+// Ошибки программиста (не указатель, невалидируемый тип) — это 500, а не вина клиента.
 func FromBinding(err error) *Error {
 	var verrs validator.ValidationErrors
 	if errors.As(err, &verrs) {
 		fields := make([]FieldError, 0, len(verrs))
 		for _, fe := range verrs {
-			fields = append(fields, FieldError{Field: fe.Field(), Reason: reason(fe)})
+			fields = append(fields, FieldError{Field: fieldPath(fe), Reason: reason(fe)})
 		}
 		return BadRequest(CodeValidation, "Некорректные данные запроса").With("fields", fields)
 	}
 
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
+	var invalidUnmarshal *json.InvalidUnmarshalError
+	var invalidValidation *validator.InvalidValidationError
 	switch {
+	case errors.As(err, &invalidUnmarshal), errors.As(err, &invalidValidation):
+		return Internal(err)
 	case errors.Is(err, io.EOF):
 		return BadRequest(CodeInvalidJSON, "Пустое тело запроса")
 	case errors.Is(err, io.ErrUnexpectedEOF):
@@ -51,10 +56,43 @@ func FromBinding(err error) *Error {
 	case errors.As(err, &syntaxErr):
 		return BadRequest(CodeInvalidJSON, "Тело запроса не является корректным JSON").With("offset", syntaxErr.Offset)
 	case errors.As(err, &typeErr):
+		if typeErr.Field == "" {
+			// Верхний уровень не объект: массив, строка, число.
+			return BadRequest(CodeInvalidJSON, "Ожидается JSON-объект")
+		}
 		return BadRequest(CodeValidation, "Некорректные данные запроса").
-			With("fields", []FieldError{{Field: typeErr.Field, Reason: "ожидается " + typeErr.Type.String()}})
+			With("fields", []FieldError{{Field: typeErr.Field, Reason: "ожидается " + jsonKind(typeErr.Type)}})
 	}
-	return BadRequest(CodeValidation, "Некорректные данные запроса").With("reason", err.Error()).Wrap(err)
+	return BadRequest(CodeValidation, "Некорректные данные запроса").Wrap(err)
+}
+
+// fieldPath — путь к полю как в JSON: title, items[0].title (без имени корневой структуры).
+func fieldPath(fe validator.FieldError) string {
+	ns := fe.Namespace()
+	if i := strings.Index(ns, "."); i >= 0 {
+		return ns[i+1:]
+	}
+	return fe.Field()
+}
+
+// jsonKind — ожидаемый тип в терминах JSON, а не Go.
+func jsonKind(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.String:
+		return "строка"
+	case reflect.Bool:
+		return "булево"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "целое число"
+	case reflect.Float32, reflect.Float64:
+		return "число"
+	case reflect.Slice, reflect.Array:
+		return "массив"
+	case reflect.Struct, reflect.Map:
+		return "объект"
+	}
+	return "другой тип"
 }
 
 // reason — короткое описание правила на русском по тегу валидатора.
