@@ -74,6 +74,14 @@ func newWorld(t *testing.T) *world {
 	return w
 }
 
+// user — ещё один активный пользователь без роли; возвращает id.
+func (w *world) user(t *testing.T) string {
+	t.Helper()
+	u := user.New(testutil.UniqueEmail(t), passwordHash(), "Новичок")
+	require.NoError(t, w.db.Create(u).Error)
+	return u.ID.String()
+}
+
 func (w *world) do(method, path, token, body string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -143,7 +151,8 @@ func TestRightsTable(t *testing.T) {
 		})
 	}
 
-	// «Да» по тем же строкам: менеджер и администратор не получают 403/404.
+	// «Да» по тем же строкам: у кого право есть, тот проходит (порядок важен — строки меняют состав).
+	newcomer := w.user(t)
 	for _, r := range []struct {
 		token        string
 		method, path string
@@ -151,10 +160,19 @@ func TestRightsTable(t *testing.T) {
 		want         int
 	}{
 		{w.manager, "PATCH", proj, `{"notification_settings":{"daily_summary":true}}`, http.StatusOK},
+		{w.admin, "PATCH", proj, `{"name":"Администратор"}`, http.StatusOK},
 		{w.manager, "GET", "/api/v1/users", "", http.StatusOK},
 		{w.member, "GET", proj + "/members", "", http.StatusOK},
 		{w.admin, "GET", proj, "", http.StatusOK},
 		{w.admin, "GET", proj + "/members", "", http.StatusOK},
+		{w.manager, "PUT", proj + "/members/" + newcomer, `{"role":"member"}`, http.StatusCreated},
+		{w.manager, "PUT", proj + "/members/" + newcomer, `{"role":"manager"}`, http.StatusOK},
+		{w.admin, "PUT", proj + "/members/" + newcomer, `{"role":"member"}`, http.StatusOK},
+		{w.admin, "DELETE", proj + "/members/" + newcomer, "", http.StatusNoContent},
+		{w.manager, "PUT", proj + "/members/" + newcomer, `{"role":"member"}`, http.StatusCreated},
+		{w.manager, "DELETE", proj + "/members/" + newcomer, "", http.StatusNoContent},
+		{w.admin, "PATCH", proj, `{"is_archived":true}`, http.StatusOK},
+		{w.admin, "PATCH", proj, `{"is_archived":false}`, http.StatusOK},
 	} {
 		rec := w.do(r.method, r.path, r.token, r.body)
 		require.Equal(t, r.want, rec.Code, "%s %s: %s", r.method, r.path, rec.Body.String())

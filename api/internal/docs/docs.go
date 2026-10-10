@@ -1172,6 +1172,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "role": {
+                    "description": "допустимость проверяет сервис — одно правило и для бота",
                     "type": "string",
                     "enum": [
                         "manager",

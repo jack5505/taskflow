@@ -263,7 +263,7 @@ func (h *Handlers) members(c *gin.Context) {
 }
 
 type putMemberRequest struct {
-	Role string `json:"role" binding:"required,oneof=manager member" enums:"manager,member"`
+	Role string `json:"role" binding:"required" enums:"manager,member"` // допустимость проверяет сервис — одно правило и для бота
 }
 
 // putMember — добавить участника или изменить роль.
@@ -293,6 +293,11 @@ func (h *Handlers) putMember(c *gin.Context) {
 	userID, err := uuid.Parse(c.Param("user_id"))
 	if err != nil {
 		httpserver.Abort(c, ErrUserNotFound)
+		return
+	}
+	// Архив — 409 раньше ошибок тела, как у PATCH проекта; под блокировкой сервис проверит ещё раз.
+	if err := EnsureWritable(a.Project); err != nil {
+		httpserver.Abort(c, err)
 		return
 	}
 	var req putMemberRequest

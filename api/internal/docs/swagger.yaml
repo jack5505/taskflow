@@ -134,6 +134,7 @@ definitions:
   project.putMemberRequest:
     properties:
       role:
+        description: допустимость проверяет сервис — одно правило и для бота
         enum:
         - manager
         - member

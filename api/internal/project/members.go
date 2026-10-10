@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -15,7 +16,7 @@ var (
 	ErrNotMember     = apierr.NotFound("Пользователь не участник проекта")
 	ErrUserNotFound  = apierr.NotFound("Пользователь не найден")
 	ErrLastManager   = apierr.Conflict(apierr.CodeLastManager, "Это единственный активный менеджер проекта: сначала назначьте другого менеджера")
-	errInactiveToAdd = fieldError("user_id", "пользователь деактивирован")
+	errInactiveToAdd = fieldError("user_id", "пользователь деактивирован: его нельзя добавить или сделать менеджером")
 )
 
 // MemberView — участник в ответе API.
@@ -40,18 +41,19 @@ func (s *Service) Members(ctx context.Context, a *Access) ([]MemberView, error) 
 }
 
 // PutMember добавляет участника или меняет его роль (§2: менеджер и администратор).
-// Понижение единственного активного менеджера — 409 LAST_MANAGER. Возвращает added=true,
-// если участник новый. Пишет member.added или member.role_changed (§9.4).
+// Добавить и повысить до менеджера можно только активного пользователя; понижение единственного
+// активного менеджера — 409 LAST_MANAGER. added=true — участник новый. Пишет member.added или
+// member.role_changed (§9.4).
 func (s *Service) PutMember(ctx context.Context, a *Access, userID uuid.UUID, role string) (view *MemberView, added bool, err error) {
 	if !ValidRole(role) {
 		return nil, false, fieldError("role", "manager или member")
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		p, err := s.lockForMembers(tx, a)
+		u, err := lockUser(tx, userID)
 		if err != nil {
 			return err
 		}
-		active, err := userActive(tx, userID)
+		p, err := s.lockForMembers(tx, a)
 		if err != nil {
 			return err
 		}
@@ -59,13 +61,13 @@ func (s *Service) PutMember(ctx context.Context, a *Access, userID uuid.UUID, ro
 		if err != nil {
 			return err
 		}
+		if current != role && !u.IsActive && (current == "" || role == RoleManager) {
+			return errInactiveToAdd
+		}
 		payload := map[string]any{"project_id": p.ID, "key": p.Key, "user_id": userID, "role": role, "by": a.userID}
 		switch current {
 		case role:
 		case "":
-			if !active {
-				return errInactiveToAdd
-			}
 			if err := tx.Create(&Member{ProjectID: p.ID, UserID: userID, Role: role}).Error; err != nil {
 				return fmt.Errorf("project: add member: %w", err)
 			}
@@ -75,7 +77,7 @@ func (s *Service) PutMember(ctx context.Context, a *Access, userID uuid.UUID, ro
 			}
 		default:
 			if current == RoleManager {
-				if err := checkNotLastManager(tx, p, userID, active); err != nil {
+				if err := checkNotLastManager(tx, p, userID, u.IsActive); err != nil {
 					return err
 				}
 			}
@@ -88,8 +90,8 @@ func (s *Service) PutMember(ctx context.Context, a *Access, userID uuid.UUID, ro
 				return err
 			}
 		}
-		view = &MemberView{UserID: userID, Role: role, IsActive: active}
-		return tx.Raw(`SELECT email, display_name FROM users WHERE id = ?`, userID).Row().Scan(&view.Email, &view.DisplayName)
+		view = &MemberView{UserID: userID, Email: u.Email, DisplayName: u.DisplayName, Role: role, IsActive: u.IsActive}
+		return nil
 	})
 	if err != nil {
 		return nil, false, err
@@ -100,6 +102,13 @@ func (s *Service) PutMember(ctx context.Context, a *Access, userID uuid.UUID, ro
 // RemoveMember исключает участника. Единственного активного менеджера — 409 LAST_MANAGER.
 func (s *Service) RemoveMember(ctx context.Context, a *Access, userID uuid.UUID) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		u, err := lockUser(tx, userID)
+		if errors.Is(err, ErrUserNotFound) {
+			return ErrNotMember
+		}
+		if err != nil {
+			return err
+		}
 		p, err := s.lockForMembers(tx, a)
 		if err != nil {
 			return err
@@ -112,11 +121,7 @@ func (s *Service) RemoveMember(ctx context.Context, a *Access, userID uuid.UUID)
 			return ErrNotMember
 		}
 		if current == RoleManager {
-			active, err := userActive(tx, userID)
-			if err != nil {
-				return err
-			}
-			if err := checkNotLastManager(tx, p, userID, active); err != nil {
+			if err := checkNotLastManager(tx, p, userID, u.IsActive); err != nil {
 				return err
 			}
 		}
@@ -129,8 +134,11 @@ func (s *Service) RemoveMember(ctx context.Context, a *Access, userID uuid.UUID)
 	})
 }
 
-// lockForMembers — общая часть изменений состава: строка проекта FOR UPDATE (на ней же
-// сериализуется деактивация пользователя), архив — 409, права менеджера — под блокировкой.
+// lockForMembers — общая часть изменений состава: строка проекта FOR UPDATE, архив — 409,
+// права менеджера — под блокировкой. Строку пользователя-цели вызывающий блокирует раньше
+// (lockUser): тот же порядок «пользователь → проект», что у деактивации, — без deadlock.
+// Так изменение состава сериализуется с деактивацией цели (общая строка пользователя) и с
+// деактивацией другого менеджера проекта (общая строка проекта).
 func (s *Service) lockForMembers(tx *gorm.DB, a *Access) (*Project, error) {
 	var p Project
 	if err := lockProject(tx, "id = ?", a.Project.ID, &p); err != nil {
@@ -169,13 +177,21 @@ func checkNotLastManager(tx *gorm.DB, p *Project, userID uuid.UUID, active bool)
 	return nil
 }
 
-func userActive(tx *gorm.DB, userID uuid.UUID) (bool, error) {
-	var active []bool
-	if err := tx.Raw(`SELECT is_active FROM users WHERE id = ?`, userID).Scan(&active).Error; err != nil {
-		return false, fmt.Errorf("project: user: %w", err)
+type userRow struct {
+	IsActive    bool
+	Email       string
+	DisplayName string
+}
+
+// lockUser — строка пользователя-цели FOR UPDATE.
+func lockUser(tx *gorm.DB, userID uuid.UUID) (*userRow, error) {
+	var rows []userRow
+	if err := tx.Raw(`SELECT is_active, email, display_name FROM users WHERE id = ? FOR UPDATE`, userID).
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("project: user: %w", err)
 	}
-	if len(active) == 0 {
-		return false, ErrUserNotFound
+	if len(rows) == 0 {
+		return nil, ErrUserNotFound
 	}
-	return active[0], nil
+	return &rows[0], nil
 }

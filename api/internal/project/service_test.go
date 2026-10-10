@@ -424,7 +424,3 @@ func TestRestoreRefreshesUpdatedAtAndTaskNumberDoesNot(t *testing.T) {
 	require.False(t, restored.DeletedAt.Valid)
 	require.True(t, restored.UpdatedAt.After(after.UpdatedAt), "в ответе — свежий updated_at")
 }
-
-func jsonUnmarshal(rec *httptest.ResponseRecorder, v any) error {
-	return json.Unmarshal(rec.Body.Bytes(), v)
-}

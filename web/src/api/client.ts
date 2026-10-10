@@ -96,6 +96,7 @@ export interface ProjectCreateRequest {
 }
 
 export interface ProjectPutMemberRequest {
+  /** допустимость проверяет сервис — одно правило и для бота */
   role: "manager" | "member";
 }
 
