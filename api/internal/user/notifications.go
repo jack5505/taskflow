@@ -1,15 +1,11 @@
 package user
 
 import (
-	"encoding/json"
-	"fmt"
-	"sort"
-
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/model"
 )
 
-// Личные уведомления в Telegram (ТЗ §8.7). В notification_settings хранятся только отличия
-// от умолчаний (все включены); Effective накладывает их на умолчания.
+// Личные уведомления в Telegram (ТЗ §8.7).
 const (
 	NotifyAssigned          = "assigned"           // вас назначили исполнителем
 	NotifyRework            = "rework"             // задачу вернули на доработку
@@ -23,64 +19,23 @@ const (
 	NotifyMembership        = "membership"         // добавили в проект, исключили, сменили роль
 )
 
-var notificationKeys = []string{
-	NotifyAssigned, NotifyRework, NotifyAcceptedCancelled, NotifyComment, NotifyReviewRequested,
-	NotifyDue, NotifyTimerAutoStopped, NotifyWorklogTrimmed, NotifyTaskDeleted, NotifyMembership,
+// notificationDefaults — §8.7: по умолчанию все включены.
+var notificationDefaults = model.Toggles{
+	NotifyAssigned: true, NotifyRework: true, NotifyAcceptedCancelled: true, NotifyComment: true,
+	NotifyReviewRequested: true, NotifyDue: true, NotifyTimerAutoStopped: true, NotifyWorklogTrimmed: true,
+	NotifyTaskDeleted: true, NotifyMembership: true,
 }
 
 // NotificationKeys — допустимые ключи по алфавиту.
-func NotificationKeys() []string {
-	keys := append([]string(nil), notificationKeys...)
-	sort.Strings(keys)
-	return keys
-}
+func NotificationKeys() []string { return notificationDefaults.Keys() }
 
-func knownNotification(k string) bool {
-	for _, n := range notificationKeys {
-		if n == k {
-			return true
-		}
-	}
-	return false
-}
-
-// EffectiveNotifications — настройки §8.7 с умолчаниями (все включены).
+// EffectiveNotifications — настройки §8.7 с умолчаниями.
 func EffectiveNotifications(stored events.JSON) map[string]bool {
-	out := make(map[string]bool, len(notificationKeys))
-	for _, k := range notificationKeys {
-		out[k] = true
-	}
-	var overrides map[string]bool
-	if len(stored) > 0 && json.Unmarshal(stored, &overrides) == nil {
-		for k, v := range overrides {
-			if knownNotification(k) {
-				out[k] = v
-			}
-		}
-	}
-	return out
+	return notificationDefaults.Effective(stored)
 }
 
-// MergeNotifications накладывает изменения; хранит только отключённые. Неизвестный ключ — ошибка.
+// MergeNotifications накладывает изменения; хранятся только отличия от умолчаний (то есть
+// выключенные). Неизвестный ключ — ошибка.
 func MergeNotifications(stored events.JSON, changes map[string]bool) (events.JSON, error) {
-	for k := range changes {
-		if !knownNotification(k) {
-			return nil, fmt.Errorf("неизвестное уведомление %q, допустимые: %v", k, NotificationKeys())
-		}
-	}
-	merged := EffectiveNotifications(stored)
-	for k, v := range changes {
-		merged[k] = v
-	}
-	off := map[string]bool{}
-	for k, v := range merged {
-		if !v {
-			off[k] = false
-		}
-	}
-	b, err := json.Marshal(off)
-	if err != nil {
-		return nil, err
-	}
-	return events.JSON(b), nil
+	return notificationDefaults.Merge(stored, changes)
 }

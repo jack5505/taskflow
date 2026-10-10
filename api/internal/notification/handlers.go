@@ -44,5 +44,6 @@ func Register(d *events.Dispatcher, db *gorm.DB) {
 	}
 	d.On(events.MemberAdded, "notification", member(TypeMemberAdded))
 	d.On(events.MemberRemoved, "notification", member(TypeMemberRemoved))
-	d.On(events.MemberRoleChanged, "notification", member(TypeMemberRoleChanged))
+	// Смена роли в колокольчик не идёт: §7.7 называет только добавление и исключение
+	// (о смене роли — личное сообщение бота §8.7).
 }

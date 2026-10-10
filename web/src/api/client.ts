@@ -107,7 +107,6 @@ export interface MeUpdate {
 }
 
 export interface MeReadRequest {
-  /** @maxItems 200 */
   ids?: string[];
 }
 
@@ -644,7 +643,7 @@ export class Api<
       }),
 
     /**
-     * @description Уведомления колокольчика за 30 дней, новые первыми, и число непрочитанных. Следующая страница — cursor из next_cursor.
+     * @description Уведомления колокольчика за 30 дней, новые первыми. unread_count — только на первой странице (без cursor). Следующая страница — cursor из next_cursor.
      *
      * @tags me
      * @name V1MeNotificationsList

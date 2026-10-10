@@ -168,7 +168,6 @@ definitions:
       ids:
         items:
           type: string
-        maxItems: 200
         type: array
     type: object
   me.readResponse:
@@ -569,8 +568,8 @@ paths:
       - me
   /api/v1/me/notifications:
     get:
-      description: Уведомления колокольчика за 30 дней, новые первыми, и число непрочитанных.
-        Следующая страница — cursor из next_cursor.
+      description: Уведомления колокольчика за 30 дней, новые первыми. unread_count
+        — только на первой странице (без cursor). Следующая страница — cursor из next_cursor.
       parameters:
       - description: только непрочитанные
         in: query

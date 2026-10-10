@@ -316,7 +316,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Уведомления колокольчика за 30 дней, новые первыми, и число непрочитанных. Следующая страница — cursor из next_cursor.",
+                "description": "Уведомления колокольчика за 30 дней, новые первыми. unread_count — только на первой странице (без cursor). Следующая страница — cursor из next_cursor.",
                 "produces": [
                     "application/json"
                 ],
@@ -1501,7 +1501,6 @@ const docTemplate = `{
             "properties": {
                 "ids": {
                     "type": "array",
-                    "maxItems": 200,
                     "items": {
                         "type": "string"
                     }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,25 +73,29 @@ func TestMeNotifications(t *testing.T) {
 	var page notification.Page
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
 	require.Len(t, page.Items, 2)
-	require.EqualValues(t, 3, page.UnreadCount)
+	require.EqualValues(t, 3, *page.UnreadCount)
 	require.NotEmpty(t, page.NextCursor)
 
 	rec = w.do("POST", "/api/v1/me/notifications/read", w.member, `{"ids":["`+page.Items[0].ID.String()+`"]}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.JSONEq(t, `{"marked":1}`, rec.Body.String())
-	rec = w.do("POST", "/api/v1/me/notifications/read", w.member, "")
-	require.JSONEq(t, `{"marked":2}`, rec.Body.String(), "без тела — все")
+	r := httptest.NewRequest("POST", "/api/v1/me/notifications/read", strings.NewReader(""))
+	r.ContentLength = -1 // chunked: длина неизвестна, тело пустое
+	r.Header.Set("Authorization", "Bearer "+w.member)
+	chunked := httptest.NewRecorder()
+	w.r.ServeHTTP(chunked, r)
+	require.JSONEq(t, `{"marked":2}`, chunked.Body.String(), "без тела — все")
 
 	rec = w.do("GET", "/api/v1/me/notifications?unread=true", w.member, "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
 	require.Empty(t, page.Items)
-	require.Zero(t, page.UnreadCount)
+	require.Zero(t, *page.UnreadCount)
 
 	rec = w.do("GET", "/api/v1/me/notifications?unread=true", w.manager, "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
-	require.EqualValues(t, 1, page.UnreadCount, "чужие отметки не трогают")
+	require.EqualValues(t, 1, *page.UnreadCount, "чужие отметки не трогают")
 
-	for q, field := range map[string]string{"unread=maybe": "unread", "limit=0": "limit", "cursor=@@": "cursor"} {
+	for q, field := range map[string]string{"unread=maybe": "unread", "limit=0": "limit", "limit=201": "limit", "cursor=@@": "cursor"} {
 		rec = w.do("GET", "/api/v1/me/notifications?"+q, w.member, "")
 		require.Equal(t, http.StatusBadRequest, rec.Code, q)
 		require.Contains(t, rec.Body.String(), `"field":"`+field+`"`, q)

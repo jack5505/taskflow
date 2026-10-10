@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -116,6 +117,26 @@ func (s *Service) Update(ctx context.Context, u *user.User, in Update) (*user.Us
 	return &fresh, nil
 }
 
+// Notifications — колокольчик (§7.7): limit 0 — по умолчанию, иначе 1..200.
+func (s *Service) Notifications(ctx context.Context, u *user.User, unreadOnly bool, limit int, cursor string) (*notification.Page, error) {
+	page, err := notification.List(ctx, s.db, u.ID, unreadOnly, limit, cursor, s.now())
+	switch {
+	case errors.Is(err, notification.ErrBadLimit):
+		return nil, fieldError("limit", "от 1 до 200")
+	case errors.Is(err, notification.ErrBadCursor):
+		return nil, fieldError("cursor", "некорректный курсор")
+	}
+	return page, err
+}
+
+// MarkRead — отметить прочитанными ids (до 200) или все (ids пуст); чужие id не трогаются.
+func (s *Service) MarkRead(ctx context.Context, u *user.User, ids []uuid.UUID) (int64, error) {
+	if len(ids) > notification.MaxLimit {
+		return 0, fieldError("ids", "не больше 200")
+	}
+	return notification.MarkRead(ctx, s.db, u.ID, ids, s.now())
+}
+
 // Handlers — /api/v1/me.
 type Handlers struct {
 	svc         *Service
@@ -187,7 +208,7 @@ func (h *Handlers) patch(c *gin.Context) {
 // notifications — колокольчик.
 //
 // @Summary      Уведомления
-// @Description  Уведомления колокольчика за 30 дней, новые первыми, и число непрочитанных. Следующая страница — cursor из next_cursor.
+// @Description  Уведомления колокольчика за 30 дней, новые первыми. unread_count — только на первой странице (без cursor). Следующая страница — cursor из next_cursor.
 // @Tags         me
 // @Produce      json
 // @Security     BearerAuth
@@ -208,15 +229,12 @@ func (h *Handlers) notifications(c *gin.Context) {
 		}
 	}
 	if v := c.Query("limit"); v != "" {
-		if limit, err = strconv.Atoi(v); err != nil || limit < 1 || limit > notification.MaxLimit {
+		if limit, err = strconv.Atoi(v); err != nil || limit == 0 {
 			httpserver.Abort(c, fieldError("limit", "от 1 до 200"))
 			return
 		}
 	}
-	page, err := notification.List(c.Request.Context(), h.svc.db, auth.CurrentUser(c).ID, unread, limit, c.Query("cursor"))
-	if errors.Is(err, notification.ErrBadCursor) {
-		err = fieldError("cursor", "некорректный курсор")
-	}
+	page, err := h.svc.Notifications(c.Request.Context(), auth.CurrentUser(c), unread, limit, c.Query("cursor"))
 	if err != nil {
 		httpserver.Abort(c, err)
 		return
@@ -225,7 +243,7 @@ func (h *Handlers) notifications(c *gin.Context) {
 }
 
 type readRequest struct {
-	IDs []uuid.UUID `json:"ids" binding:"max=200"`
+	IDs []uuid.UUID `json:"ids"`
 }
 
 type readResponse struct {
@@ -247,10 +265,12 @@ type readResponse struct {
 // @Router       /api/v1/me/notifications/read [post]
 func (h *Handlers) read(c *gin.Context) {
 	var req readRequest
-	if c.Request.ContentLength != 0 && !httpserver.Bind(c, &req) {
+	// Пустое тело (в том числе chunked, где длина неизвестна) — «отметить все».
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpserver.Abort(c, apierr.FromBinding(err))
 		return
 	}
-	n, err := notification.MarkRead(c.Request.Context(), h.svc.db, auth.CurrentUser(c).ID, req.IDs, h.svc.now())
+	n, err := h.svc.MarkRead(c.Request.Context(), auth.CurrentUser(c), req.IDs)
 	if err != nil {
 		httpserver.Abort(c, err)
 		return

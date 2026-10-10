@@ -55,9 +55,13 @@ func TestListReadAndCleanup(t *testing.T) {
 	var ids []uuid.UUID
 	cursor := ""
 	for {
-		page, err := notification.List(context.Background(), g, u.ID, false, 2, cursor)
+		page, err := notification.List(context.Background(), g, u.ID, false, 2, cursor, time.Now())
 		require.NoError(t, err)
-		require.EqualValues(t, 5, page.UnreadCount)
+		if cursor == "" {
+			require.EqualValues(t, 5, *page.UnreadCount)
+		} else {
+			require.Nil(t, page.UnreadCount, "счётчик — только на первой странице")
+		}
 		for _, n := range page.Items {
 			ids = append(ids, n.ID)
 			require.JSONEq(t, `{"project_key":"TM"}`, string(n.Payload))
@@ -73,18 +77,24 @@ func TestListReadAndCleanup(t *testing.T) {
 	n, err := notification.MarkRead(context.Background(), g, u.ID, []uuid.UUID{ids[0], ids[1], foreign.ID}, time.Now())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, n, "чужое уведомление не отмечается")
-	page, err := notification.List(context.Background(), g, u.ID, true, 0, "")
+	page, err := notification.List(context.Background(), g, u.ID, true, 0, "", time.Now())
 	require.NoError(t, err)
 	require.Len(t, page.Items, 3)
-	require.EqualValues(t, 3, page.UnreadCount)
+	require.EqualValues(t, 3, *page.UnreadCount)
 	n, err = notification.MarkRead(context.Background(), g, u.ID, nil, time.Now())
 	require.NoError(t, err)
 	require.EqualValues(t, 3, n, "без ids — все")
 
-	_, err = notification.List(context.Background(), g, u.ID, false, 0, "garbage!")
+	_, err = notification.List(context.Background(), g, u.ID, false, 0, "garbage!", time.Now())
 	require.ErrorIs(t, err, notification.ErrBadCursor)
+	_, err = notification.List(context.Background(), g, u.ID, false, 500, "", time.Now())
+	require.ErrorIs(t, err, notification.ErrBadLimit)
 
-	require.NoError(t, g.Exec(`UPDATE notifications SET created_at = now() - interval '31 days' WHERE id = ?`, ids[0]).Error)
+	require.NoError(t, g.Exec(`UPDATE notifications SET created_at = now() - interval '31 days', read_at = NULL WHERE id = ?`, ids[0]).Error)
+	page, err = notification.List(context.Background(), g, u.ID, false, 0, "", time.Now())
+	require.NoError(t, err)
+	require.Len(t, page.Items, 4, "старше 30 дней не показывается и до уборки")
+	require.Zero(t, *page.UnreadCount, "и не считается непрочитанным")
 	_, err = notification.Cleanup(context.Background(), g, time.Now())
 	require.NoError(t, err)
 	require.EqualValues(t, 4, count(t, g, u), "старше 30 дней удалено")
@@ -107,7 +117,7 @@ func TestMemberEventsCreateNotifications(t *testing.T) {
 	u, manager := newUser(t, g), newUser(t, g)
 	pid := uuid.New()
 
-	for _, et := range []string{events.MemberAdded, events.MemberRoleChanged, events.MemberRemoved} {
+	for _, et := range []string{events.MemberAdded, events.MemberRoleChanged, events.MemberRemoved} { // смена роли — не в колокольчик
 		require.NoError(t, d.ProcessTask(context.Background(), envelope(t, et, map[string]any{
 			"project_id": pid, "key": "TM", "user_id": u.ID, "role": "member", "old_role": "manager", "by": manager.ID,
 		})))
@@ -116,12 +126,12 @@ func TestMemberEventsCreateNotifications(t *testing.T) {
 		"project_id": pid, "key": "TM", "user_id": manager.ID, "role": "manager", "by": manager.ID,
 	})))
 
-	page, err := notification.List(context.Background(), g, u.ID, false, 0, "")
+	page, err := notification.List(context.Background(), g, u.ID, false, 0, "", time.Now())
 	require.NoError(t, err)
-	require.Len(t, page.Items, 3)
+	require.Len(t, page.Items, 2, "§7.7: добавление и исключение, без смены роли")
 	require.Equal(t, notification.TypeMemberRemoved, page.Items[0].Type)
 	var payload map[string]any
-	require.NoError(t, json.Unmarshal(page.Items[2].Payload, &payload))
+	require.NoError(t, json.Unmarshal(page.Items[1].Payload, &payload))
 	require.Equal(t, "TM", payload["project_key"])
 	require.EqualValues(t, 0, count(t, g, manager), "о собственном действии не уведомляем")
 }

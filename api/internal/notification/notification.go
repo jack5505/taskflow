@@ -20,9 +20,8 @@ import (
 
 // Типы уведомлений §7.7. Новый тип добавляется сюда вместе с обработчиком события.
 const (
-	TypeMemberAdded       = "member_added"
-	TypeMemberRemoved     = "member_removed"
-	TypeMemberRoleChanged = "member_role_changed"
+	TypeMemberAdded   = "member_added"
+	TypeMemberRemoved = "member_removed"
 )
 
 // Retention — §3.8: уведомления хранятся 30 дней.
@@ -72,22 +71,30 @@ func Create(ctx context.Context, db *gorm.DB, n New) error {
 // MaxLimit — не больше 200 на страницу (как у прочих списков §9.2).
 const MaxLimit = 200
 
-var ErrBadCursor = errors.New("notification: некорректный курсор")
+var (
+	ErrBadCursor = errors.New("notification: некорректный курсор")
+	ErrBadLimit  = errors.New("notification: limit от 1 до 200")
+)
 
-// Page — уведомления пользователя, новые первыми.
+// Page — уведомления пользователя, новые первыми. UnreadCount — только на первой странице.
 type Page struct {
 	Items       []Notification `json:"items"`
-	UnreadCount int64          `json:"unread_count"`
+	UnreadCount *int64         `json:"unread_count,omitempty"`
 	NextCursor  string         `json:"next_cursor"`
 }
 
-// List — уведомления пользователя за 30 дней с курсором по (created_at, id).
-func List(ctx context.Context, db *gorm.DB, userID uuid.UUID, unreadOnly bool, limit int, cursor string) (*Page, error) {
-	if limit <= 0 || limit > MaxLimit {
+// List — уведомления пользователя за последние 30 дней (окно — в самом запросе: уборка раз в сутки
+// его только догоняет) с курсором по (created_at, id). limit 0 — 50.
+func List(ctx context.Context, db *gorm.DB, userID uuid.UUID, unreadOnly bool, limit int, cursor string, now time.Time) (*Page, error) {
+	if limit == 0 {
 		limit = 50
 	}
-	where := []string{"user_id = ?"}
-	args := []any{userID}
+	if limit < 1 || limit > MaxLimit {
+		return nil, ErrBadLimit
+	}
+	since := now.Add(-Retention)
+	where := []string{"user_id = ?", "created_at >= ?"}
+	args := []any{userID, since}
 	if unreadOnly {
 		where = append(where, "read_at IS NULL")
 	}
@@ -109,9 +116,14 @@ func List(ctx context.Context, db *gorm.DB, userID uuid.UUID, unreadOnly bool, l
 		last := page.Items[limit-1]
 		page.NextCursor = base64.RawURLEncoding.EncodeToString([]byte(last.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + last.ID.String()))
 	}
-	if err := db.WithContext(ctx).Model(&Notification{}).Where("user_id = ? AND read_at IS NULL", userID).
-		Count(&page.UnreadCount).Error; err != nil {
-		return nil, fmt.Errorf("notification: unread: %w", err)
+	if cursor == "" {
+		var unread int64
+		if err := db.WithContext(ctx).Model(&Notification{}).
+			Where("user_id = ? AND read_at IS NULL AND created_at >= ?", userID, since).
+			Count(&unread).Error; err != nil {
+			return nil, fmt.Errorf("notification: unread: %w", err)
+		}
+		page.UnreadCount = &unread
 	}
 	return page, nil
 }

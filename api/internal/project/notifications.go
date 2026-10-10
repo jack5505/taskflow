@@ -1,11 +1,8 @@
 package project
 
 import (
-	"encoding/json"
-	"fmt"
-	"sort"
-
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/model"
 )
 
 // Notification* — события бота в группе проекта (ТЗ §8.6). В notification_settings хранятся
@@ -25,7 +22,7 @@ const (
 )
 
 // notificationDefaults — столбец «По умолчанию» таблицы §8.6.
-var notificationDefaults = map[string]bool{
+var notificationDefaults = model.Toggles{
 	NotifyTaskCreated: true, NotifyTaskTaken: true, NotifyTaskReturned: true, NotifyTaskReview: true,
 	NotifyTaskRework: true, NotifyTaskAccepted: true, NotifyTaskCancelled: true,
 	NotifySprintStarted: true, NotifySprintClosed: true,
@@ -34,51 +31,13 @@ var notificationDefaults = map[string]bool{
 
 // EffectiveNotifications — настройки событий проекта с умолчаниями §8.6.
 func EffectiveNotifications(stored events.JSON) map[string]bool {
-	out := make(map[string]bool, len(notificationDefaults))
-	for k, v := range notificationDefaults {
-		out[k] = v
-	}
-	var overrides map[string]bool
-	if len(stored) > 0 && json.Unmarshal(stored, &overrides) == nil {
-		for k, v := range overrides {
-			if _, ok := notificationDefaults[k]; ok {
-				out[k] = v
-			}
-		}
-	}
-	return out
+	return notificationDefaults.Effective(stored)
 }
 
 // MergeNotifications накладывает изменения на сохранённые настройки; неизвестный ключ — ошибка.
 func MergeNotifications(stored events.JSON, changes map[string]bool) (events.JSON, error) {
-	for k := range changes {
-		if _, ok := notificationDefaults[k]; !ok {
-			return nil, fmt.Errorf("неизвестное событие %q, допустимые: %v", k, NotificationKeys())
-		}
-	}
-	merged := EffectiveNotifications(stored)
-	for k, v := range changes {
-		merged[k] = v
-	}
-	diff := map[string]bool{}
-	for k, v := range merged {
-		if notificationDefaults[k] != v {
-			diff[k] = v
-		}
-	}
-	b, err := json.Marshal(diff)
-	if err != nil {
-		return nil, err
-	}
-	return events.JSON(b), nil
+	return notificationDefaults.Merge(stored, changes)
 }
 
 // NotificationKeys — допустимые ключи по алфавиту.
-func NotificationKeys() []string {
-	keys := make([]string, 0, len(notificationDefaults))
-	for k := range notificationDefaults {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
+func NotificationKeys() []string { return notificationDefaults.Keys() }
