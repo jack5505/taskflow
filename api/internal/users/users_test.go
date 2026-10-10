@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -121,8 +123,11 @@ func pendingInvites(t *testing.T, userID string) int {
 	t.Helper()
 	insp := asynq.NewInspector(queue.Opts(testutil.SharedRedisAddr(t)))
 	defer func() { _ = insp.Close() }()
-	tasks, err := insp.ListPendingTasks(queue.QueueDefault, asynq.PageSize(1000))
+	pending, err := insp.ListPendingTasks(queue.QueueDefault, asynq.PageSize(1000))
 	require.NoError(t, err)
+	scheduled, err := insp.ListScheduledTasks(queue.QueueDefault, asynq.PageSize(1000))
+	require.NoError(t, err)
+	tasks := append(pending, scheduled...)
 	n := 0
 	for _, tk := range tasks {
 		if tk.Type == auth.TaskPasswordInvite && strings.Contains(string(tk.Payload), userID) {
@@ -182,9 +187,15 @@ func TestUsersRights(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), manager.Email)
 
+	inactive := f.user(t, false)
+	require.NoError(t, f.db.Model(inactive).Update("is_active", false).Error)
 	managerToken := f.login(t, manager).AccessToken
 	rec, _ = f.do(t, "GET", "/api/v1/users", managerToken, "")
 	require.Equal(t, http.StatusOK, rec.Code, "менеджер видит список для добавления в проект")
+	require.Contains(t, rec.Body.String(), member.Email)
+	require.NotContains(t, rec.Body.String(), inactive.Email, "менеджеру — только активные")
+	require.NotContains(t, rec.Body.String(), "is_system_admin", "менеджеру — без служебных полей")
+	require.NotContains(t, rec.Body.String(), "telegram")
 
 	memberToken := f.login(t, member).AccessToken
 	rec, body := f.do(t, "GET", "/api/v1/users", memberToken, "")
@@ -280,14 +291,19 @@ func TestDeactivateLastManager(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	require.Equal(t, apierr.CodeLastManager, errCode(body))
 	details := body["error"].(map[string]any)["details"].(map[string]any)
-	require.Equal(t, []any{p.Key}, details["projects"], "деактивированный второй менеджер не считается, удалённый проект не мешает")
+	keys := []string{p.Key, deleted.Key}
+	sort.Strings(keys)
+	require.Equal(t, []any{keys[0], keys[1]}, details["projects"],
+		"деактивированный второй менеджер не считается; удалённый проект тоже держит — его могут восстановить")
 
 	var got user.User
 	require.NoError(t, f.db.First(&got, "id = ?", u.ID).Error)
 	require.True(t, got.IsActive)
 	require.Equal(t, "Пользователь", got.DisplayName, "при отказе ничего не меняется")
 
-	require.NoError(t, f.db.Create(&project.Member{ProjectID: p.ID, UserID: f.user(t, false).ID, Role: project.RoleManager}).Error)
+	for _, pid := range []uuid.UUID{p.ID, deleted.ID} {
+		require.NoError(t, f.db.Create(&project.Member{ProjectID: pid, UserID: f.user(t, false).ID, Role: project.RoleManager}).Error)
+	}
 	rec, _ = f.do(t, "PATCH", "/api/v1/users/"+u.ID.String(), admin, `{"is_active":false}`)
 	require.Equal(t, http.StatusOK, rec.Code, "после назначения второго менеджера — можно")
 }
@@ -318,4 +334,66 @@ func TestConcurrentDeactivationKeepsOneManager(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, failed, "ровно одна деактивация отклонена")
+}
+
+// onlyAdmin оставляет в общей базе пакета единственного активного администратора.
+func (f *fixture) onlyAdmin(t *testing.T, keep ...*user.User) {
+	t.Helper()
+	ids := []uuid.UUID{}
+	for _, u := range keep {
+		ids = append(ids, u.ID)
+	}
+	require.NoError(t, f.db.Model(&user.User{}).Where("is_system_admin AND id NOT IN ?", ids).Update("is_system_admin", false).Error)
+}
+
+// Нельзя оставить систему без активного администратора: управлять пользователями станет некому.
+func TestLastAdminIsProtected(t *testing.T) {
+	f := newFixture(t)
+	me := f.user(t, true)
+	f.onlyAdmin(t, me)
+	token := f.login(t, me).AccessToken
+	path := "/api/v1/users/" + me.ID.String()
+
+	rec, _ := f.do(t, "PATCH", path, token, `{"is_active":false}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Equal(t, "is_active", fieldOf(t, rec))
+	rec, _ = f.do(t, "PATCH", path, token, `{"is_system_admin":false}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "is_system_admin", fieldOf(t, rec))
+
+	other := f.user(t, true)
+	rec, _ = f.do(t, "PATCH", "/api/v1/users/"+other.ID.String(), token, `{"is_system_admin":false}`)
+	require.Equal(t, http.StatusOK, rec.Code, "второго администратора снять можно")
+	rec, _ = f.do(t, "PATCH", path, token, `{"display_name":"Я"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "прочие изменения себе — можно")
+}
+
+// Два администратора одновременно снимают друг с друга флаг: проходит ровно один, без deadlock.
+func TestConcurrentAdminDemotionKeepsOneAdmin(t *testing.T) {
+	f := newFixture(t)
+	a, b := f.user(t, true), f.user(t, true)
+	f.onlyAdmin(t, a, b)
+
+	off := false
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i, u := range []*user.User{a, b} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = f.svc.Update(context.Background(), u.ID, users.UpdateInput{IsSystemAdmin: &off})
+		}()
+	}
+	wg.Wait()
+	failed := 0
+	for _, err := range errs {
+		if err != nil {
+			require.Equal(t, apierr.CodeValidation, apierr.From(err).Code, err.Error())
+			failed++
+		}
+	}
+	require.Equal(t, 1, failed)
+	var n int64
+	require.NoError(t, f.db.Model(&user.User{}).Where("is_system_admin AND is_active").Count(&n).Error)
+	require.EqualValues(t, 1, n)
 }

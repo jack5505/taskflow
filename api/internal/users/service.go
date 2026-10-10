@@ -5,9 +5,7 @@ package users
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -57,10 +55,20 @@ func (s *Service) CanList(ctx context.Context, u *user.User) (bool, error) {
 	return ok, nil
 }
 
-// List — все пользователи по имени.
-func (s *Service) List(ctx context.Context) ([]user.User, error) {
+// ListAll — все пользователи по имени (администратор системы).
+func (s *Service) ListAll(ctx context.Context) ([]user.User, error) {
 	var list []user.User
 	if err := s.db.WithContext(ctx).Order("display_name, email").Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("users: list: %w", err)
+	}
+	return list, nil
+}
+
+// ListBrief — активные пользователи без служебных полей: менеджеру для добавления в проект.
+func (s *Service) ListBrief(ctx context.Context) ([]user.Brief, error) {
+	list := []user.Brief{}
+	if err := s.db.WithContext(ctx).Model(&user.User{}).Where("is_active").
+		Order("display_name, email").Find(&list).Error; err != nil {
 		return nil, fmt.Errorf("users: list: %w", err)
 	}
 	return list, nil
@@ -137,12 +145,30 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 
 	var u user.User
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Снятие админа или деактивация может оставить систему без администратора: сначала
+		// блокируем всех активных администраторов (в одном порядке, до строки пользователя —
+		// иначе две такие транзакции навстречу друг другу встанут в deadlock).
+		var admins []uuid.UUID
+		if (in.IsActive != nil && !*in.IsActive) || (in.IsSystemAdmin != nil && !*in.IsSystemAdmin) {
+			if err := tx.Raw(`SELECT id FROM users WHERE is_system_admin AND is_active ORDER BY id FOR UPDATE`).
+				Scan(&admins).Error; err != nil {
+				return fmt.Errorf("users: lock admins: %w", err)
+			}
+		}
 		res := tx.Raw(`SELECT * FROM users WHERE id = ? FOR UPDATE`, id).Scan(&u)
 		if res.Error != nil {
 			return fmt.Errorf("users: find: %w", res.Error)
 		}
 		if res.RowsAffected == 0 {
 			return ErrNotFound
+		}
+		if u.IsSystemAdmin && u.IsActive && len(admins) == 1 {
+			if in.IsActive != nil && !*in.IsActive {
+				return fieldError("is_active", "это последний активный администратор системы")
+			}
+			if in.IsSystemAdmin != nil && !*in.IsSystemAdmin {
+				return fieldError("is_system_admin", "это последний активный администратор системы")
+			}
 		}
 		if in.IsActive != nil && *in.IsActive != u.IsActive {
 			if *in.IsActive {
@@ -164,7 +190,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 	return &u, nil
 }
 
-// deactivateTx — деактивация §3.1 в транзакции обновления: проверка «единственного менеджера»,
+// deactivateTx — деактивация §3.1 в транзакции обновления: проверка «единственного менеджера»
+// (в том числе удалённых проектов — после восстановления у проекта должен быть менеджер),
 // снятие привязки Telegram, отзыв всех сессий (§9.1), событие user.deactivated (§9.4).
 // Остановка таймера, освобождение задач и уведомление менеджеров добавят задачи #33, #20 и #13.
 func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
@@ -176,7 +203,7 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	}
 	var keys []string
 	if err := tx.Raw(`SELECT p.key FROM project_members m JOIN projects p ON p.id = m.project_id
-		WHERE m.user_id = ? AND m.role = 'manager' AND p.deleted_at IS NULL
+		WHERE m.user_id = ? AND m.role = 'manager'
 		  AND NOT EXISTS (
 			SELECT 1 FROM project_members o JOIN users ou ON ou.id = o.user_id
 			WHERE o.project_id = m.project_id AND o.role = 'manager' AND o.user_id <> m.user_id AND ou.is_active)
@@ -198,8 +225,8 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 }
 
 func displayName(name string) (string, error) {
-	name = strings.TrimSpace(name)
-	if n := utf8.RuneCountInString(name); n < 1 || n > 80 {
+	name, ok := user.NormalizeDisplayName(name)
+	if !ok {
 		return "", fieldError("display_name", "от 1 до 80 символов")
 	}
 	return name, nil

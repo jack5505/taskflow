@@ -68,7 +68,10 @@ export interface UserUser {
 }
 
 export interface UsersCreateRequest {
-  /** @maxLength 80 */
+  /**
+   * 1–80 после обрезки пробелов проверяет сервис
+   * @maxLength 200
+   */
   display_name: string;
   /** @maxLength 254 */
   email: string;
@@ -81,7 +84,7 @@ export interface UsersCreateRequest {
 }
 
 export interface UsersUpdateRequest {
-  /** @maxLength 80 */
+  /** @maxLength 200 */
   display_name?: string;
   is_active?: boolean;
   is_system_admin?: boolean;
@@ -479,7 +482,7 @@ export class Api<
       }),
 
     /**
-     * @description Все пользователи по имени. Доступно администратору системы и менеджерам проектов (для добавления в проект).
+     * @description Администратору — все пользователи целиком (user.User). Менеджеру проекта — только активные и только id, email, display_name (user.Brief) — для добавления в проект.
      *
      * @tags users
      * @name V1UsersList
@@ -517,7 +520,7 @@ export class Api<
       }),
 
     /**
-     * @description Меняются только переданные поля. is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.
+     * @description Меняются только переданные поля. Последнего активного администратора системы нельзя деактивировать или лишить флага (400, поле is_active / is_system_admin). is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.
      *
      * @tags users
      * @name V1UsersPartialUpdate

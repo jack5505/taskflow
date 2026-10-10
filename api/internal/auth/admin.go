@@ -44,10 +44,10 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 		return nil, 0, ErrBadEmail
 	}
 	if displayName == "" {
-		displayName = truncateRunes(email[:strings.IndexByte(email, '@')], 80)
+		displayName = truncateRunes(email[:strings.IndexByte(email, '@')], user.MaxDisplayNameRunes)
 	}
-	displayName = strings.TrimSpace(displayName)
-	if n := utf8.RuneCountInString(displayName); n < 1 || n > 80 {
+	displayName, ok := user.NormalizeDisplayName(displayName)
+	if !ok {
 		return nil, 0, ErrBadDisplayName
 	}
 
@@ -145,15 +145,21 @@ func (s *Service) EnqueueInvite(ctx context.Context, userID uuid.UUID) error {
 		return err
 	}
 	_, err = s.jobs.EnqueueContext(ctx, asynq.NewTask(TaskPasswordInvite, payload),
-		asynq.Queue(queue.QueueDefault), asynq.MaxRetry(inviteMaxRetry), asynq.Timeout(time.Minute))
+		asynq.Queue(queue.QueueDefault), asynq.MaxRetry(inviteMaxRetry), asynq.Timeout(time.Minute),
+		asynq.ProcessIn(inviteDelay))
 	if err != nil {
 		return fmt.Errorf("auth: enqueue invite: %w", err)
 	}
 	return nil
 }
 
-// inviteMaxRetry — повторы, пока транзакция создания не закоммитится (воркер может успеть раньше).
-const inviteMaxRetry = 5
+// inviteDelay — задание ставится до коммита; пауза, чтобы воркер не обгонял коммит.
+// Если всё же обогнал — задание повторится (inviteMaxRetry). Потерянное или истёкшее
+// приглашение пользователь заменяет сам — восстановлением пароля на странице входа.
+const (
+	inviteDelay    = 2 * time.Second
+	inviteMaxRetry = 5
+)
 
 // PasswordInviteHandler — обработчик TaskPasswordInvite в воркере.
 func PasswordInviteHandler(s *Service) asynq.HandlerFunc {

@@ -31,11 +31,11 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 // list — список пользователей.
 //
 // @Summary      Пользователи
-// @Description  Все пользователи по имени. Доступно администратору системы и менеджерам проектов (для добавления в проект).
+// @Description  Администратору — все пользователи целиком (user.User). Менеджеру проекта — только активные и только id, email, display_name (user.Brief) — для добавления в проект.
 // @Tags         users
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200  {array}   user.User
+// @Success      200  {array}   user.User  "администратору; менеджеру — массив user.Brief"
 // @Failure      401  {object}  apierr.Response
 // @Failure      403  {object}  apierr.Response  "FORBIDDEN: не администратор и не менеджер"
 // @Router       /api/v1/users [get]
@@ -49,7 +49,16 @@ func (h *Handlers) list(c *gin.Context) {
 		httpserver.Abort(c, ErrForbiddenList)
 		return
 	}
-	list, err := h.svc.List(c.Request.Context())
+	if !auth.CurrentUser(c).IsSystemAdmin {
+		brief, err := h.svc.ListBrief(c.Request.Context())
+		if err != nil {
+			httpserver.Abort(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, brief)
+		return
+	}
+	list, err := h.svc.ListAll(c.Request.Context())
 	if err != nil {
 		httpserver.Abort(c, err)
 		return
@@ -59,7 +68,7 @@ func (h *Handlers) list(c *gin.Context) {
 
 type createRequest struct {
 	Email         string `json:"email" binding:"required,email,max=254"`
-	DisplayName   string `json:"display_name" binding:"required,max=80"`
+	DisplayName   string `json:"display_name" binding:"required,max=200"` // 1–80 после обрезки пробелов проверяет сервис
 	Timezone      string `json:"timezone" binding:"max=64" example:"Europe/Moscow"`
 	IsSystemAdmin bool   `json:"is_system_admin"`
 }
@@ -92,7 +101,7 @@ func (h *Handlers) create(c *gin.Context) {
 }
 
 type updateRequest struct {
-	DisplayName   *string `json:"display_name" binding:"omitempty,max=80"`
+	DisplayName   *string `json:"display_name" binding:"omitempty,max=200"`
 	Timezone      *string `json:"timezone" binding:"omitempty,max=64"`
 	IsSystemAdmin *bool   `json:"is_system_admin"`
 	IsActive      *bool   `json:"is_active"`
@@ -101,7 +110,7 @@ type updateRequest struct {
 // update — изменение и деактивация пользователя.
 //
 // @Summary      Изменить пользователя
-// @Description  Меняются только переданные поля. is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.
+// @Description  Меняются только переданные поля. Последнего активного администратора системы нельзя деактивировать или лишить флага (400, поле is_active / is_system_admin). is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.
 // @Tags         users
 // @Accept       json
 // @Produce      json

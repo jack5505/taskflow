@@ -2,6 +2,11 @@
 package user
 
 import (
+	"strings"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
 )
@@ -35,4 +40,23 @@ func New(email, passwordHash, displayName string) *User {
 		IsActive:             true,
 		NotificationSettings: events.JSON("{}"),
 	}
+}
+
+// MaxDisplayNameRunes — §3.1: display_name от 1 до 80 символов.
+const MaxDisplayNameRunes = 80
+
+// NormalizeDisplayName обрезает пробелы по краям и проверяет длину §3.1. Одно правило
+// для API (/users) и команды admin create.
+func NormalizeDisplayName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	n := utf8.RuneCountInString(name)
+	return name, n >= 1 && n <= MaxDisplayNameRunes
+}
+
+// Brief — пользователь в списке для менеджера (§9.2: «для добавления в проект»): без привязки
+// Telegram и флагов администратора.
+type Brief struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
 }

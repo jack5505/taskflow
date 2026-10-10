@@ -258,7 +258,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Все пользователи по имени. Доступно администратору системы и менеджерам проектов (для добавления в проект).",
+                "description": "Администратору — все пользователи целиком (user.User). Менеджеру проекта — только активные и только id, email, display_name (user.Brief) — для добавления в проект.",
                 "produces": [
                     "application/json"
                 ],
@@ -268,7 +268,7 @@ const docTemplate = `{
                 "summary": "Пользователи",
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "администратору; менеджеру — массив user.Brief",
                         "schema": {
                             "type": "array",
                             "items": {
@@ -353,7 +353,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Меняются только переданные поля. is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.",
+                "description": "Меняются только переданные поля. Последнего активного администратора системы нельзя деактивировать или лишить флага (400, поле is_active / is_system_admin). is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.",
                 "consumes": [
                     "application/json"
                 ],
@@ -589,8 +589,9 @@ const docTemplate = `{
             ],
             "properties": {
                 "display_name": {
+                    "description": "1–80 после обрезки пробелов проверяет сервис",
                     "type": "string",
-                    "maxLength": 80
+                    "maxLength": 200
                 },
                 "email": {
                     "type": "string",
@@ -611,7 +612,7 @@ const docTemplate = `{
             "properties": {
                 "display_name": {
                     "type": "string",
-                    "maxLength": 80
+                    "maxLength": 200
                 },
                 "is_active": {
                     "type": "boolean"
