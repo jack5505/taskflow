@@ -5,6 +5,18 @@
 //	taskflow api     — HTTP API, веб-интерфейс (embed) и приём webhook Telegram
 //	taskflow worker  — очередь asynq: outbox, сообщения бота, письма, таймеры, сводки
 //	taskflow admin   — служебные команды, например создание первого администратора (ТЗ §7.1)
+//
+// Общие аннотации swag (ТЗ §10.3: Swagger 2.0 из кода, UI на /api/docs):
+//
+//	@title                      TaskFlow API
+//	@version                    1.0
+//	@description                Система управления задачами и временем с Telegram-ботом. Единый формат ошибок — ТЗ §9.3.
+//	@BasePath                   /
+//	@schemes                    https http
+//	@securityDefinitions.apikey BearerAuth
+//	@in                         header
+//	@name                       Authorization
+//	@description                JWT access-токен: "Bearer <token>" (ТЗ §9.1)
 package main
 
 import (

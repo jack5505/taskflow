@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gen:api": "swagger-typescript-api generate -p ../api/internal/docs/swagger.json -o src/api -n client.ts"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.104.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -19,6 +21,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
+    "swagger-typescript-api": "^13.13.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   }

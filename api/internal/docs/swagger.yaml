@@ -1,0 +1,52 @@
+basePath: /
+info:
+  contact: {}
+  description: Система управления задачами и временем с Telegram-ботом. Единый формат
+    ошибок — ТЗ §9.3.
+  title: TaskFlow API
+  version: "1.0"
+paths:
+  /api/v1/ping:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 'pong: true'
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+      summary: Проверка связи
+      tags:
+      - system
+  /health:
+    get:
+      description: Проверяет PostgreSQL и Redis. 200 — всё доступно, 503 — есть недоступный
+        компонент.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 'status: ok'
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: 'status: degraded'
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Состояние сервиса
+      tags:
+      - system
+schemes:
+- https
+- http
+securityDefinitions:
+  BearerAuth:
+    description: 'JWT access-токен: "Bearer <token>" (ТЗ §9.1)'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

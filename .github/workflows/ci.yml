@@ -19,6 +19,10 @@ jobs:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
       - run: go vet ./...
+      - name: Swagger в репозитории совпадает с аннотациями (make swag)
+        run: |
+          sh scripts/swag.sh
+          git diff --exit-code -- internal/docs
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.6
@@ -40,6 +44,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      - name: TypeScript-клиент совпадает со swagger.json (make web-gen-api)
+        run: |
+          npm run gen:api
+          git diff --exit-code -- src/api
       - run: npm run lint
       - run: npm run build
 
