@@ -6,7 +6,7 @@ set -eu
 
 THRESHOLD="${COVERAGE_THRESHOLD:-80}"
 PROFILE="${1:-coverage.out}"
-EXCLUDE='/cmd/|/internal/testutil/|/internal/web/|/internal/docs/'
+EXCLUDE='/cmd/|/internal/testutil$|/internal/web$|/internal/docs$|/migrations$'
 
 PKGS=$(go list ./... | grep -Ev "$EXCLUDE" | tr '\n' ',' | sed 's/,$//')
 

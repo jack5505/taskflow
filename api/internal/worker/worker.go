@@ -4,8 +4,10 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -23,6 +25,14 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	defer func() { _ = client.Close() }()
 	rdb := queue.NewRedis(cfg.RedisAddr)
 	defer func() { _ = rdb.Close() }()
+
+	// Сервер asynq без Redis не падает, а молча повторяет подключение. Проверяем сами:
+	// пусть контейнер упадёт и перезапустится, чем будет выглядеть живым без очереди.
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := queue.Ping(pingCtx, rdb); err != nil {
+		return fmt.Errorf("worker: %w", err)
+	}
 
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)

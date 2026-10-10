@@ -49,6 +49,8 @@ func TestRunFailsFastWithoutRedis(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	start := time.Now()
 	err := worker.Run(ctx, cfg, g)
-	require.Error(t, err, "сервер asynq не стартует без Redis")
+	require.Error(t, err, "воркер без Redis должен завершиться с ошибкой")
+	require.Less(t, time.Since(start), 15*time.Second)
 }
