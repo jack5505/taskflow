@@ -21,6 +21,8 @@ import (
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/db"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
+	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/worker"
 	"github.com/jack5505/taskflow/api/migrations"
 )
 
@@ -76,7 +78,10 @@ func runAPI(ctx context.Context, cfg *config.Config) error {
 	if err := db.Migrate(migrateCtx, cfg.DatabaseURL, migrations.FS); err != nil {
 		return err
 	}
-	return httpserver.New(cfg, g).Run(ctx)
+	rdb := queue.NewRedis(cfg.RedisAddr)
+	defer func() { _ = rdb.Close() }()
+
+	return httpserver.New(cfg, g, rdb).Run(ctx)
 }
 
 func openDB(ctx context.Context, cfg *config.Config) (*gorm.DB, error) {
@@ -85,11 +90,14 @@ func openDB(ctx context.Context, cfg *config.Config) (*gorm.DB, error) {
 	return db.Open(openCtx, cfg.DatabaseURL)
 }
 
-// runWorker — заглушка до реализации очереди (issue #2).
-func runWorker(ctx context.Context, _ *config.Config) error {
-	slog.Info("worker: not implemented yet, waiting for shutdown")
-	<-ctx.Done()
-	return nil
+// runWorker: релей outbox и сервер asynq (ТЗ §9.4, §10.1). Миграции применяет api.
+func runWorker(ctx context.Context, cfg *config.Config) error {
+	g, err := openDB(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close(g) }()
+	return worker.Run(ctx, cfg, g)
 }
 
 // runAdmin — заглушка до реализации CLI (issue #11).
