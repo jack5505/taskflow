@@ -326,8 +326,16 @@ func (s *Service) History(ctx context.Context, t *Task) ([]History, error) {
 
 // writeHistory — запись §3.7 в транзакции изменения; кто и откуда — из контекста запроса.
 func writeHistory(tx *gorm.DB, taskID uuid.UUID, field string, oldValue, newValue any) error {
+	return writeHistoryNote(tx, taskID, field, oldValue, newValue, "")
+}
+
+// writeHistoryNote — запись истории с пояснением (например, «снят при деактивации»).
+func writeHistoryNote(tx *gorm.DB, taskID uuid.UUID, field string, oldValue, newValue any, note string) error {
 	actor, source := audit.From(tx.Statement.Context)
 	h := History{ID: uuid.New(), TaskID: taskID, UserID: actor, Field: field, Source: historySource(source)}
+	if note != "" {
+		h.Note = &note
+	}
 	var err error
 	if h.OldValue, err = jsonValue(oldValue); err != nil {
 		return err

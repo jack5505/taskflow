@@ -15,6 +15,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
+	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -206,8 +207,14 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 // deactivateTx — деактивация §3.1 в транзакции обновления: проверка «единственного менеджера»
 // (в том числе удалённых проектов — после восстановления у проекта должен быть менеджер),
 // снятие привязки Telegram, отзыв всех сессий (§9.1), событие user.deactivated (§9.4).
-// Остановка таймера, освобождение задач и уведомление менеджеров добавят задачи #33, #20 и #13.
+// Остановку таймера добавит задача таймера (#33).
 func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
+	// §3.1: открытые задачи освобождаются. Задачи блокируются раньше проектов — тот же порядок
+	// «задача → проект», что у смены статуса, иначе встречные транзакции дали бы deadlock.
+	released, err := task.ReleaseOnDeactivation(tx, u.ID)
+	if err != nil {
+		return err
+	}
 	// Блокируем проекты, где он менеджер: параллельная деактивация второго менеджера того же
 	// проекта дождётся этой транзакции и увидит её результат.
 	if err := tx.Exec(`SELECT p.id FROM projects p JOIN project_members m ON m.project_id = p.id
@@ -237,7 +244,7 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	if err := audit.Write(tx, audit.Record{Action: audit.UserDeactivated, EntityType: "user", EntityID: u.ID.String()}); err != nil {
 		return err
 	}
-	return events.Publish(tx, events.UserDeactivated, map[string]any{"user_id": u.ID})
+	return events.Publish(tx, events.UserDeactivated, map[string]any{"user_id": u.ID, "released_tasks": released})
 }
 
 // changed — значения полей пользователя до и после для журнала; только реально меняющиеся.

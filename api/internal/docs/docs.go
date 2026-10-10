@@ -1224,6 +1224,134 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tasks/{task_key}/take": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Назначение себя и переход todo→in_progress одной транзакцией с блокировкой строки задачи (§8.4): из одновременных нажатий проходит одно. Задача уже у другого — 409 TASK_ALREADY_TAKEN (details.assignee); закрытая — 409 INVALID_TRANSITION. Повторный запрос того же исполнителя — 200 без изменений.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Взять в работу",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.Task"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "TASK_ALREADY_TAKEN, INVALID_TRANSITION, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_key}/transition": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Переходы и права — §4: todo→in_progress (исполнитель; любой участник, если исполнителя нет — он им становится; менеджер), in_progress→todo (исполнитель, менеджер; исполнитель очищается), in_progress→review (исполнитель, менеджер), review→in_progress (автор, менеджер; comment от 5 символов), review→done (автор, если он не исполнитель; менеджер), done→in_progress (менеджер; если исполнитель деактивирован — assignee_id; из закрытого спринта — в активный или бэклог), todo/in_progress/review→cancelled (менеджер; comment обязателен), cancelled→todo (менеджер; исполнитель и спринт очищаются). Иной переход — 409 INVALID_TRANSITION.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Сменить статус",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "новый статус",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.transitionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.Task"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED: нет причины, нужен активный исполнитель",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: переход не по правам §4",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "INVALID_TRANSITION, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [
@@ -1883,6 +2011,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "new_value": {},
+                "note": {
+                    "type": "string",
+                    "example": "снят при деактивации"
+                },
                 "old_value": {},
                 "source": {
                     "type": "string",
@@ -2046,6 +2178,31 @@ const docTemplate = `{
                         "task",
                         "bug",
                         "feature"
+                    ]
+                }
+            }
+        },
+        "task.transitionRequest": {
+            "type": "object",
+            "required": [
+                "to"
+            ],
+            "properties": {
+                "assignee_id": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string",
+                    "maxLength": 5000
+                },
+                "to": {
+                    "type": "string",
+                    "enum": [
+                        "todo",
+                        "in_progress",
+                        "review",
+                        "done",
+                        "cancelled"
                     ]
                 }
             }
