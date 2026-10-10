@@ -31,7 +31,7 @@ deploy/install-timers.sh                          # ежедневный бэк�
 
 ```bash
 cp deploy/nginx/tasks.157.173.109.181.nip.io.conf ~/mahalla-dev/nginx/extra/
-docker network connect taskflow_default mahalla-dev-nginx      # доступ к контейнеру taskflow-api
+docker network connect taskflow_default mahalla-dev-nginx      # доступ к alias taskflow-api
 docker exec mahalla-dev-nginx nginx -t && docker exec mahalla-dev-nginx nginx -s reload
 # сертификат Let's Encrypt тем же certbot и каталогом, что у остальных сайтов сервера:
 cd ~/mahalla-dev/nginx && docker run --rm --user "$(id -u):$(id -g)" \
@@ -49,4 +49,14 @@ docker exec mahalla-dev-nginx nginx -s reload
 - Внешняя копия: задайте в `.env` `BACKUP_REMOTE=<remote>:<bucket>/taskflow` и положите конфиг rclone в `deploy/rclone.conf` (в git не попадает). Без `BACKUP_REMOTE` скрипт только пишет об этом в лог.
 - Таймер: `deploy/install-timers.sh` ставит `taskflow-backup.timer` на 03:30 ежедневно; `systemctl --user list-timers taskflow-backup.timer`, журнал — `journalctl --user -u taskflow-backup.service`.
 - Восстановление: `deploy/restore.sh <метка>` останавливает `api` и `worker`, пересоздаёт базу из дампа, распаковывает вложения, поднимает сервисы. Спрашивает подтверждение (`RESTORE_YES=1` — без вопроса).
-- **Проверка раз в месяц:** `deploy/backup.sh check-$(date +%Y%m)`, затем `deploy/restore.sh check-…` на стенде в нерабочее время (или на отдельной копии каталога с другим `COMPOSE_PROJECT_NAME`), `curl /health` и выборочная проверка данных; результат — строкой в `backups/CHECKS.md`.
+- Восстановление сбрасывает Redis (`FLUSHALL`): очередь asynq, ключи идемпотентности `update_id` и отметки выполненных обработчиков описывают состояние базы до отката и после него только навредят.
+- **Проверка раз в месяц** — на копии стенда, не на боевом: `deploy/backup.sh check-$(date +%Y%m)`; затем
+  ```bash
+  git clone ~/taskflow ~/taskflow-check && cd ~/taskflow-check
+  cp ../taskflow/.env .env && sed -i 's/^COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=taskflowcheck/; s/^TASKFLOW_PORT=.*/TASKFLOW_PORT=8101/' .env
+  docker compose up -d --wait postgres redis && deploy/deploy.sh <текущий тег>
+  BACKUP_DIR=../taskflow/backups RESTORE_YES=1 deploy/restore.sh check-…
+  curl -s localhost:8101/health   # и выборочная проверка данных
+  docker compose down -v && cd .. && rm -rf ~/taskflow-check
+  ```
+  Имена контейнеров и томов зависят от `COMPOSE_PROJECT_NAME`, поэтому копия не задевает боевой стенд. Результат — строкой в `backups/CHECKS.md`.

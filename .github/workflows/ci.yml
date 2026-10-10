@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck -s bash deploy/*.sh && shellcheck -s sh api/scripts/*.sh
+      - run: shellcheck -x -s bash deploy/*.sh && shellcheck -s sh api/scripts/*.sh
 
   image:
     name: Docker image

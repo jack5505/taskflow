@@ -43,6 +43,9 @@ jobs:
     needs: image
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # история и теги нужны для списка изменений с прошлого релиза
+          fetch-tags: true
       - name: Список закрытых issues и PR с прошлого тега
         id: notes
         run: |

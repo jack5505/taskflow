@@ -3,7 +3,8 @@
 # Запускать один раз на сервере от пользователя, под которым работает docker compose.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+# shellcheck source=deploy/lib.sh
+. "$(dirname "$(readlink -f "$0")")/lib.sh"
 UNIT_DIR="$HOME/.config/systemd/user"
 mkdir -p "$UNIT_DIR"
 

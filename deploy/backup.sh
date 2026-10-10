@@ -1,28 +1,21 @@
 #!/usr/bin/env bash
-# Ежедневный бэкап (ТЗ §10.3): дамп PostgreSQL + архив каталога вложений,
-# хранение 30 дней локально, копия на внешнее хранилище через rclone, если задан BACKUP_REMOTE.
+# Ежедневный бэкап (ТЗ §10.3): дамп PostgreSQL + архив тома вложений,
+# хранение BACKUP_KEEP_DAYS (30) дней локально, копия на внешнее хранилище через rclone, если задан BACKUP_REMOTE.
 #   deploy/backup.sh            — обычный запуск (таймер taskflow-backup.timer)
-#   deploy/backup.sh pre-v1.2.3 — именованный снимок перед выкладкой, не удаляется по сроку
+#   deploy/backup.sh pre-v1.2.3 — именованный снимок перед выкладкой, по сроку не удаляется
+# Redis не бэкапится: очередь и ключи идемпотентности — производные данные, restore.sh их сбрасывает.
 set -euo pipefail
+# shellcheck source=deploy/lib.sh
+. "$(dirname "$(readlink -f "$0")")/lib.sh"
 
-ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-cd "$ROOT"
-# shellcheck source=/dev/null
-[ -f .env ] && set -a && . ./.env && set +a
-
-BACKUP_DIR=${BACKUP_DIR:-$ROOT/backups}
-KEEP_DAYS=${BACKUP_KEEP_DAYS:-30}
 LABEL=${1:-$(date -u +%Y%m%d-%H%M)}
-PROJECT=${COMPOSE_PROJECT_NAME:-taskflow}
-
 mkdir -p "$BACKUP_DIR"
-log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
 DB_FILE="$BACKUP_DIR/db-$LABEL.sql.gz"
 FILES_FILE="$BACKUP_DIR/attachments-$LABEL.tar.gz"
 
 log "pg_dump → $DB_FILE"
-docker exec taskflow-postgres pg_dump -U taskflow --no-owner --no-privileges taskflow | gzip -9 > "$DB_FILE.tmp"
+compose_exec postgres pg_dump -U taskflow --no-owner --no-privileges taskflow | gzip -9 > "$DB_FILE.tmp"
 mv "$DB_FILE.tmp" "$DB_FILE"
 
 log "attachments → $FILES_FILE"
@@ -30,10 +23,10 @@ docker run --rm -v "${PROJECT}_attachments:/data:ro" -v "$BACKUP_DIR:/out" alpin
   tar czf "/out/$(basename "$FILES_FILE").tmp" -C /data .
 mv "$FILES_FILE.tmp" "$FILES_FILE"
 
-# Именованные снимки (pre-…) живут, пока их не удалят вручную; датированные — KEEP_DAYS.
-find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'db-20*' -o -name 'attachments-20*' \) -mtime +"$KEEP_DAYS" -delete
+# Именованные снимки (pre-…, check-…) живут, пока их не удалят вручную; датированные — BACKUP_KEEP_DAYS.
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'db-20*' -o -name 'attachments-20*' \) -mtime +"$BACKUP_KEEP_DAYS" -delete
 
-if [ -n "${BACKUP_REMOTE:-}" ]; then
+if [ -n "$BACKUP_REMOTE" ]; then
   # rclone без установки на сервер: конфиг в deploy/rclone.conf (не в git), remote вида s3:bucket/taskflow
   log "rclone copy → $BACKUP_REMOTE"
   docker run --rm -v "$ROOT/deploy/rclone.conf:/config/rclone/rclone.conf:ro" -v "$BACKUP_DIR:/backups:ro" \

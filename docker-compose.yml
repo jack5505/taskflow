@@ -1,13 +1,13 @@
 # Стенд TaskFlow (ТЗ §10.2). Локально образ собирается из исходников (taskflow:local),
 # на сервере deploy/deploy.sh подставляет TASKFLOW_IMAGE=ghcr.io/jack5505/taskflow:<тег>.
-# Имена контейнеров фиксированы: на них ссылаются nginx сервера и скрипты из deploy/.
+# Имена контейнеров не фиксированы: копия стенда с другим COMPOSE_PROJECT_NAME и TASKFLOW_PORT
+# может жить рядом (проверка восстановления). nginx сервера ходит на alias taskflow-api в сети стенда.
 services:
   api:
     build:
       context: .
       dockerfile: api/Dockerfile
     image: ${TASKFLOW_IMAGE:-taskflow:local}
-    container_name: taskflow-api
     command: ["api"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
@@ -17,7 +17,10 @@ services:
       start_period: 10s
     env_file: .env
     ports:
-      - "127.0.0.1:8100:8080"
+      - "127.0.0.1:${TASKFLOW_PORT:-8100}:8080"
+    networks:
+      default:
+        aliases: [taskflow-api]
     volumes:
       - attachments:/data/attachments
     depends_on:
@@ -29,7 +32,6 @@ services:
 
   worker:
     image: ${TASKFLOW_IMAGE:-taskflow:local}
-    container_name: taskflow-worker
     command: ["worker"]
     env_file: .env
     volumes:
@@ -43,7 +45,6 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: taskflow-postgres
     environment:
       POSTGRES_DB: taskflow
       POSTGRES_USER: taskflow
@@ -59,7 +60,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: taskflow-redis
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
