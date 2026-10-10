@@ -56,6 +56,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		return err
 	}
 
+	authSvc := auth.NewService(cfg, g, rdb)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
