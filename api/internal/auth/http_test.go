@@ -198,3 +198,30 @@ func TestSecureCookiesFollowsBaseURLScheme(t *testing.T) {
 	require.False(t, auth.SecureCookies("http://localhost:8100"))
 	require.False(t, auth.SecureCookies(""))
 }
+
+func TestPasswordResetAndSetEndpoints(t *testing.T) {
+	f := newHTTPFixture(t)
+	rec, _ := f.do(t, req{method: "POST", path: "/api/v1/auth/password-reset", body: `{"email":"nobody@example.com"}`})
+	require.Equal(t, http.StatusNoContent, rec.Code, "неизвестный email — тот же ответ")
+	rec, body := f.do(t, req{method: "POST", path: "/api/v1/auth/password-reset", body: `{"email":"bad"}`})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, apierr.CodeValidation, errCode(body))
+
+	rec, _ = f.do(t, req{method: "POST", path: "/api/v1/auth/password-reset", body: `{"email":"` + f.u.Email + `"}`})
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	msgs := f.mail.messages()
+	require.Len(t, msgs, 1)
+	token := strings.SplitN(linkRe.FindString(msgs[0].Text), "token=", 2)[1]
+
+	rec, body = f.do(t, req{method: "POST", path: "/api/v1/auth/password-set", body: `{"token":"` + token + `","password":"short"}`})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), `"field":"password"`, body)
+
+	setBody := `{"token":"` + token + `","password":"` + newPassword + `"}`
+	rec, _ = f.do(t, req{method: "POST", path: "/api/v1/auth/password-set", body: setBody})
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	rec, body = f.do(t, req{method: "POST", path: "/api/v1/auth/password-set", body: setBody})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, apierr.CodeValidation, errCode(body))
+	require.Contains(t, rec.Body.String(), `"field":"token"`)
+}

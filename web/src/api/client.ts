@@ -38,6 +38,21 @@ export interface AuthLoginRequest {
   password: string;
 }
 
+export interface AuthPasswordResetRequest {
+  /** @maxLength 254 */
+  email: string;
+}
+
+export interface AuthPasswordSetRequest {
+  /**
+   * @minLength 10
+   * @maxLength 72
+   */
+  password: string;
+  /** @maxLength 200 */
+  token: string;
+}
+
 export interface UserUser {
   created_at?: string;
   display_name?: string;
@@ -366,6 +381,46 @@ export class Api<
         path: `/api/v1/auth/logout-all`,
         method: "POST",
         secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Отправляет на email ссылку для установки нового пароля (действует 24 часа, одноразовая). Ответ всегда 204, даже если такого пользователя нет.
+     *
+     * @tags auth
+     * @name V1AuthPasswordResetCreate
+     * @summary Восстановить пароль
+     * @request POST:/api/v1/auth/password-reset
+     */
+    v1AuthPasswordResetCreate: (
+      body: AuthPasswordResetRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/auth/password-reset`,
+        method: "POST",
+        body: body,
+        type: ContentType.Json,
+        ...params,
+      }),
+
+    /**
+     * @description Токен из ссылки одноразовый: после успешной установки повторно не принимается. Все сессии пользователя отзываются.
+     *
+     * @tags auth
+     * @name V1AuthPasswordSetCreate
+     * @summary Задать пароль по ссылке
+     * @request POST:/api/v1/auth/password-set
+     */
+    v1AuthPasswordSetCreate: (
+      body: AuthPasswordSetRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/auth/password-set`,
+        method: "POST",
+        body: body,
+        type: ContentType.Json,
         ...params,
       }),
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/config"
+	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -55,6 +56,8 @@ type Service struct {
 	secret     []byte
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+	baseURL    string
+	mailer     mail.Sender
 	now        func() time.Time
 }
 
@@ -65,8 +68,15 @@ func NewService(cfg *config.Config, db *gorm.DB, rdb *redis.Client) *Service {
 		secret:     []byte(cfg.JWTSecret),
 		accessTTL:  cfg.JWTAccessTTL,
 		refreshTTL: cfg.JWTRefreshTTL,
+		baseURL:    cfg.BaseURL,
 		now:        time.Now,
 	}
+}
+
+// WithMailer задаёт, через что уходят письма со ссылками (в API — очередь mail.Queue).
+func (s *Service) WithMailer(m mail.Sender) *Service {
+	s.mailer = m
+	return s
 }
 
 // WithClock подменяет часы (тесты истечения токенов и блокировки).
@@ -201,9 +211,15 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (*user.U
 }
 
 // CleanupExpired удаляет просроченные и отозванные токены старше refreshTTL (воркер, раз в сутки).
+// Заодно удаляет истёкшие ссылки установки пароля.
 func (s *Service) CleanupExpired(ctx context.Context) (int64, error) {
-	res := s.db.WithContext(ctx).Where("expires_at < ? OR revoked_at < ?", s.now(), s.now().Add(-s.refreshTTL)).Delete(&RefreshToken{})
-	return res.RowsAffected, res.Error
+	now := s.now()
+	res := s.db.WithContext(ctx).Where("expires_at < ? OR revoked_at < ?", now, now.Add(-s.refreshTTL)).Delete(&RefreshToken{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	links := s.db.WithContext(ctx).Where("expires_at < ?", now).Delete(&PasswordToken{})
+	return res.RowsAffected + links.RowsAffected, links.Error
 }
 
 func (s *Service) issue(ctx context.Context, u *user.User, userAgent string) (*Session, error) {

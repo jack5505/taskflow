@@ -120,6 +120,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/auth/password-reset": {
+            "post": {
+                "description": "Отправляет на email ссылку для установки нового пароля (действует 24 часа, одноразовая). Ответ всегда 204, даже если такого пользователя нет.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Восстановить пароль",
+                "parameters": [
+                    {
+                        "description": "email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.passwordResetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password-set": {
+            "post": {
+                "description": "Токен из ссылки одноразовый: после успешной установки повторно не принимается. Все сессии пользователя отзываются.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Задать пароль по ссылке",
+                "parameters": [
+                    {
+                        "description": "токен из ссылки и новый пароль (не короче 10 символов)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.passwordSetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED: пароль короче 10 символов; details.fields[token] — ссылка недействительна, использована или истекла",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/refresh": {
             "post": {
                 "description": "Требует cookie refresh_token и заголовок X-Requested-With: XMLHttpRequest (защита от CSRF). Старый refresh-токен отзывается.",
@@ -269,6 +337,36 @@ const docTemplate = `{
                     "maxLength": 254
                 },
                 "password": {
+                    "type": "string",
+                    "maxLength": 200
+                }
+            }
+        },
+        "auth.passwordResetRequest": {
+            "type": "object",
+            "required": [
+                "email"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "maxLength": 254
+                }
+            }
+        },
+        "auth.passwordSetRequest": {
+            "type": "object",
+            "required": [
+                "password",
+                "token"
+            ],
+            "properties": {
+                "password": {
+                    "type": "string",
+                    "maxLength": 72,
+                    "minLength": 10
+                },
+                "token": {
                     "type": "string",
                     "maxLength": 200
                 }
