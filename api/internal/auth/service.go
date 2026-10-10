@@ -193,7 +193,12 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 
 // RevokeAll отзывает все сессии пользователя: «Выйти везде», смена пароля, деактивация (§9.1).
 func (s *Service) RevokeAll(ctx context.Context, userID uuid.UUID) error {
-	return s.db.WithContext(ctx).Model(&RefreshToken{}).
+	return s.RevokeAllTx(s.db.WithContext(ctx), userID)
+}
+
+// RevokeAllTx — RevokeAll внутри чужой транзакции (деактивация пользователя).
+func (s *Service) RevokeAllTx(tx *gorm.DB, userID uuid.UUID) error {
+	return tx.Model(&RefreshToken{}).
 		Where("user_id = ? AND revoked_at IS NULL", userID).
 		Update("revoked_at", s.now()).Error
 }

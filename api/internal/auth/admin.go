@@ -2,16 +2,21 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	netmail "net/mail"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/jack5505/taskflow/api/internal/mail"
+	"github.com/jack5505/taskflow/api/internal/queue"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -119,4 +124,55 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n])
+}
+
+// TaskPasswordInvite — задание воркера: письмо-приглашение пользователю, созданному через API.
+const TaskPasswordInvite = "auth:password_invite"
+
+type invitePayload struct {
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// EnqueueInvite ставит задание на письмо-приглашение. Вызывается внутри транзакции создания
+// пользователя, до коммита: если очередь недоступна, пользователь не создаётся, и запрос можно
+// повторить; если коммит не прошёл, воркер не найдёт пользователя и задание выдохнется.
+func (s *Service) EnqueueInvite(ctx context.Context, userID uuid.UUID) error {
+	if s.jobs == nil {
+		return errNoQueue
+	}
+	payload, err := json.Marshal(invitePayload{UserID: userID})
+	if err != nil {
+		return err
+	}
+	_, err = s.jobs.EnqueueContext(ctx, asynq.NewTask(TaskPasswordInvite, payload),
+		asynq.Queue(queue.QueueDefault), asynq.MaxRetry(inviteMaxRetry), asynq.Timeout(time.Minute))
+	if err != nil {
+		return fmt.Errorf("auth: enqueue invite: %w", err)
+	}
+	return nil
+}
+
+// inviteMaxRetry — повторы, пока транзакция создания не закоммитится (воркер может успеть раньше).
+const inviteMaxRetry = 5
+
+// PasswordInviteHandler — обработчик TaskPasswordInvite в воркере.
+func PasswordInviteHandler(s *Service) asynq.HandlerFunc {
+	return func(ctx context.Context, t *asynq.Task) error {
+		var p invitePayload
+		if err := json.Unmarshal(t.Payload(), &p); err != nil {
+			return fmt.Errorf("auth: invite payload: %w: %w", err, asynq.SkipRetry)
+		}
+		var u user.User
+		err := s.db.WithContext(ctx).First(&u, "id = ?", p.UserID).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("auth: invite: пользователь %s ещё не виден (транзакция не закоммичена?)", p.UserID)
+		}
+		if err != nil {
+			return fmt.Errorf("auth: invite user: %w", err)
+		}
+		if !u.IsActive || HasPassword(&u) {
+			return nil
+		}
+		return s.SendPasswordSetLink(ctx, &u)
+	}
 }

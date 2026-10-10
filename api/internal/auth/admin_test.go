@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jack5505/taskflow/api/internal/auth"
@@ -86,4 +87,33 @@ func TestSendPasswordSetLinkWithoutMailer(t *testing.T) {
 	require.Error(t, bare.SendPasswordSetLink(context.Background(), f.u))
 	require.False(t, auth.HasPassword(&user.User{}))
 	require.True(t, auth.HasPassword(f.u))
+}
+
+func TestPasswordInviteHandler(t *testing.T) {
+	f := newFixture(t)
+	h := auth.PasswordInviteHandler(f.svc)
+	task := func(id string) *asynq.Task {
+		return asynq.NewTask(auth.TaskPasswordInvite, []byte(`{"user_id":"`+id+`"}`))
+	}
+
+	invited := user.New(testutil.UniqueEmail(t), "", "Новый")
+	require.NoError(t, f.db.Create(invited).Error)
+	require.NoError(t, h(context.Background(), task(invited.ID.String())))
+	msgs := f.mail.messages()
+	require.Len(t, msgs, 1)
+	require.Equal(t, invited.Email, msgs[0].To)
+	require.Equal(t, "TaskFlow: приглашение и установка пароля", msgs[0].Subject)
+
+	require.NoError(t, h(context.Background(), task(f.u.ID.String())), "у пользователя с паролем приглашения нет")
+	require.Len(t, f.mail.messages(), 1)
+
+	err := h(context.Background(), task("00000000-0000-4000-8000-000000000000"))
+	require.Error(t, err, "пользователь ещё не виден — повтор")
+	require.NotErrorIs(t, err, asynq.SkipRetry)
+	require.ErrorIs(t, h(context.Background(), asynq.NewTask(auth.TaskPasswordInvite, []byte("{"))), asynq.SkipRetry)
+}
+
+func TestEnqueueInviteNeedsQueue(t *testing.T) {
+	f := newFixture(t)
+	require.Error(t, auth.NewService(&config.Config{}, f.db, nil).EnqueueInvite(context.Background(), f.u.ID))
 }

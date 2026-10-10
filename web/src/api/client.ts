@@ -67,6 +67,28 @@ export interface UserUser {
   updated_at?: string;
 }
 
+export interface UsersCreateRequest {
+  /** @maxLength 80 */
+  display_name: string;
+  /** @maxLength 254 */
+  email: string;
+  is_system_admin?: boolean;
+  /**
+   * @maxLength 64
+   * @example "Europe/Moscow"
+   */
+  timezone?: string;
+}
+
+export interface UsersUpdateRequest {
+  /** @maxLength 80 */
+  display_name?: string;
+  is_active?: boolean;
+  is_system_admin?: boolean;
+  /** @maxLength 64 */
+  timezone?: string;
+}
+
 export type QueryParamsType = Record<string | number, any>;
 export type ResponseFormat = keyof Omit<Body, "body" | "bodyUsed">;
 
@@ -452,6 +474,68 @@ export class Api<
       this.request<Record<string, boolean>, any>({
         path: `/api/v1/ping`,
         method: "GET",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Все пользователи по имени. Доступно администратору системы и менеджерам проектов (для добавления в проект).
+     *
+     * @tags users
+     * @name V1UsersList
+     * @summary Пользователи
+     * @request GET:/api/v1/users
+     * @secure
+     */
+    v1UsersList: (params: RequestParams = {}) =>
+      this.request<UserUser[], ApierrResponse>({
+        path: `/api/v1/users`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Пользователь создаётся без пароля, на email уходит письмо со ссылкой установки пароля (ТЗ §7.1). timezone по умолчанию Europe/Moscow.
+     *
+     * @tags users
+     * @name V1UsersCreate
+     * @summary Создать пользователя
+     * @request POST:/api/v1/users
+     * @secure
+     */
+    v1UsersCreate: (body: UsersCreateRequest, params: RequestParams = {}) =>
+      this.request<UserUser, ApierrResponse>({
+        path: `/api/v1/users`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Меняются только переданные поля. is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.
+     *
+     * @tags users
+     * @name V1UsersPartialUpdate
+     * @summary Изменить пользователя
+     * @request PATCH:/api/v1/users/{id}
+     * @secure
+     */
+    v1UsersPartialUpdate: (
+      id: string,
+      body: UsersUpdateRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<UserUser, ApierrResponse>({
+        path: `/api/v1/users/${id}`,
+        method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),
