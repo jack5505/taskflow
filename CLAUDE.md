@@ -26,7 +26,8 @@
 
 ## Окружение сервера
 
-- На сервере нет локального Go: `make build`, `make test`, `make lint` работают через `docker run golang:1.25-alpine`. Не ставить Go в систему и не писать инструкции «установите Go».
+- На сервере нет локального Go: `make build`, `make test`, `make lint` работают через `docker run golang:1.25-alpine`. Не ставить Go в систему и не писать инструкции «установите Go». На этом сервере нет и `make` — бери команду `docker run …` из соответствующей цели Makefile и запускай её напрямую.
+- Интеграционные тесты поднимают PostgreSQL через testcontainers внутри контейнера golang: нужны `-v /var/run/docker.sock:/var/run/docker.sock`, `--add-host=host.docker.internal:host-gateway` и `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal` — см. `GO_TEST` в Makefile.
 - Порты 80, 443, 3001, 3080, 5005, 8080, 8081, 8090, 8443 заняты другими сервисами (mahalla, quizlet). TaskFlow слушает только `127.0.0.1:8100`; наружу — через nginx сервера, конфиг в `~/mahalla-dev/nginx/extra/` (issue #6). Чужие контейнеры и nginx не перезапускать.
 - Секреты только в `.env` (в git не попадает). Образец — `.env.example`; новая переменная добавляется туда же с комментарием и в `api/internal/config`.
 

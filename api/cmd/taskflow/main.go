@@ -14,9 +14,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/config"
+	"github.com/jack5505/taskflow/api/internal/db"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
+	"github.com/jack5505/taskflow/api/migrations"
 )
 
 func main() {
@@ -39,7 +44,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "api":
-		err = httpserver.Run(ctx, cfg)
+		err = runAPI(ctx, cfg)
 	case "worker":
 		err = runWorker(ctx, cfg)
 	case "admin":
@@ -58,14 +63,34 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: taskflow <api|worker|admin> [args]")
 }
 
-// runWorker — заглушка до реализации очереди (issue «Воркер и outbox»).
+// runAPI: миграции при старте (ТЗ §10.2), затем HTTP-сервер.
+func runAPI(ctx context.Context, cfg *config.Config) error {
+	if err := db.Migrate(cfg.DatabaseURL, migrations.FS); err != nil {
+		return err
+	}
+	g, err := openDB(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close(g) }()
+
+	return httpserver.New(cfg, g).Run(ctx)
+}
+
+func openDB(ctx context.Context, cfg *config.Config) (*gorm.DB, error) {
+	openCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return db.Open(openCtx, cfg.DatabaseURL)
+}
+
+// runWorker — заглушка до реализации очереди (issue #2).
 func runWorker(ctx context.Context, _ *config.Config) error {
 	slog.Info("worker: not implemented yet, waiting for shutdown")
 	<-ctx.Done()
 	return nil
 }
 
-// runAdmin — заглушка до реализации CLI (issue «Пользователи и первый администратор»).
+// runAdmin — заглушка до реализации CLI (issue #11).
 func runAdmin(_ context.Context, _ *config.Config, args []string) error {
 	return fmt.Errorf("admin: not implemented yet (args: %v)", args)
 }

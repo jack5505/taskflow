@@ -21,7 +21,6 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
 WORKDIR /app
 COPY --from=build /out/taskflow /app/taskflow
-COPY api/migrations /app/migrations
 USER app
 EXPOSE 8080
 ENTRYPOINT ["/app/taskflow"]
