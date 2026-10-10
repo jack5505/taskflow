@@ -19,7 +19,7 @@ type User struct {
 	TelegramUsername     *string     `json:"telegram_username,omitempty"`
 	IsSystemAdmin        bool        `gorm:"not null" json:"is_system_admin"`
 	IsActive             bool        `gorm:"not null" json:"is_active"`
-	NotificationSettings events.JSON `gorm:"type:jsonb;not null" json:"notification_settings"`
+	NotificationSettings events.JSON `gorm:"type:jsonb;not null" json:"notification_settings" swaggertype:"object"`
 }
 
 func (User) TableName() string { return "users" }

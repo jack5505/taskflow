@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/outbox"
@@ -45,11 +46,16 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		return err
 	}
 
+	authSvc := auth.NewService(cfg, g, rdb)
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		outbox.NewRelay(g, client).Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		runDaily(ctx, "refresh tokens cleanup", authSvc.CleanupExpired)
 	}()
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 
@@ -66,4 +72,28 @@ func registerHandlers(d *events.Dispatcher) {
 		slog.Info("event", "type", env.Type, "event_id", env.EventID)
 		return nil
 	})
+}
+
+// runDaily выполняет уборку при старте и затем раз в сутки, пока ctx жив.
+func runDaily(ctx context.Context, name string, job func(context.Context) (int64, error)) {
+	run := func() {
+		jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		if n, err := job(jobCtx); err != nil {
+			slog.Error(name, "err", err)
+		} else if n > 0 {
+			slog.Info(name, "deleted", n)
+		}
+	}
+	run()
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
+	}
 }

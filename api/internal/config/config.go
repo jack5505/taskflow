@@ -57,6 +57,9 @@ func Load() (*Config, error) {
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATABASE_URL не задан")
 	}
+	if len(c.JWTSecret) < 32 {
+		return nil, errors.New("JWT_SECRET не задан или короче 32 символов")
+	}
 
 	var err error
 	if c.JWTAccessTTL, err = time.ParseDuration(getenv("JWT_ACCESS_TTL", "15m")); err != nil {

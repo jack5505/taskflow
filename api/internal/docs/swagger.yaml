@@ -1,4 +1,72 @@
 basePath: /
+definitions:
+  apierr.Body:
+    properties:
+      code:
+        example: INVALID_TRANSITION
+        type: string
+      details:
+        additionalProperties: {}
+        type: object
+      message:
+        example: Переход done → todo не разрешён
+        type: string
+    type: object
+  apierr.Response:
+    properties:
+      error:
+        $ref: '#/definitions/apierr.Body'
+    type: object
+  auth.SessionResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        example: 900
+        type: integer
+      token_type:
+        example: Bearer
+        type: string
+      user:
+        $ref: '#/definitions/user.User'
+    type: object
+  auth.loginRequest:
+    properties:
+      email:
+        maxLength: 254
+        type: string
+      password:
+        maxLength: 200
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  user.User:
+    properties:
+      created_at:
+        type: string
+      display_name:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      is_system_admin:
+        type: boolean
+      notification_settings:
+        type: object
+      telegram_user_id:
+        type: integer
+      telegram_username:
+        type: string
+      timezone:
+        type: string
+      updated_at:
+        type: string
+    type: object
 info:
   contact: {}
   description: Система управления задачами и временем с Telegram-ботом. Единый формат
@@ -6,6 +74,103 @@ info:
   title: TaskFlow API
   version: "1.0"
 paths:
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Возвращает access-токен (15 минут) и ставит httpOnly cookie refresh_token
+        (30 дней). После 10 неудачных попыток вход по email закрыт на 15 минут.
+      parameters:
+      - description: email и пароль
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.SessionResponse'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: 'UNAUTHORIZED: неверный email или пароль, пользователь деактивирован'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "429":
+          description: 'RATE_LIMITED: вход заблокирован, details.retry_after_seconds'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Вход
+      tags:
+      - auth
+  /api/v1/auth/logout:
+    post:
+      description: 'Отзывает refresh-токен из cookie и очищает её. Требует X-Requested-With:
+        XMLHttpRequest.'
+      parameters:
+      - description: 'Защита от CSRF: любое значение, например XMLHttpRequest'
+        in: header
+        name: X-Requested-With
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: 'FORBIDDEN: нет заголовка X-Requested-With'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Выйти
+      tags:
+      - auth
+  /api/v1/auth/logout-all:
+    post:
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Выйти везде
+      tags:
+      - auth
+  /api/v1/auth/refresh:
+    post:
+      description: 'Требует cookie refresh_token и заголовок X-Requested-With: XMLHttpRequest
+        (защита от CSRF). Старый refresh-токен отзывается.'
+      parameters:
+      - description: 'Защита от CSRF: любое значение, например XMLHttpRequest'
+        in: header
+        name: X-Requested-With
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.SessionResponse'
+        "401":
+          description: 'UNAUTHORIZED: сессия истекла или отозвана'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: нет заголовка X-Requested-With'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Обновить access-токен
+      tags:
+      - auth
   /api/v1/ping:
     get:
       produces:

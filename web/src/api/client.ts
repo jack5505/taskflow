@@ -10,6 +10,48 @@
  * ---------------------------------------------------------------
  */
 
+export interface ApierrBody {
+  /** @example "INVALID_TRANSITION" */
+  code?: string;
+  details?: Record<string, any>;
+  /** @example "Переход done → todo не разрешён" */
+  message?: string;
+}
+
+export interface ApierrResponse {
+  error?: ApierrBody;
+}
+
+export interface AuthSessionResponse {
+  access_token?: string;
+  /** @example 900 */
+  expires_in?: number;
+  /** @example "Bearer" */
+  token_type?: string;
+  user?: UserUser;
+}
+
+export interface AuthLoginRequest {
+  /** @maxLength 254 */
+  email: string;
+  /** @maxLength 200 */
+  password: string;
+}
+
+export interface UserUser {
+  created_at?: string;
+  display_name?: string;
+  email?: string;
+  id?: string;
+  is_active?: boolean;
+  is_system_admin?: boolean;
+  notification_settings?: object;
+  telegram_user_id?: number;
+  telegram_username?: string;
+  timezone?: string;
+  updated_at?: string;
+}
+
 export type QueryParamsType = Record<string | number, any>;
 export type ResponseFormat = keyof Omit<Body, "body" | "bodyUsed">;
 
@@ -277,6 +319,72 @@ export class Api<
   SecurityDataType extends unknown,
 > extends HttpClient<SecurityDataType> {
   api = {
+    /**
+     * @description Возвращает access-токен (15 минут) и ставит httpOnly cookie refresh_token (30 дней). После 10 неудачных попыток вход по email закрыт на 15 минут.
+     *
+     * @tags auth
+     * @name V1AuthLoginCreate
+     * @summary Вход
+     * @request POST:/api/v1/auth/login
+     */
+    v1AuthLoginCreate: (body: AuthLoginRequest, params: RequestParams = {}) =>
+      this.request<AuthSessionResponse, ApierrResponse>({
+        path: `/api/v1/auth/login`,
+        method: "POST",
+        body: body,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Отзывает refresh-токен из cookie и очищает её. Требует X-Requested-With: XMLHttpRequest.
+     *
+     * @tags auth
+     * @name V1AuthLogoutCreate
+     * @summary Выйти
+     * @request POST:/api/v1/auth/logout
+     */
+    v1AuthLogoutCreate: (params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/auth/logout`,
+        method: "POST",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags auth
+     * @name V1AuthLogoutAllCreate
+     * @summary Выйти везде
+     * @request POST:/api/v1/auth/logout-all
+     * @secure
+     */
+    v1AuthLogoutAllCreate: (params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/auth/logout-all`,
+        method: "POST",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Требует cookie refresh_token и заголовок X-Requested-With: XMLHttpRequest (защита от CSRF). Старый refresh-токен отзывается.
+     *
+     * @tags auth
+     * @name V1AuthRefreshCreate
+     * @summary Обновить access-токен
+     * @request POST:/api/v1/auth/refresh
+     */
+    v1AuthRefreshCreate: (params: RequestParams = {}) =>
+      this.request<AuthSessionResponse, ApierrResponse>({
+        path: `/api/v1/auth/refresh`,
+        method: "POST",
+        format: "json",
+        ...params,
+      }),
+
     /**
      * No description
      *

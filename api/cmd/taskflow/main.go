@@ -30,6 +30,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/db"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
@@ -93,7 +94,8 @@ func runAPI(ctx context.Context, cfg *config.Config) error {
 	rdb := queue.NewRedis(cfg.RedisAddr)
 	defer func() { _ = rdb.Close() }()
 
-	return httpserver.New(cfg, g, rdb).Run(ctx)
+	authHandlers := auth.NewHandlers(auth.NewService(cfg, g, rdb), auth.SecureCookies(cfg.BaseURL))
+	return httpserver.New(cfg, g, rdb).Mount(authHandlers.Register).Run(ctx)
 }
 
 func openDB(ctx context.Context, cfg *config.Config) (*gorm.DB, error) {
