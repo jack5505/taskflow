@@ -11,7 +11,7 @@ CREATE TABLE users (
     telegram_username     text,                                        -- без @, обновляется при каждом сообщении
     is_system_admin       boolean     NOT NULL DEFAULT false,
     is_active             boolean     NOT NULL DEFAULT true,
-    notification_settings jsonb       NOT NULL DEFAULT '{}'::jsonb,    -- выключенные пункты §8.7; пусто = все включены
+    notification_settings jsonb       NOT NULL DEFAULT '{}'::jsonb,    -- настройки личных уведомлений §8.7; по умолчанию все включены
     created_at            timestamptz NOT NULL DEFAULT now(),
     updated_at            timestamptz NOT NULL DEFAULT now()
 );
@@ -25,7 +25,7 @@ CREATE TABLE projects (
     telegram_chat_id      bigint,                                                      -- не более одной группы на проект
     is_archived           boolean      NOT NULL DEFAULT false,
     timezone              text         NOT NULL DEFAULT 'Europe/Moscow',
-    notification_settings jsonb        NOT NULL DEFAULT '{}'::jsonb,                   -- переопределения событий §8.6
+    notification_settings jsonb        NOT NULL DEFAULT '{}'::jsonb,                   -- настройки событий бота §8.6; по умолчанию как в таблице 8.6
     daily_summary_time    time         NOT NULL DEFAULT '10:00',
     deleted_at            timestamptz,                                                 -- мягкое удаление (§3.2)
     created_at            timestamptz  NOT NULL DEFAULT now(),

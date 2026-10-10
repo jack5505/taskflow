@@ -1,41 +1,27 @@
 package user_test
 
 import (
-	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/testutil"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
-func newUser(email string) *user.User {
-	return &user.User{Email: email, PasswordHash: "x", DisplayName: "Иван Петров"}
-}
-
-func isUniqueViolation(err error) bool {
-	var pg *pgconn.PgError
-	return errors.Is(err, gorm.ErrDuplicatedKey) || (errors.As(err, &pg) && pg.Code == "23505")
-}
-
-func isCheckViolation(err error) bool {
-	var pg *pgconn.PgError
-	return errors.As(err, &pg) && pg.Code == "23514"
-}
-
-func TestUserDefaultsFromSchema(t *testing.T) {
+func TestNewUserDefaults(t *testing.T) {
 	g := testutil.SharedDB(t)
-	u := newUser("defaults@example.com")
+	u := user.New(testutil.UniqueEmail(t), "x", "Иван Петров")
 	require.NoError(t, g.Create(u).Error)
 	require.NotEqual(t, uuid.Nil, u.ID)
 
 	var got user.User
 	require.NoError(t, g.First(&got, "id = ?", u.ID).Error)
-	require.Equal(t, user.DefaultTimezone, got.Timezone)
+	require.Equal(t, model.DefaultTimezone, got.Timezone)
 	require.True(t, got.IsActive)
 	require.False(t, got.IsSystemAdmin)
 	require.JSONEq(t, `{}`, string(got.NotificationSettings))
@@ -43,38 +29,47 @@ func TestUserDefaultsFromSchema(t *testing.T) {
 	require.False(t, got.CreatedAt.IsZero())
 }
 
+// Явное false при создании не подменяется умолчанием: у IsActive нет GORM-default.
+func TestInactiveUserStaysInactive(t *testing.T) {
+	g := testutil.SharedDB(t)
+	u := user.New(testutil.UniqueEmail(t), "x", "Неактивный")
+	u.IsActive = false
+	require.NoError(t, g.Create(u).Error)
+	var got user.User
+	require.NoError(t, g.First(&got, "id = ?", u.ID).Error)
+	require.False(t, got.IsActive)
+}
+
 // email уникален без учёта регистра (citext): Ivan@Example.com и ivan@example.com — один логин.
 func TestEmailUniqueCaseInsensitive(t *testing.T) {
 	g := testutil.SharedDB(t)
-	require.NoError(t, g.Create(newUser("Ivan@Example.com")).Error)
-	err := g.Create(newUser("ivan@example.com")).Error
-	require.Error(t, err)
-	require.True(t, isUniqueViolation(err), "ожидалось нарушение уникальности, получено: %v", err)
+	email := testutil.UniqueEmail(t)
+	require.NoError(t, g.Create(user.New(strings.ToUpper(email), "x", "А")).Error)
+	err := g.Create(user.New(email, "x", "Б")).Error
+	require.ErrorIs(t, err, gorm.ErrDuplicatedKey)
 
 	var got user.User
-	require.NoError(t, g.First(&got, "email = ?", "IVAN@EXAMPLE.COM").Error, "поиск по email тоже без учёта регистра")
+	require.NoError(t, g.First(&got, "email = ?", strings.ToUpper(email)).Error, "поиск по email тоже без учёта регистра")
 }
 
 func TestTelegramUserIDUnique(t *testing.T) {
 	g := testutil.SharedDB(t)
-	tg := int64(123456789)
-	a := newUser("tg-a@example.com")
+	tg := int64(100000) + testutil.Next()
+	a := user.New(testutil.UniqueEmail(t), "x", "А")
 	a.TelegramUserID = &tg
 	require.NoError(t, g.Create(a).Error)
 
-	b := newUser("tg-b@example.com")
+	b := user.New(testutil.UniqueEmail(t), "x", "Б")
 	b.TelegramUserID = &tg
-	err := g.Create(b).Error
-	require.True(t, isUniqueViolation(err), "один Telegram-аккаунт — один пользователь: %v", err)
+	require.ErrorIs(t, g.Create(b).Error, gorm.ErrDuplicatedKey, "один Telegram-аккаунт — один пользователь")
 
 	// NULL в уникальной колонке не конфликтует: непривязанных пользователей может быть много.
-	require.NoError(t, g.Create(newUser("tg-c@example.com")).Error)
-	require.NoError(t, g.Create(newUser("tg-d@example.com")).Error)
+	require.NoError(t, g.Create(user.New(testutil.UniqueEmail(t), "x", "В")).Error)
+	require.NoError(t, g.Create(user.New(testutil.UniqueEmail(t), "x", "Г")).Error)
 }
 
 func TestDisplayNameLength(t *testing.T) {
 	g := testutil.SharedDB(t)
-	u := newUser("name@example.com")
-	u.DisplayName = ""
-	require.True(t, isCheckViolation(g.Create(u).Error), "пустое имя отклоняет база (§3.1: 1–80 символов)")
+	u := user.New(testutil.UniqueEmail(t), "x", "")
+	require.ErrorIs(t, g.Create(u).Error, gorm.ErrCheckConstraintViolated, "пустое имя отклоняет база (§3.1: 1–80 символов)")
 }

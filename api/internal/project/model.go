@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
@@ -16,22 +17,38 @@ const (
 	RoleMember  = "member"
 )
 
-// Project — строка таблицы projects.
+// DefaultDailySummaryTime — время ежедневной сводки по умолчанию (ТЗ §3.2, §8.6).
+const DefaultDailySummaryTime model.TimeOfDay = "10:00"
+
+// Project — строка таблицы projects. DeletedAt — gorm.DeletedAt: мягко удалённые проекты (§3.2)
+// не попадают в обычные запросы сами собой; корзина и восстановление идут через Unscoped().
 type Project struct {
 	model.Base
-	Key                  string      `gorm:"not null;uniqueIndex" json:"key"`
-	Name                 string      `gorm:"size:100;not null" json:"name"`
-	Description          *string     `json:"description,omitempty"`
-	TaskCounter          int         `gorm:"not null;default:0" json:"-"`
-	TelegramChatID       *int64      `json:"telegram_chat_id,omitempty"`
-	IsArchived           bool        `gorm:"not null;default:false" json:"is_archived"`
-	Timezone             string      `gorm:"not null;default:Europe/Moscow" json:"timezone"`
-	NotificationSettings events.JSON `gorm:"type:jsonb;not null;default:'{}'" json:"notification_settings"`
-	DailySummaryTime     string      `gorm:"type:time;not null;default:'10:00'" json:"daily_summary_time"`
-	DeletedAt            *time.Time  `json:"deleted_at,omitempty"`
+	Key                  string          `gorm:"not null;uniqueIndex" json:"key"`
+	Name                 string          `gorm:"size:100;not null" json:"name"`
+	Description          *string         `json:"description,omitempty"`
+	TaskCounter          int             `gorm:"not null" json:"-"`
+	TelegramChatID       *int64          `json:"telegram_chat_id,omitempty"`
+	IsArchived           bool            `gorm:"not null" json:"is_archived"`
+	Timezone             string          `gorm:"not null" json:"timezone"`
+	NotificationSettings events.JSON     `gorm:"type:jsonb;not null" json:"notification_settings"`
+	DailySummaryTime     model.TimeOfDay `gorm:"type:time;not null" json:"daily_summary_time"`
+	DeletedAt            gorm.DeletedAt  `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (Project) TableName() string { return "projects" }
+
+// New — проект с умолчаниями ТЗ §3.2: счётчик задач 0, не архивный, пояс Europe/Moscow,
+// сводка в 10:00, события бота §8.6 по умолчанию (пустой объект настроек).
+func New(key, name string) *Project {
+	return &Project{
+		Key:                  key,
+		Name:                 name,
+		Timezone:             model.DefaultTimezone,
+		NotificationSettings: events.JSON("{}"),
+		DailySummaryTime:     DefaultDailySummaryTime,
+	}
+}
 
 // Member — участник проекта с ролью; пара project_id + user_id уникальна.
 type Member struct {
