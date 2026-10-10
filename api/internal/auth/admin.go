@@ -39,7 +39,7 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 		return nil, 0, ErrBadEmail
 	}
 	if displayName == "" {
-		displayName = email[:strings.IndexByte(email, '@')]
+		displayName = truncateRunes(email[:strings.IndexByte(email, '@')], 80)
 	}
 	displayName = strings.TrimSpace(displayName)
 	if n := utf8.RuneCountInString(displayName); n < 1 || n > 80 {
@@ -59,8 +59,12 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 			u, result = *nu, AdminCreated
 			return nil
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&u, "email = ?", email).Error; err != nil {
-			return fmt.Errorf("auth: find admin: %w", err)
+		found := tx.Raw(`SELECT * FROM users WHERE email = ? FOR UPDATE`, email).Scan(&u)
+		if found.Error != nil {
+			return fmt.Errorf("auth: find admin: %w", found.Error)
+		}
+		if found.RowsAffected == 0 {
+			return fmt.Errorf("auth: admin %s пропал после ON CONFLICT", email)
 		}
 		if !u.IsActive {
 			return ErrAdminInactive
@@ -79,6 +83,10 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 	return &u, result, nil
 }
 
+// HasPassword сообщает, задан ли у пользователя пароль. Ссылку установки пароля командой
+// выдаём только тем, у кого его нет: иначе по ссылке можно перехватить чужую учётную запись.
+func HasPassword(u *user.User) bool { return u.PasswordHash != "" }
+
 // PasswordSetLink выпускает ссылку установки пароля (24 часа, одноразовая) — для вывода в консоль.
 func (s *Service) PasswordSetLink(ctx context.Context, u *user.User) (string, error) {
 	return s.passwordLink(ctx, u.ID)
@@ -86,13 +94,29 @@ func (s *Service) PasswordSetLink(ctx context.Context, u *user.User) (string, er
 
 // SendPasswordSetLink отправляет пользователю письмо-приглашение со ссылкой установки пароля.
 func (s *Service) SendPasswordSetLink(ctx context.Context, u *user.User) error {
+	return s.sendLink(ctx, u, mail.PasswordSet)
+}
+
+// sendLink выпускает ссылку и ставит письмо по шаблону render. Если письмо не встало в очередь,
+// ссылка останется неизвестной никому и истечёт.
+func (s *Service) sendLink(ctx context.Context, u *user.User, render func(to, name, link string) (mail.Message, error)) error {
+	if s.mailer == nil {
+		return errNoMailer
+	}
 	link, err := s.passwordLink(ctx, u.ID)
 	if err != nil {
 		return err
 	}
-	m, err := mail.PasswordSet(u.Email, u.DisplayName, link)
+	m, err := render(u.Email, u.DisplayName, link)
 	if err != nil {
 		return err
 	}
 	return s.mailer.Send(ctx, m)
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }

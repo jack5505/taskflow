@@ -68,6 +68,11 @@ func TestAdminCreatePrintsLinkWithoutSMTPAndIsIdempotent(t *testing.T) {
 	s, err := svc.Login(context.Background(), email, "admin password 1", "")
 	require.NoError(t, err, "администратор входит с заданным паролем")
 	require.True(t, s.User.IsSystemAdmin)
+
+	out.Reset()
+	require.NoError(t, adminCreate(context.Background(), svc, email, "", false, &out))
+	require.Contains(t, out.String(), "Пароль уже задан, ссылка не выдаётся")
+	require.NotContains(t, out.String(), "token=", "по ссылке нельзя перехватить учётную запись с паролем")
 }
 
 func TestAdminCreateWithSMTPQueuesInvite(t *testing.T) {
@@ -86,7 +91,30 @@ func TestAdminCreateWithSMTPQueuesInvite(t *testing.T) {
 func TestAdminCreateErrors(t *testing.T) {
 	svc, _ := newAdminService(t)
 	require.ErrorIs(t, adminCreate(context.Background(), svc, "not-an-email", "", false, &bytes.Buffer{}), auth.ErrBadEmail)
-	require.ErrorIs(t, runAdmin(context.Background(), &config.Config{}, nil), errAdminUsage)
-	require.ErrorIs(t, runAdmin(context.Background(), &config.Config{}, []string{"create"}), errAdminUsage)
-	require.ErrorIs(t, runAdmin(context.Background(), &config.Config{}, []string{"delete", "--email", "a@b.c"}), errAdminUsage)
+	run := func(args ...string) error {
+		return runAdmin(context.Background(), &config.Config{}, args, &bytes.Buffer{})
+	}
+	require.ErrorIs(t, run(), errAdminUsage)
+	require.ErrorIs(t, run("create"), errAdminUsage)
+	require.ErrorIs(t, run("delete", "--email", "a@b.c"), errAdminUsage)
+	require.True(t, isUsageError(run("create", "-h")))
+	err := runAdmin(context.Background(), &config.Config{SMTPHost: "smtp.example", SMTPFrom: "не адрес"}, []string{"create", "--email", "a@b.c"}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "SMTP_FROM", "неверный SMTP_FROM — ошибка до создания пользователя")
+	require.False(t, isUsageError(err))
+}
+
+// Существующий пользователь с паролем: становится администратором, но ни ссылки, ни письма.
+func TestAdminCreatePromotesWithoutLinkForUserWithPassword(t *testing.T) {
+	svc, m := newAdminService(t)
+	hash, err := auth.HashPassword("user password 1")
+	require.NoError(t, err)
+	u := user.New(testutil.UniqueEmail(t), hash, "Пётр")
+	require.NoError(t, testutil.SharedDB(t).Create(u).Error)
+
+	var out bytes.Buffer
+	require.NoError(t, adminCreate(context.Background(), svc, u.Email, "Другое имя", true, &out))
+	require.Contains(t, out.String(), "назначен администратором системы")
+	require.Contains(t, out.String(), "Имя не изменено, осталось «Пётр»")
+	require.Contains(t, out.String(), "Пароль уже задан")
+	require.Empty(t, m.sent, "письмо «для вас создана учётная запись» не уходит")
 }

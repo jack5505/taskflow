@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jack5505/taskflow/api/internal/auth"
+	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/testutil"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -69,4 +70,20 @@ func TestSendPasswordSetLinkInvites(t *testing.T) {
 	var u user.User
 	require.NoError(t, f.db.First(&u, "id = ?", f.u.ID).Error)
 	require.True(t, auth.CheckPassword(u.PasswordHash, newPassword))
+}
+
+func TestEnsureSystemAdminTruncatesDefaultName(t *testing.T) {
+	f := newFixture(t)
+	local := strings.Repeat("a", 90) + testutil.UniqueKey(t)
+	u, _, err := f.svc.EnsureSystemAdmin(context.Background(), local+"@example.com", "")
+	require.NoError(t, err)
+	require.Equal(t, local[:80], u.DisplayName)
+}
+
+func TestSendPasswordSetLinkWithoutMailer(t *testing.T) {
+	f := newFixture(t)
+	bare := auth.NewService(&config.Config{}, f.db, nil)
+	require.Error(t, bare.SendPasswordSetLink(context.Background(), f.u))
+	require.False(t, auth.HasPassword(&user.User{}))
+	require.True(t, auth.HasPassword(f.u))
 }

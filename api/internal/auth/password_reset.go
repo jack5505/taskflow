@@ -111,17 +111,7 @@ func (s *Service) SendPasswordReset(ctx context.Context, email string) error {
 	if !u.IsActive {
 		return nil
 	}
-	link, err := s.passwordLink(ctx, u.ID)
-	if err != nil {
-		return err
-	}
-	m, err := mail.PasswordReset(u.Email, u.DisplayName, link)
-	if err != nil {
-		return err
-	}
-	// Если письмо не встало в очередь, задание повторится с новой ссылкой; эта останется
-	// неизвестной никому и истечёт.
-	return s.mailer.Send(ctx, m)
+	return s.sendLink(ctx, &u, mail.PasswordReset)
 }
 
 // passwordLink выпускает одноразовую ссылку на 24 часа. Прежние ссылки не гасятся —
