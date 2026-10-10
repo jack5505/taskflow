@@ -37,8 +37,12 @@ func (l lockout) locked(ctx context.Context, email string) (bool, time.Duration,
 	if err != nil {
 		return false, 0, fmt.Errorf("lockout ttl: %w", err)
 	}
-	if ttl < 0 {
-		// Ключ без срока (EXPIRE не применился) — не блокировать навечно: взводим срок заново.
+	switch ttl {
+	case -2:
+		// Ключ истёк или пропал между GET и TTL — блокировки уже нет.
+		return false, 0, nil
+	case -1:
+		// Ключ есть, но без срока (EXPIRE не применился) — не блокировать навечно: взводим срок заново.
 		if err := l.rdb.Expire(ctx, l.key(email), lockoutWindow).Err(); err != nil {
 			return false, 0, fmt.Errorf("lockout re-expire: %w", err)
 		}

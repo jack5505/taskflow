@@ -46,6 +46,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		return err
 	}
 
+	authSvc := auth.NewService(cfg, g, rdb)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -54,9 +55,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	}()
 	go func() {
 		defer wg.Done()
-		runDaily(ctx, "refresh tokens cleanup", func(ctx context.Context) (int64, error) {
-			return auth.NewService(cfg, g, rdb).CleanupExpired(ctx)
-		})
+		runDaily(ctx, "refresh tokens cleanup", authSvc.CleanupExpired)
 	}()
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 

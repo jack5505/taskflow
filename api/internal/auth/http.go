@@ -91,6 +91,7 @@ func (h *Handlers) login(c *gin.Context) {
 // @Description  Требует cookie refresh_token и заголовок X-Requested-With: XMLHttpRequest (защита от CSRF). Старый refresh-токен отзывается.
 // @Tags         auth
 // @Produce      json
+// @Param        X-Requested-With  header    string  true  "Защита от CSRF: любое значение, например XMLHttpRequest"
 // @Success      200  {object}  SessionResponse
 // @Failure      401  {object}  apierr.Response  "UNAUTHORIZED: сессия истекла или отозвана"
 // @Failure      403  {object}  apierr.Response  "FORBIDDEN: нет заголовка X-Requested-With"
@@ -118,12 +119,12 @@ func (h *Handlers) refresh(c *gin.Context) {
 // @Summary      Выйти
 // @Description  Отзывает refresh-токен из cookie и очищает её. Требует X-Requested-With: XMLHttpRequest.
 // @Tags         auth
+// @Param        X-Requested-With  header    string  true  "Защита от CSRF: любое значение, например XMLHttpRequest"
 // @Success      204
 // @Failure      403  {object}  apierr.Response  "FORBIDDEN: нет заголовка X-Requested-With"
 // @Router       /api/v1/auth/logout [post]
 func (h *Handlers) logout(c *gin.Context) {
-	if c.GetHeader(csrfHeader) == "" {
-		httpserver.Abort(c, apierr.Forbidden("Нет заголовка "+csrfHeader))
+	if !requireCSRFHeader(c) {
 		return
 	}
 	if token, err := c.Cookie(RefreshCookie); err == nil && token != "" {
@@ -154,9 +155,17 @@ func (h *Handlers) logoutAll(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (h *Handlers) cookieToken(c *gin.Context) (string, bool) {
+// requireCSRFHeader отклоняет запрос 403, если нет заголовка csrfHeader (см. его комментарий).
+func requireCSRFHeader(c *gin.Context) bool {
 	if c.GetHeader(csrfHeader) == "" {
 		httpserver.Abort(c, apierr.Forbidden("Нет заголовка "+csrfHeader))
+		return false
+	}
+	return true
+}
+
+func (h *Handlers) cookieToken(c *gin.Context) (string, bool) {
+	if !requireCSRFHeader(c) {
 		return "", false
 	}
 	token, err := c.Cookie(RefreshCookie)

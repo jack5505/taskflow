@@ -74,6 +74,15 @@ const docTemplate = `{
                     "auth"
                 ],
                 "summary": "Выйти",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Защита от CSRF: любое значение, например XMLHttpRequest",
+                        "name": "X-Requested-With",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "204": {
                         "description": "No Content"
@@ -121,6 +130,15 @@ const docTemplate = `{
                     "auth"
                 ],
                 "summary": "Обновить access-токен",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Защита от CSRF: любое значение, например XMLHttpRequest",
+                        "name": "X-Requested-With",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",

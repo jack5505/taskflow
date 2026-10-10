@@ -113,6 +113,12 @@ paths:
     post:
       description: 'Отзывает refresh-токен из cookie и очищает её. Требует X-Requested-With:
         XMLHttpRequest.'
+      parameters:
+      - description: 'Защита от CSRF: любое значение, например XMLHttpRequest'
+        in: header
+        name: X-Requested-With
+        required: true
+        type: string
       responses:
         "204":
           description: No Content
@@ -141,6 +147,12 @@ paths:
     post:
       description: 'Требует cookie refresh_token и заголовок X-Requested-With: XMLHttpRequest
         (защита от CSRF). Старый refresh-токен отзывается.'
+      parameters:
+      - description: 'Защита от CSRF: любое значение, например XMLHttpRequest'
+        in: header
+        name: X-Requested-With
+        required: true
+        type: string
       produces:
       - application/json
       responses:
