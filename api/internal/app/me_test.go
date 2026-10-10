@@ -1,0 +1,99 @@
+package app_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/jack5505/taskflow/api/internal/notification"
+)
+
+func TestMeProfile(t *testing.T) {
+	w := newWorld(t)
+
+	rec := w.do("GET", "/api/v1/me", w.member, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var me struct {
+		Email                string
+		NotificationSettings map[string]bool `json:"notification_settings"`
+		Projects             []struct{ Key, Role string }
+		Timer                any
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &me))
+	require.Equal(t, w.memberU.Email, me.Email)
+	require.Equal(t, []struct{ Key, Role string }{{w.key, "member"}}, me.Projects)
+	require.True(t, me.NotificationSettings["assigned"])
+	require.Len(t, me.NotificationSettings, 10, "все ключи §8.7")
+	require.Nil(t, me.Timer)
+	require.NotContains(t, rec.Body.String(), "password")
+
+	rec = w.do("PATCH", "/api/v1/me", w.member, `{"display_name":" Иван ","timezone":"Asia/Tashkent","notification_settings":{"comment":false}}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var patched struct {
+		DisplayName          string `json:"display_name"`
+		Timezone             string
+		NotificationSettings map[string]bool `json:"notification_settings"`
+		Projects             []any
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &patched))
+	require.Equal(t, "Иван", patched.DisplayName)
+	require.Equal(t, "Asia/Tashkent", patched.Timezone)
+	require.False(t, patched.NotificationSettings["comment"])
+	require.True(t, patched.NotificationSettings["due"])
+	require.Len(t, patched.Projects, 1, "ответ PATCH — полный профиль")
+
+	for body, field := range map[string]string{
+		`{"display_name":""}`:                          "display_name",
+		`{"timezone":"Mars/Olympus"}`:                  "timezone",
+		`{"notification_settings":{"telepathy":true}}`: "notification_settings",
+	} {
+		rec = w.do("PATCH", "/api/v1/me", w.member, body)
+		require.Equal(t, http.StatusBadRequest, rec.Code, body)
+		require.Contains(t, rec.Body.String(), `"field":"`+field+`"`, body)
+	}
+
+	rec = w.do("GET", "/api/v1/me", "", "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestMeNotifications(t *testing.T) {
+	w := newWorld(t)
+	for range 3 {
+		require.NoError(t, notification.Create(context.Background(), w.db, notification.New{UserID: w.memberU.ID, Type: notification.TypeMemberAdded}))
+	}
+	require.NoError(t, notification.Create(context.Background(), w.db, notification.New{UserID: w.managerU.ID, Type: notification.TypeMemberAdded}))
+
+	rec := w.do("GET", "/api/v1/me/notifications?limit=2", w.member, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var page notification.Page
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	require.Len(t, page.Items, 2)
+	require.EqualValues(t, 3, page.UnreadCount)
+	require.NotEmpty(t, page.NextCursor)
+
+	rec = w.do("POST", "/api/v1/me/notifications/read", w.member, `{"ids":["`+page.Items[0].ID.String()+`"]}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.JSONEq(t, `{"marked":1}`, rec.Body.String())
+	rec = w.do("POST", "/api/v1/me/notifications/read", w.member, "")
+	require.JSONEq(t, `{"marked":2}`, rec.Body.String(), "без тела — все")
+
+	rec = w.do("GET", "/api/v1/me/notifications?unread=true", w.member, "")
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	require.Empty(t, page.Items)
+	require.Zero(t, page.UnreadCount)
+
+	rec = w.do("GET", "/api/v1/me/notifications?unread=true", w.manager, "")
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	require.EqualValues(t, 1, page.UnreadCount, "чужие отметки не трогают")
+
+	for q, field := range map[string]string{"unread=maybe": "unread", "limit=0": "limit", "cursor=@@": "cursor"} {
+		rec = w.do("GET", "/api/v1/me/notifications?"+q, w.member, "")
+		require.Equal(t, http.StatusBadRequest, rec.Code, q)
+		require.Contains(t, rec.Body.String(), `"field":"`+field+`"`, q)
+	}
+	rec = w.do("POST", "/api/v1/me/notifications/read", w.member, `{"ids":["not-uuid"]}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}

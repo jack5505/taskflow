@@ -462,7 +462,7 @@ func description(d *string) (*string, error) {
 }
 
 func checkTimezone(tz string) error {
-	if _, err := time.LoadLocation(tz); err != nil || tz == "" || tz == "Local" {
+	if !model.ValidTimezone(tz) {
 		return fieldError("timezone", "неизвестный часовой пояс IANA")
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/mail"
+	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/outbox"
 	"github.com/jack5505/taskflow/api/internal/queue"
 )
@@ -41,6 +42,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
+	notification.Register(d, g)
 
 	smtp, err := mail.NewSMTP(cfg)
 	if err != nil {
@@ -58,7 +60,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		outbox.NewRelay(g, client).Run(ctx)
@@ -66,6 +68,12 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	go func() {
 		defer wg.Done()
 		runDaily(ctx, "refresh tokens cleanup", authSvc.CleanupExpired)
+	}()
+	go func() {
+		defer wg.Done()
+		runDaily(ctx, "notifications cleanup", func(ctx context.Context) (int64, error) {
+			return notification.Cleanup(ctx, g, time.Now())
+		})
 	}()
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 

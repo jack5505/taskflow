@@ -71,6 +71,65 @@ export interface AuthPasswordSetRequest {
   token: string;
 }
 
+export interface MeMyProject {
+  id?: string;
+  is_archived?: boolean;
+  key?: string;
+  name?: string;
+  role?: "manager" | "member";
+}
+
+export interface MeProfile {
+  created_at?: string;
+  display_name?: string;
+  email?: string;
+  id?: string;
+  is_active?: boolean;
+  is_system_admin?: boolean;
+  notification_settings?: Record<string, boolean>;
+  projects?: MeMyProject[];
+  telegram_user_id?: number;
+  telegram_username?: string;
+  timer?: object;
+  timezone?: string;
+  updated_at?: string;
+}
+
+export interface MeUpdate {
+  /** @maxLength 200 */
+  display_name?: string;
+  notification_settings?: Record<string, boolean>;
+  /**
+   * @maxLength 64
+   * @example "Europe/Moscow"
+   */
+  timezone?: string;
+}
+
+export interface MeReadRequest {
+  /** @maxItems 200 */
+  ids?: string[];
+}
+
+export interface MeReadResponse {
+  marked?: number;
+}
+
+export interface NotificationNotification {
+  created_at?: string;
+  id?: string;
+  payload?: object;
+  read_at?: string;
+  task_id?: string;
+  type?: string;
+}
+
+export interface NotificationPage {
+  items?: NotificationNotification[];
+  next_cursor?: string;
+  unread_count?: number;
+}
+
 export interface ProjectMemberView {
   display_name?: string;
   email?: string;
@@ -542,6 +601,96 @@ export class Api<
       this.request<AuthSessionResponse, ApierrResponse>({
         path: `/api/v1/auth/refresh`,
         method: "POST",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Текущий пользователь, его личные уведомления §8.7 (все ключи, с умолчаниями), проекты и роли, запущенный таймер (пока всегда null — появится вместе с таймером).
+     *
+     * @tags me
+     * @name V1MeList
+     * @summary Профиль
+     * @request GET:/api/v1/me
+     * @secure
+     */
+    v1MeList: (params: RequestParams = {}) =>
+      this.request<MeProfile, ApierrResponse>({
+        path: `/api/v1/me`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Меняются только переданные поля. notification_settings — частичный объект личных уведомлений §8.7: assigned, rework, accepted_cancelled, comment, review_requested, due, timer_auto_stopped, worklog_trimmed, task_deleted, membership.
+     *
+     * @tags me
+     * @name V1MePartialUpdate
+     * @summary Изменить профиль
+     * @request PATCH:/api/v1/me
+     * @secure
+     */
+    v1MePartialUpdate: (body: MeUpdate, params: RequestParams = {}) =>
+      this.request<MeProfile, ApierrResponse>({
+        path: `/api/v1/me`,
+        method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Уведомления колокольчика за 30 дней, новые первыми, и число непрочитанных. Следующая страница — cursor из next_cursor.
+     *
+     * @tags me
+     * @name V1MeNotificationsList
+     * @summary Уведомления
+     * @request GET:/api/v1/me/notifications
+     * @secure
+     */
+    v1MeNotificationsList: (
+      query?: {
+        /** только непрочитанные */
+        unread?: boolean;
+        /** до 200, по умолчанию 50 */
+        limit?: number;
+        /** курсор следующей страницы */
+        cursor?: string;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<NotificationPage, ApierrResponse>({
+        path: `/api/v1/me/notifications`,
+        method: "GET",
+        query: query,
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description ids — какие отметить (до 200); без ids или пустой список — все. Чужие id игнорируются.
+     *
+     * @tags me
+     * @name V1MeNotificationsReadCreate
+     * @summary Отметить уведомления прочитанными
+     * @request POST:/api/v1/me/notifications/read
+     * @secure
+     */
+    v1MeNotificationsReadCreate: (
+      body: MeReadRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<MeReadResponse, ApierrResponse>({
+        path: `/api/v1/me/notifications/read`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),

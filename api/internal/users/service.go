@@ -5,7 +5,6 @@ package users
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -255,7 +254,7 @@ func displayName(name string) (string, error) {
 }
 
 func checkTimezone(tz string) error {
-	if _, err := time.LoadLocation(tz); err != nil || tz == "" || tz == "Local" {
+	if !model.ValidTimezone(tz) {
 		return fieldError("timezone", "неизвестный часовой пояс IANA")
 	}
 	return nil
