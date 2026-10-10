@@ -68,6 +68,8 @@ func TestSPAServesIndexAndAssets(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 
-	rec, _ = do(t, s.Router(), http.MethodGet, "/index.html", "")
+	// Глубокая ссылка SPA отдаёт index.html — маршрутизация на стороне React.
+	rec, _ = do(t, s.Router(), http.MethodGet, "/projects/TM/board", "")
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 }

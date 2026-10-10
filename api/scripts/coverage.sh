@@ -10,7 +10,14 @@ EXCLUDE='/cmd/|/internal/testutil$|/internal/web$|/internal/docs$|/migrations$'
 
 PKGS=$(go list ./... | grep -Ev "$EXCLUDE" | tr '\n' ',' | sed 's/,$//')
 
-go test ./... -count=1 -coverpkg="$PKGS" -coverprofile="$PROFILE" >/dev/null
+# Вывод тестов показываем только при падении: при успехе важны лишь цифры покрытия.
+LOG=$(mktemp)
+if ! go test ./... -count=1 -coverpkg="$PKGS" -coverprofile="$PROFILE" >"$LOG" 2>&1; then
+  grep -vE '^(ok|\?) ' "$LOG" | grep -v 'coverage: ' >&2
+  rm -f "$LOG"
+  exit 1
+fi
+rm -f "$LOG"
 
 TOTAL=$(go tool cover -func="$PROFILE" | awk '/^total:/ {gsub("%","",$NF); print $NF}')
 echo "coverage: ${TOTAL}% (threshold ${THRESHOLD}%)"

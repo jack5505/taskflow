@@ -43,7 +43,8 @@ curl -s localhost:8100/health
 
 ```bash
 make build        # go build в контейнере golang:1.25
-make test         # go test ./...
+make test         # go test ./... (интеграционные — на PostgreSQL и Redis из testcontainers)
+make cover        # тесты с порогом покрытия 80%, как в CI
 make lint         # golangci-lint
 make web-install  # npm ci
 make web-dev      # Vite dev-сервер, /api проксируется на localhost:8100
