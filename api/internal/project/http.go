@@ -1,13 +1,16 @@
 package project
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 )
@@ -34,6 +37,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.GET("/:key/members", h.members)
 	g.PUT("/:key/members/:user_id", h.putMember)
 	g.DELETE("/:key/members/:user_id", h.removeMember)
+	g.GET("/:key/audit", auth.RequireSystemAdmin(), h.auditLog)
 }
 
 // access — проект из пути и роль текущего пользователя; не участник — 404 (§2).
@@ -345,4 +349,88 @@ func (h *Handlers) removeMember(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func badQuery(name, reason string) error {
+	return apierr.BadRequest(apierr.CodeValidation, "Некорректные данные запроса").
+		With("fields", []apierr.FieldError{{Field: name, Reason: reason}})
+}
+
+// timeQuery — момент из RFC 3339 или дата ГГГГ-ММ-ДД (начало дня UTC; для to — начало следующего,
+// чтобы to=2026-10-10 включало весь день).
+func timeQuery(c *gin.Context, name string, endOfDay bool) (*time.Time, error) {
+	v := c.Query(name)
+	if v == "" {
+		return nil, nil
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return &t, nil
+	}
+	d, err := time.Parse(time.DateOnly, v)
+	if err != nil {
+		return nil, badQuery(name, "дата ГГГГ-ММ-ДД или момент RFC 3339")
+	}
+	if endOfDay {
+		d = d.AddDate(0, 0, 1)
+	}
+	return &d, nil
+}
+
+// auditLog — журнал действий проекта.
+//
+// @Summary      Журнал проекта
+// @Description  Действия менеджеров и администраторов (ТЗ §3.8): участники и роли, настройки, архив, удаление и восстановление. Только администратор системы. Новые записи первыми; следующая страница — cursor из next_cursor.
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        key      path      string  true   "ключ проекта"
+// @Param        from     query     string  false  "с (ГГГГ-ММ-ДД или RFC 3339)"
+// @Param        to       query     string  false  "по (ГГГГ-ММ-ДД включительно или RFC 3339 не включая)"
+// @Param        user_id  query     string  false  "кто действовал"
+// @Param        action   query     string  false  "тип действия, например member.added"
+// @Param        limit    query     int     false  "до 200, по умолчанию 50"
+// @Param        cursor   query     string  false  "курсор следующей страницы"
+// @Success      200      {object}  audit.Page
+// @Failure      400      {object}  apierr.Response  "VALIDATION_FAILED"
+// @Failure      401      {object}  apierr.Response
+// @Failure      403      {object}  apierr.Response  "FORBIDDEN: не администратор системы"
+// @Failure      404      {object}  apierr.Response  "NOT_FOUND"
+// @Router       /api/v1/projects/{key}/audit [get]
+func (h *Handlers) auditLog(c *gin.Context) {
+	a, ok := h.access(c)
+	if !ok {
+		return
+	}
+	var f audit.Filter
+	var err error
+	if f.From, err = timeQuery(c, "from", false); err == nil {
+		f.To, err = timeQuery(c, "to", true)
+	}
+	if err == nil && c.Query("user_id") != "" {
+		id, perr := uuid.Parse(c.Query("user_id"))
+		if perr != nil {
+			err = badQuery("user_id", "ожидается UUID")
+		}
+		f.ActorID = &id
+	}
+	if err == nil && c.Query("limit") != "" {
+		f.Limit, err = strconv.Atoi(c.Query("limit"))
+		if err != nil || f.Limit < 1 || f.Limit > audit.MaxLimit {
+			err = badQuery("limit", "от 1 до 200")
+		}
+	}
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	f.Action, f.Cursor = c.Query("action"), c.Query("cursor")
+	page, err := audit.List(c.Request.Context(), h.svc.db, a.Project.ID, f)
+	if errors.Is(err, audit.ErrBadCursor) {
+		err = badQuery("cursor", "некорректный курсор")
+	}
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, page)
 }

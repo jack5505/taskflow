@@ -118,3 +118,21 @@ func TestAdminCreatePromotesWithoutLinkForUserWithPassword(t *testing.T) {
 	require.Contains(t, out.String(), "Пароль уже задан")
 	require.Empty(t, m.sent, "письмо «для вас создана учётная запись» не уходит")
 }
+
+// §3.8: создание и повышение пользователя командой — в журнале с source = cli и без актора.
+func TestAdminCreateWritesAudit(t *testing.T) {
+	svc, _ := newAdminService(t)
+	email := testutil.UniqueEmail(t)
+	require.NoError(t, adminCreate(context.Background(), svc, email, "", false, &bytes.Buffer{}))
+	var rows []struct {
+		Action  string
+		Source  string
+		ActorID *string
+	}
+	require.NoError(t, testutil.SharedDB(t).Raw(`SELECT a.action, a.source, a.actor_id FROM audit_logs a
+		JOIN users u ON a.entity_id = u.id::text WHERE u.email = ?`, email).Scan(&rows).Error)
+	require.Len(t, rows, 1)
+	require.Equal(t, "user.created", rows[0].Action)
+	require.Equal(t, "cli", rows[0].Source)
+	require.Nil(t, rows[0].ActorID)
+}

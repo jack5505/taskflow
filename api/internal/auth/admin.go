@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/queue"
 	"github.com/jack5505/taskflow/api/internal/user"
@@ -62,7 +63,8 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 		}
 		if res.RowsAffected == 1 {
 			u, result = *nu, AdminCreated
-			return nil
+			return audit.Write(tx, audit.Record{Action: audit.UserCreated, EntityType: "user", EntityID: nu.ID.String(),
+				New: map[string]any{"email": nu.Email, "display_name": nu.DisplayName, "is_system_admin": true}})
 		}
 		found := tx.Raw(`SELECT * FROM users WHERE email = ? FOR UPDATE`, email).Scan(&u)
 		if found.Error != nil {
@@ -79,6 +81,8 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 				return fmt.Errorf("auth: promote admin: %w", err)
 			}
 			result = AdminPromoted
+			return audit.Write(tx, audit.Record{Action: audit.UserUpdated, EntityType: "user", EntityID: u.ID.String(),
+				Old: map[string]any{"is_system_admin": false}, New: map[string]any{"is_system_admin": true}})
 		}
 		return nil
 	})

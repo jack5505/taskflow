@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
@@ -107,6 +108,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*user.User, error
 		if res.RowsAffected == 0 {
 			return fieldError("email", "уже используется")
 		}
+		if err := audit.Write(tx, audit.Record{Action: audit.UserCreated, EntityType: "user", EntityID: u.ID.String(),
+			New: map[string]any{"email": u.Email, "display_name": u.DisplayName, "timezone": u.Timezone, "is_system_admin": u.IsSystemAdmin}}); err != nil {
+			return err
+		}
 		return s.auth.EnqueueInvite(ctx, u.ID)
 	})
 	if err != nil {
@@ -170,10 +175,19 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 				return fieldError("is_system_admin", "это последний активный администратор системы")
 			}
 		}
+		before := u
 		if in.IsActive != nil && *in.IsActive != u.IsActive {
 			if *in.IsActive {
 				updates["is_active"] = true
+				if err := audit.Write(tx, audit.Record{Action: audit.UserActivated, EntityType: "user", EntityID: u.ID.String()}); err != nil {
+					return err
+				}
 			} else if err := s.deactivateTx(tx, &u); err != nil {
+				return err
+			}
+		}
+		if old, nw := changed(&before, updates); len(nw) > 0 {
+			if err := audit.Write(tx, audit.Record{Action: audit.UserUpdated, EntityType: "user", EntityID: u.ID.String(), Old: old, New: nw}); err != nil {
 				return err
 			}
 		}
@@ -221,7 +235,22 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	if err := s.auth.RevokeAllTx(tx, u.ID); err != nil {
 		return fmt.Errorf("users: revoke sessions: %w", err)
 	}
+	if err := audit.Write(tx, audit.Record{Action: audit.UserDeactivated, EntityType: "user", EntityID: u.ID.String()}); err != nil {
+		return err
+	}
 	return events.Publish(tx, events.UserDeactivated, map[string]any{"user_id": u.ID})
+}
+
+// changed — значения полей пользователя до и после для журнала; только реально меняющиеся.
+func changed(u *user.User, updates map[string]any) (old, nw map[string]any) {
+	current := map[string]any{"display_name": u.DisplayName, "timezone": u.Timezone, "is_system_admin": u.IsSystemAdmin}
+	old, nw = map[string]any{}, map[string]any{}
+	for k, cur := range current {
+		if v, ok := updates[k]; ok && v != cur {
+			old[k], nw[k] = cur, v
+		}
+	}
+	return old, nw
 }
 
 func displayName(name string) (string, error) {

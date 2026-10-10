@@ -17,6 +17,43 @@ definitions:
       error:
         $ref: '#/definitions/apierr.Body'
     type: object
+  audit.Entry:
+    properties:
+      action:
+        type: string
+      actor_id:
+        type: string
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      new_value:
+        type: object
+      old_value:
+        type: object
+      project_id:
+        type: string
+      source:
+        enum:
+        - web
+        - bot
+        - cli
+        - system
+        type: string
+    type: object
+  audit.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/audit.Entry'
+        type: array
+      next_cursor:
+        type: string
+    type: object
   auth.SessionResponse:
     properties:
       access_token:
@@ -572,6 +609,69 @@ paths:
       security:
       - BearerAuth: []
       summary: Изменить проект
+      tags:
+      - projects
+  /api/v1/projects/{key}/audit:
+    get:
+      description: 'Действия менеджеров и администраторов (ТЗ §3.8): участники и роли,
+        настройки, архив, удаление и восстановление. Только администратор системы.
+        Новые записи первыми; следующая страница — cursor из next_cursor.'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: с (ГГГГ-ММ-ДД или RFC 3339)
+        in: query
+        name: from
+        type: string
+      - description: по (ГГГГ-ММ-ДД включительно или RFC 3339 не включая)
+        in: query
+        name: to
+        type: string
+      - description: кто действовал
+        in: query
+        name: user_id
+        type: string
+      - description: тип действия, например member.added
+        in: query
+        name: action
+        type: string
+      - description: до 200, по умолчанию 50
+        in: query
+        name: limit
+        type: integer
+      - description: курсор следующей страницы
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/audit.Page'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор системы'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Журнал проекта
       tags:
       - projects
   /api/v1/projects/{key}/members:

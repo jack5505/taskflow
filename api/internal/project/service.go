@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/user"
@@ -170,12 +171,19 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Project, error) 
 		}
 		p.Timezone = in.Timezone
 	}
-	res := s.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoNothing: true}).Create(p)
-	if res.Error != nil {
-		return nil, fmt.Errorf("project: create: %w", res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return nil, fieldError("key", "уже занят (в том числе удалённым проектом)")
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoNothing: true}).Create(p)
+		if res.Error != nil {
+			return fmt.Errorf("project: create: %w", res.Error)
+		}
+		if res.RowsAffected == 0 {
+			return fieldError("key", "уже занят (в том числе удалённым проектом)")
+		}
+		return audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.ProjectCreated, EntityType: "project", EntityID: p.ID.String(),
+			New: map[string]any{"key": p.Key, "name": p.Name, "timezone": p.Timezone}})
+	})
+	if err != nil {
+		return nil, err
 	}
 	return p, nil
 }
@@ -222,7 +230,20 @@ func (s *Service) Update(ctx context.Context, a *Access, in UpdateInput) (*Proje
 		if err != nil {
 			return err
 		}
+		if old, nw := settingsDiff(&p, updates); len(nw) > 0 {
+			if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.ProjectUpdated, EntityType: "project",
+				EntityID: p.ID.String(), Old: old, New: nw}); err != nil {
+				return err
+			}
+		}
 		if archiveChange {
+			action := audit.ProjectUnarchived
+			if *in.IsArchived {
+				action = audit.ProjectArchived
+			}
+			if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: action, EntityType: "project", EntityID: p.ID.String()}); err != nil {
+				return err
+			}
 			updates["is_archived"] = *in.IsArchived
 			if *in.IsArchived {
 				// Остановку запущенных таймеров при архивации (§3.2) добавит задача таймера (#33).
@@ -296,6 +317,10 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 		if err := tx.Model(&p).Updates(map[string]any{"deleted_at": s.now(), "telegram_chat_id": nil}).Error; err != nil {
 			return fmt.Errorf("project: delete: %w", err)
 		}
+		if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.ProjectDeleted, EntityType: "project",
+			EntityID: p.ID.String(), Old: map[string]any{"telegram_chat_id": p.TelegramChatID}}); err != nil {
+			return err
+		}
 		return events.Publish(tx, events.ProjectDeleted, map[string]any{"project_id": p.ID, "key": p.Key})
 	})
 }
@@ -317,6 +342,9 @@ func (s *Service) Restore(ctx context.Context, key string) (*Project, error) {
 		}
 		if err := tx.Unscoped().Model(&p).Updates(map[string]any{"deleted_at": nil, "updated_at": s.now()}).Error; err != nil {
 			return fmt.Errorf("project: restore: %w", err)
+		}
+		if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.ProjectRestored, EntityType: "project", EntityID: p.ID.String()}); err != nil {
+			return err
 		}
 		return tx.First(&p, "id = ?", p.ID).Error
 	})
@@ -347,6 +375,36 @@ func NextTaskNumber(tx *gorm.DB, projectID uuid.UUID) (int, error) {
 		return 0, ErrArchived
 	}
 	return 0, ErrNotFound
+}
+
+// settingsDiff — прежние и новые значения меняющихся настроек для журнала.
+func settingsDiff(p *Project, updates map[string]any) (old, nw map[string]any) {
+	current := map[string]any{"name": p.Name, "timezone": p.Timezone, "daily_summary_time": p.DailySummaryTime}
+	old, nw = map[string]any{}, map[string]any{}
+	for k, cur := range current {
+		if v, ok := updates[k]; ok && v != cur {
+			old[k], nw[k] = cur, v
+		}
+	}
+	if v, ok := updates["description"]; ok {
+		d := v.(*string)
+		if (d == nil) != (p.Description == nil) || (d != nil && *d != *p.Description) {
+			old["description"], nw["description"] = p.Description, d
+		}
+	}
+	if v, ok := updates["notification_settings"]; ok {
+		before, after := EffectiveNotifications(p.NotificationSettings), EffectiveNotifications(v.(events.JSON))
+		ob, nb := map[string]bool{}, map[string]bool{}
+		for k, b := range after {
+			if before[k] != b {
+				ob[k], nb[k] = before[k], b
+			}
+		}
+		if len(nb) > 0 {
+			old["notification_settings"], nw["notification_settings"] = ob, nb
+		}
+	}
+	return old, nw
 }
 
 // lockProject — строка неудалённого проекта FOR UPDATE по условию where ("id = ?" или "key = ?").

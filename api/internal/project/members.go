@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
 )
 
@@ -75,6 +76,10 @@ func (s *Service) PutMember(ctx context.Context, a *Access, userID uuid.UUID, ro
 			if err := events.Publish(tx, events.MemberAdded, payload); err != nil {
 				return err
 			}
+			if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.MemberAdded, EntityType: "user",
+				EntityID: userID.String(), New: map[string]any{"role": role}}); err != nil {
+				return err
+			}
 		default:
 			if current == RoleManager {
 				if err := checkNotLastManager(tx, p, userID, u.IsActive); err != nil {
@@ -87,6 +92,10 @@ func (s *Service) PutMember(ctx context.Context, a *Access, userID uuid.UUID, ro
 			}
 			payload["old_role"] = current
 			if err := events.Publish(tx, events.MemberRoleChanged, payload); err != nil {
+				return err
+			}
+			if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.MemberRoleChanged, EntityType: "user",
+				EntityID: userID.String(), Old: map[string]any{"role": current}, New: map[string]any{"role": role}}); err != nil {
 				return err
 			}
 		}
@@ -127,6 +136,10 @@ func (s *Service) RemoveMember(ctx context.Context, a *Access, userID uuid.UUID)
 		}
 		if err := tx.Where("project_id = ? AND user_id = ?", p.ID, userID).Delete(&Member{}).Error; err != nil {
 			return fmt.Errorf("project: remove member: %w", err)
+		}
+		if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.MemberRemoved, EntityType: "user",
+			EntityID: userID.String(), Old: map[string]any{"role": current}}); err != nil {
+			return err
 		}
 		return events.Publish(tx, events.MemberRemoved, map[string]any{
 			"project_id": p.ID, "key": p.Key, "user_id": userID, "role": current, "by": a.userID,

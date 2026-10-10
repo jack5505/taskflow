@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/db"
@@ -72,6 +73,7 @@ func runAdmin(ctx context.Context, cfg *config.Config, args []string, out io.Wri
 
 // adminCreate — сама команда, без разбора аргументов и подключений (для тестов).
 func adminCreate(ctx context.Context, svc *auth.Service, email, name string, smtpConfigured bool, out io.Writer) error {
+	ctx = audit.WithSource(ctx, audit.SourceCLI)
 	u, res, err := svc.EnsureSystemAdmin(ctx, email, name)
 	if err != nil {
 		return fmt.Errorf("admin create: %w", err)
