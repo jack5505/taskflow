@@ -72,25 +72,10 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 	}
 	p := a.Project
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Номер выдаёт UPDATE строки проекта — он же блокирует проект и отвергает архивный.
-		num, err := project.NextTaskNumber(tx, p.ID)
-		if err != nil {
-			return err
-		}
-		if !a.Admin {
-			role, err := project.RoleIn(tx, p.ID, u.ID)
-			if err != nil {
-				return err
-			}
-			if role == "" {
-				return project.ErrNotFound
-			}
-			if (in.AssigneeID != nil || in.SprintID != nil) && role != project.RoleManager {
-				return errManagerOnly
-			}
-		}
+		// Порядок блокировок: строки пользователя и спринта — раньше строки проекта, как у
+		// деактивации (пользователь → задачи → проект) и закрытия спринта: без deadlock.
 		if in.AssigneeID != nil {
-			if err := checkAssignee(tx, p.ID, *in.AssigneeID); err != nil {
+			if err := lockActiveUser(tx, *in.AssigneeID); err != nil {
 				return err
 			}
 		}
@@ -99,11 +84,27 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 				return err
 			}
 		}
-		var pos float64
-		if err := tx.Raw(`SELECT COALESCE(MAX(position), 0) + ? FROM tasks
-			WHERE project_id = ? AND sprint_id IS NOT DISTINCT FROM ? AND deleted_at IS NULL`,
-			positionStep, p.ID, in.SprintID).Scan(&pos).Error; err != nil {
-			return fmt.Errorf("task: position: %w", err)
+		// Номер выдаёт UPDATE строки проекта — он же блокирует проект и отвергает архивный.
+		num, err := project.NextTaskNumber(tx, p.ID)
+		if err != nil {
+			return err
+		}
+		// Под блокировкой проекта состав участников не меняется: перепроверяем права и исполнителя.
+		manager, err := canManage(tx, p.ID, u.ID)
+		if err != nil {
+			return err
+		}
+		if (in.AssigneeID != nil || in.SprintID != nil) && !manager {
+			return errManagerOnly
+		}
+		if in.AssigneeID != nil {
+			if err := checkAssignee(tx, p.ID, *in.AssigneeID); err != nil {
+				return err
+			}
+		}
+		pos, err := endOfSection(tx, p.ID, in.SprintID, nil)
+		if err != nil {
+			return err
 		}
 		t.ProjectID, t.Number, t.Key = p.ID, num, fmt.Sprintf("%s-%d", p.Key, num)
 		t.ReporterID, t.AssigneeID, t.SprintID, t.Position = u.ID, in.AssigneeID, in.SprintID, pos
@@ -203,23 +204,77 @@ func normalizeLabels(in []string) (Labels, error) {
 	return out, nil
 }
 
-// checkAssignee — исполнитель должен быть активным участником проекта.
-func checkAssignee(tx *gorm.DB, projectID, userID uuid.UUID) error {
-	var ok bool
-	if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM project_members m JOIN users u ON u.id = m.user_id
-		WHERE m.project_id = ? AND m.user_id = ? AND u.is_active)`, projectID, userID).Scan(&ok).Error; err != nil {
-		return fmt.Errorf("task: assignee check: %w", err)
+// lockActiveUser — строка пользователя FOR SHARE (деактивация, берущая FOR UPDATE, дождётся)
+// и проверка, что он активен.
+func lockActiveUser(tx *gorm.DB, userID uuid.UUID) error {
+	var active []bool
+	if err := tx.Raw(`SELECT is_active FROM users WHERE id = ? FOR SHARE`, userID).Scan(&active).Error; err != nil {
+		return fmt.Errorf("task: assignee: %w", err)
 	}
-	if !ok {
+	if len(active) == 0 || !active[0] {
 		return fieldError("assignee_id", "не активный участник проекта")
 	}
 	return nil
 }
 
-// checkSprint — спринт этого проекта и не завершён.
+// checkAssignee — исполнитель — участник проекта (вызывать под блокировкой строки проекта).
+func checkAssignee(tx *gorm.DB, projectID, userID uuid.UUID) error {
+	role, err := project.RoleIn(tx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if role == "" {
+		return fieldError("assignee_id", "не активный участник проекта")
+	}
+	return nil
+}
+
+// canManage — права менеджера (§2) по состоянию в транзакции: менеджер проекта или
+// администратор системы. Не участник и не администратор — 404.
+func canManage(tx *gorm.DB, projectID, userID uuid.UUID) (bool, error) {
+	var admin []bool
+	if err := tx.Raw(`SELECT is_system_admin FROM users WHERE id = ? AND is_active`, userID).Scan(&admin).Error; err != nil {
+		return false, fmt.Errorf("task: actor: %w", err)
+	}
+	if len(admin) == 0 {
+		return false, ErrNotFound
+	}
+	role, err := project.RoleIn(tx, projectID, userID)
+	if err != nil {
+		return false, err
+	}
+	if role == "" && !admin[0] {
+		return false, project.ErrNotFound
+	}
+	return admin[0] || role == project.RoleManager, nil
+}
+
+// endOfSection — позиция в конце секции (спринт или бэклог). Ветки на nil нужны индексу
+// tasks_section_idx: «IS NOT DISTINCT FROM» по нему не ищется.
+func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID) (float64, error) {
+	q := tx.Model(&Task{}).Select("position").Where("project_id = ? AND deleted_at IS NULL", projectID)
+	if sprintID == nil {
+		q = q.Where("sprint_id IS NULL")
+	} else {
+		q = q.Where("sprint_id = ?", *sprintID)
+	}
+	if exclude != nil {
+		q = q.Where("id <> ?", *exclude)
+	}
+	var last []float64
+	if err := q.Order("position DESC").Limit(1).Pluck("position", &last).Error; err != nil {
+		return 0, fmt.Errorf("task: position: %w", err)
+	}
+	if len(last) == 0 {
+		return positionStep, nil
+	}
+	return last[0] + positionStep, nil
+}
+
+// checkSprint — спринт этого проекта и не завершён; строка FOR SHARE (закрытие спринта дождётся).
 func checkSprint(tx *gorm.DB, projectID, sprintID uuid.UUID) error {
 	var states []string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? AND project_id = ?`, sprintID, projectID).
+	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? AND project_id = ? FOR SHARE`, sprintID, projectID).
 		Scan(&states).Error; err != nil {
 		return fmt.Errorf("task: sprint check: %w", err)
 	}

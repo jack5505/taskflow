@@ -192,12 +192,12 @@ export interface ProjectUpdateRequest {
   timezone?: string;
 }
 
-export interface TaskHistory {
+export interface TaskHistoryView {
   created_at?: string;
   field?: string;
   id?: string;
-  new_value?: object;
-  old_value?: object;
+  new_value?: any;
+  old_value?: any;
   source?: "web" | "telegram" | "api";
   user_id?: string;
 }
@@ -241,7 +241,10 @@ export interface TaskCreateRequest {
    * @max 60000
    */
   estimate_minutes?: number;
-  /** @maxItems 10 */
+  /**
+   * ≤10 по ≤30 после обрезки и без повторов — проверяет сервис
+   * @maxItems 50
+   */
   labels?: string[];
   priority?: "low" | "medium" | "high" | "critical";
   sprint_id?: string;
@@ -1047,7 +1050,7 @@ export class Api<
      * @secure
      */
     v1TasksHistoryList: (taskKey: string, params: RequestParams = {}) =>
-      this.request<TaskHistory[], ApierrResponse>({
+      this.request<TaskHistoryView[], ApierrResponse>({
         path: `/api/v1/tasks/${taskKey}/history`,
         method: "GET",
         secure: true,

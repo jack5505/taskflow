@@ -70,3 +70,4 @@ CREATE TRIGGER task_history_immutable BEFORE UPDATE OR DELETE ON task_history
 
 -- Уведомления о задачах теперь ссылаются на задачу (таблица уведомлений появилась раньше задач).
 ALTER TABLE notifications ADD CONSTRAINT notifications_task_fk FOREIGN KEY (task_id) REFERENCES tasks (id);
+CREATE INDEX notifications_task_idx ON notifications (task_id) WHERE task_id IS NOT NULL;

@@ -39,7 +39,7 @@ type createRequest struct {
 	SprintID        *uuid.UUID `json:"sprint_id"`
 	EstimateMinutes *int       `json:"estimate_minutes" binding:"omitempty,min=1,max=60000"`
 	DueDate         *string    `json:"due_date" binding:"omitempty,datetime=2006-01-02" example:"2026-10-31"`
-	Labels          []string   `json:"labels" binding:"max=10,dive,max=30"`
+	Labels          []string   `json:"labels" binding:"max=50,dive,max=200"` // ≤10 по ≤30 после обрезки и без повторов — проверяет сервис
 }
 
 // create — новая задача.
@@ -63,10 +63,6 @@ func (h *Handlers) create(c *gin.Context) {
 	u := auth.CurrentUser(c)
 	a, err := h.projects.Access(c.Request.Context(), u, c.Param("key"))
 	if err != nil {
-		httpserver.Abort(c, err)
-		return
-	}
-	if err := project.EnsureWritable(a.Project); err != nil {
 		httpserver.Abort(c, err)
 		return
 	}
@@ -109,7 +105,7 @@ func (h *Handlers) get(c *gin.Context) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        task_key  path      string  true  "ключ задачи"
-// @Success      200       {array}   History
+// @Success      200       {array}   HistoryView
 // @Failure      401       {object}  apierr.Response
 // @Failure      404       {object}  apierr.Response  "NOT_FOUND"
 // @Router       /api/v1/tasks/{task_key}/history [get]

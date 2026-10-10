@@ -112,10 +112,34 @@ type History struct {
 	TaskID    uuid.UUID    `gorm:"type:uuid" json:"-"`
 	UserID    *uuid.UUID   `gorm:"type:uuid" json:"user_id"`
 	Field     string       `json:"field"`
-	OldValue  *events.JSON `gorm:"type:jsonb" json:"old_value" swaggertype:"object"`
-	NewValue  *events.JSON `gorm:"type:jsonb" json:"new_value" swaggertype:"object"`
+	OldValue  *events.JSON `gorm:"type:jsonb" json:"old_value"`
+	NewValue  *events.JSON `gorm:"type:jsonb" json:"new_value"`
 	Source    string       `json:"source" enums:"web,telegram,api"`
 	CreatedAt time.Time    `json:"created_at"`
 }
 
 func (History) TableName() string { return "task_history" }
+
+// HistoryView — запись истории в ответе API: old_value и new_value — любое JSON-значение
+// (строка, число, null), поэтому тип any, а не object.
+type HistoryView struct {
+	ID        uuid.UUID  `json:"id"`
+	UserID    *uuid.UUID `json:"user_id"`
+	Field     string     `json:"field"`
+	OldValue  any        `json:"old_value"`
+	NewValue  any        `json:"new_value"`
+	Source    string     `json:"source" enums:"web,telegram,api"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// MarshalJSON отдаёт запись как HistoryView.
+func (h History) MarshalJSON() ([]byte, error) {
+	v := HistoryView{ID: h.ID, UserID: h.UserID, Field: h.Field, Source: h.Source, CreatedAt: h.CreatedAt}
+	if h.OldValue != nil {
+		v.OldValue = json.RawMessage(*h.OldValue)
+	}
+	if h.NewValue != nil {
+		v.NewValue = json.RawMessage(*h.NewValue)
+	}
+	return json.Marshal(v)
+}

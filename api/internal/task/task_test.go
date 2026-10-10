@@ -218,7 +218,7 @@ func TestCreateTaskValidation(t *testing.T) {
 		`{"title":"X","estimate_minutes":0}`:                                     "estimate_minutes",
 		`{"title":"X","estimate_minutes":60001}`:                                 "estimate_minutes",
 		`{"title":"X","due_date":"31.10.2026"}`:                                  "due_date",
-		`{"title":"X","labels":["` + strings.Repeat("a", 31) + `"]}`:             "labels[0]",
+		`{"title":"X","labels":["` + strings.Repeat("a", 31) + `"]}`:             "labels",
 		`{"title":"X","labels":["1","2","3","4","5","6","7","8","9","10","11"]}`: "labels",
 		`{"title":"X","labels":[" "]}`:                                           "labels",
 	} {
@@ -290,4 +290,24 @@ func TestConcurrentCreatesGetDistinctKeys(t *testing.T) {
 		require.False(t, seen[k], "ключ %s выдан дважды", k)
 		seen[k] = true
 	}
+}
+
+// Ревью #84: метки нормализуются раньше лимитов — HTTP и бот принимают одно и то же.
+func TestLabelsNormalizedBeforeLimits(t *testing.T) {
+	f := newFixture(t)
+	dup := `"x",`
+	m := f.create(t, f.member, `{"title":"X","labels":[`+strings.Repeat(dup, 11)+`"  `+strings.Repeat("я", 30)+`  "]}`)
+	require.Equal(t, []any{"x", strings.Repeat("я", 30)}, m["labels"])
+}
+
+// Ревью #84: права администратора перепроверяются в транзакции.
+func TestAdminRightsRecheckedInTransaction(t *testing.T) {
+	f := newFixture(t)
+	admin, _ := f.user(t, true)
+	svc := task.NewService(f.db, project.NewService(f.db))
+	a, err := project.NewService(f.db).Access(context.Background(), admin, f.p.Key)
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(admin).Update("is_system_admin", false).Error)
+	_, err = svc.Create(context.Background(), a, admin, task.CreateInput{Title: "X"})
+	require.ErrorIs(t, err, project.ErrNotFound, "уже не администратор и не участник")
 }

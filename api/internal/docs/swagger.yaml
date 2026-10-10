@@ -302,7 +302,7 @@ definitions:
         maxLength: 64
         type: string
     type: object
-  task.History:
+  task.HistoryView:
     properties:
       created_at:
         type: string
@@ -310,10 +310,8 @@ definitions:
         type: string
       id:
         type: string
-      new_value:
-        type: object
-      old_value:
-        type: object
+      new_value: {}
+      old_value: {}
       source:
         enum:
         - web
@@ -406,9 +404,10 @@ definitions:
         minimum: 1
         type: integer
       labels:
+        description: ≤10 по ≤30 после обрезки и без повторов — проверяет сервис
         items:
           type: string
-        maxItems: 10
+        maxItems: 50
         type: array
       priority:
         enum:
@@ -1285,7 +1284,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/task.History'
+              $ref: '#/definitions/task.HistoryView'
             type: array
         "401":
           description: Unauthorized

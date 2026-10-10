@@ -1205,7 +1205,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/task.History"
+                                "$ref": "#/definitions/task.HistoryView"
                             }
                         }
                     },
@@ -1870,7 +1870,7 @@ const docTemplate = `{
                 }
             }
         },
-        "task.History": {
+        "task.HistoryView": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -1882,12 +1882,8 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "new_value": {
-                    "type": "object"
-                },
-                "old_value": {
-                    "type": "object"
-                },
+                "new_value": {},
+                "old_value": {},
                 "source": {
                     "type": "string",
                     "enum": [
@@ -2021,8 +2017,9 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "labels": {
+                    "description": "≤10 по ≤30 после обрезки и без повторов — проверяет сервис",
                     "type": "array",
-                    "maxItems": 10,
+                    "maxItems": 50,
                     "items": {
                         "type": "string"
                     }
