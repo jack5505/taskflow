@@ -5,7 +5,7 @@ GO_TEST  := docker run --rm -v $(CURDIR)/api:/src -w /src -e GOFLAGS=-mod=mod -e
 	-v /var/run/docker.sock:/var/run/docker.sock --add-host=host.docker.internal:host-gateway \
 	-e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal $(GO_IMAGE)
 
-.PHONY: help build test test-short lint fmt swag migrate-new web-install web-dev web-build up down logs
+.PHONY: help build test test-short cover lint fmt swag migrate-new web-install web-dev web-build up down logs
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -18,6 +18,9 @@ test: ## Тесты сервера (интеграционные — на Postgr
 
 test-short: ## Только быстрые тесты без контейнеров
 	$(GO_RUN) go test ./... -count=1 -short
+
+cover: ## Тесты с порогом покрытия 80% (как в CI)
+	$(GO_TEST) sh scripts/coverage.sh coverage.out
 
 lint: ## golangci-lint
 	docker run --rm -v $(CURDIR)/api:/src -w /src golangci/golangci-lint:v2.6 golangci-lint run ./...

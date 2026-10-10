@@ -23,8 +23,8 @@ jobs:
         with:
           version: v2.6
           working-directory: api
-      - run: go test ./... -count=1 -coverprofile=coverage.out
-      - run: go tool cover -func=coverage.out | tail -1
+      - name: Тесты и порог покрытия 80% (ТЗ §10.4)
+        run: sh scripts/coverage.sh coverage.out
 
   web:
     name: Web (React)
