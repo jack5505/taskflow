@@ -4,7 +4,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
-RUN npm run build
+# vite.config.ts пишет сборку в ../api/internal/web/dist — для образа переопределяем в /web/dist
+RUN npx tsc -b && npx vite build --outDir /web/dist
 
 # Этап 2: бинарник Go со встроенной статикой
 FROM golang:1.25-alpine AS build
