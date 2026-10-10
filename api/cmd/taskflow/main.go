@@ -76,6 +76,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: taskflow <api|worker|admin> [args]")
+	fmt.Fprintln(os.Stderr, "       taskflow admin create --email <email> [--name <имя>]")
 }
 
 // runAPI: подключение к базе, миграции при старте (ТЗ §10.2), затем HTTP-сервер.
@@ -116,9 +117,4 @@ func runWorker(ctx context.Context, cfg *config.Config) error {
 	}
 	defer func() { _ = db.Close(g) }()
 	return worker.Run(ctx, cfg, g)
-}
-
-// runAdmin — заглушка до реализации CLI (issue #11).
-func runAdmin(_ context.Context, _ *config.Config, args []string) error {
-	return fmt.Errorf("admin: not implemented yet (args: %v)", args)
 }

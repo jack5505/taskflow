@@ -45,6 +45,14 @@ func TestPasswordResetTemplate(t *testing.T) {
 	require.Contains(t, m.Text, "24 часа")
 }
 
+func TestPasswordSetTemplate(t *testing.T) {
+	m, err := PasswordSet("ivan@example.com", "Иван Петров", "https://tasks.example/password-set?token=abc")
+	require.NoError(t, err)
+	require.Equal(t, "TaskFlow: приглашение и установка пароля", m.Subject)
+	require.Contains(t, m.Text, "логин — ivan@example.com")
+	require.Contains(t, m.Text, "https://tasks.example/password-set?token=abc")
+}
+
 func TestBuildEncodesHeadersAndBody(t *testing.T) {
 	from := &netmail.Address{Name: "TaskFlow", Address: "noreply@tasks.example"}
 	m := Message{To: "ivan@example.com", Subject: "Тема письма", Text: strings.Repeat("Привет, мир! ", 20)}
