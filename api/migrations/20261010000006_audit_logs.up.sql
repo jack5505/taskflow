@@ -10,7 +10,9 @@ CREATE TABLE audit_logs (
     old_value   jsonb,
     new_value   jsonb,
     source      text        NOT NULL CHECK (source IN ('web', 'bot', 'cli', 'system')),
-    created_at  timestamptz NOT NULL DEFAULT now()
+    -- clock_timestamp, а не now(): несколько записей одной транзакции получают разное время
+    -- и идут в журнале в порядке действий.
+    created_at  timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
 -- Журнал проекта по периоду (§9.2, 7.9) с курсорной пагинацией по (created_at, id).

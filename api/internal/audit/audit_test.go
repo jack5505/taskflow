@@ -35,6 +35,7 @@ func TestWriteTakesActorAndSourceFromContext(t *testing.T) {
 	ctx := audit.WithActor(context.Background(), u.ID)
 	write(t, g, ctx, audit.Record{ProjectID: &p.ID, Action: audit.MemberAdded, EntityType: "user", EntityID: "x", New: map[string]string{"role": "member"}})
 	write(t, g, audit.WithSource(context.Background(), audit.SourceCLI), audit.Record{Action: audit.UserCreated, EntityType: "user", EntityID: "y"})
+	write(t, g, context.Background(), audit.Record{Action: audit.UserUpdated, EntityType: "user", EntityID: "z"})
 
 	var e audit.Entry
 	require.NoError(t, g.First(&e, "project_id = ?", p.ID).Error)
@@ -48,6 +49,10 @@ func TestWriteTakesActorAndSourceFromContext(t *testing.T) {
 	require.Nil(t, cli.ActorID)
 	require.Nil(t, cli.ProjectID)
 	require.Equal(t, audit.SourceCLI, cli.Source)
+
+	var sys audit.Entry
+	require.NoError(t, g.First(&sys, "entity_id = 'z'").Error)
+	require.Equal(t, audit.SourceSystem, sys.Source, "без актора и источника — system, а не web")
 }
 
 // §3.8: журнал не редактируется — UPDATE и DELETE отклоняет база.
@@ -88,6 +93,7 @@ func TestListFiltersAndPages(t *testing.T) {
 		}
 	}
 	require.Len(t, seen, 5, "все записи ровно по разу")
+	require.Equal(t, seen[0], mustLatest(t, g, p.ID), "новые первыми")
 	require.Empty(t, cursor, "на последней странице курсора нет")
 
 	page, err := audit.List(context.Background(), g, p.ID, audit.Filter{Action: audit.MemberRemoved})
@@ -106,4 +112,30 @@ func TestListFiltersAndPages(t *testing.T) {
 
 	_, err = audit.List(context.Background(), g, p.ID, audit.Filter{Cursor: "%%%"})
 	require.ErrorIs(t, err, audit.ErrBadCursor)
+}
+
+func mustLatest(t *testing.T, g *gorm.DB, projectID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id string
+	require.NoError(t, g.Raw(`SELECT id::text FROM audit_logs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`, projectID).Scan(&id).Error)
+	return uuid.MustParse(id)
+}
+
+// Записи одной транзакции получают разное время (clock_timestamp) и идут в порядке действий.
+func TestEntriesOfOneTransactionKeepOrder(t *testing.T) {
+	g, _, p := setup(t)
+	require.NoError(t, g.Transaction(func(tx *gorm.DB) error {
+		for _, a := range []string{audit.ProjectUpdated, audit.ProjectArchived} {
+			if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: a, EntityType: "project", EntityID: p.ID.String()}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	page, err := audit.List(context.Background(), g, p.ID, audit.Filter{})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	require.Equal(t, audit.ProjectArchived, page.Items[0].Action)
+	require.Equal(t, audit.ProjectUpdated, page.Items[1].Action)
+	require.True(t, page.Items[0].CreatedAt.After(page.Items[1].CreatedAt))
 }

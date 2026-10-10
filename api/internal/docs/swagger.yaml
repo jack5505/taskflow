@@ -614,8 +614,9 @@ paths:
   /api/v1/projects/{key}/audit:
     get:
       description: 'Действия менеджеров и администраторов (ТЗ §3.8): участники и роли,
-        настройки, архив, удаление и восстановление. Только администратор системы.
-        Новые записи первыми; следующая страница — cursor из next_cursor.'
+        настройки, архив, удаление и восстановление. Только администратор системы;
+        доступен и для удалённого проекта. Новые записи первыми; следующая страница
+        — cursor из next_cursor. Даты from/to — по часовому поясу проекта.'
       parameters:
       - description: ключ проекта
         in: path
@@ -662,11 +663,11 @@ paths:
           schema:
             $ref: '#/definitions/apierr.Response'
         "403":
-          description: 'FORBIDDEN: не администратор системы'
+          description: 'FORBIDDEN: участник, но не администратор системы'
           schema:
             $ref: '#/definitions/apierr.Response'
         "404":
-          description: NOT_FOUND
+          description: 'NOT_FOUND: нет проекта или пользователь в нём не участвует'
           schema:
             $ref: '#/definitions/apierr.Response'
       security:

@@ -87,6 +87,15 @@ func Bind(c *gin.Context, dst any) bool {
 	return true
 }
 
+// BindQuery — как Bind, но для параметров строки запроса (теги form + binding).
+func BindQuery(c *gin.Context, dst any) bool {
+	if err := c.ShouldBindQuery(dst); err != nil {
+		writeError(c, apierr.FromBinding(err))
+		return false
+	}
+	return true
+}
+
 func writeError(c *gin.Context, e *apierr.Error) {
 	details := map[string]any{ctxRequestID: RequestID(c)}
 	for k, v := range e.Details {

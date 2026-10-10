@@ -105,6 +105,19 @@ func (s *Service) Access(ctx context.Context, u *user.User, key string) (*Access
 // View — проект из Access для ответа.
 func (a *Access) View() View { return newView(a.Project, a.Role) }
 
+// FindWithDeleted — проект по ключу, в том числе удалённый (журнал и корзина администратора).
+func (s *Service) FindWithDeleted(ctx context.Context, key string) (*Project, error) {
+	var p Project
+	err := s.db.WithContext(ctx).Unscoped().First(&p, "key = ?", key).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("project: find: %w", err)
+	}
+	return &p, nil
+}
+
 // ListFilter — фильтры списка (§7.2): обычные, «Архив», «Удалённые» (только администратор).
 type ListFilter struct {
 	Archived bool
@@ -379,13 +392,7 @@ func NextTaskNumber(tx *gorm.DB, projectID uuid.UUID) (int, error) {
 
 // settingsDiff — прежние и новые значения меняющихся настроек для журнала.
 func settingsDiff(p *Project, updates map[string]any) (old, nw map[string]any) {
-	current := map[string]any{"name": p.Name, "timezone": p.Timezone, "daily_summary_time": p.DailySummaryTime}
-	old, nw = map[string]any{}, map[string]any{}
-	for k, cur := range current {
-		if v, ok := updates[k]; ok && v != cur {
-			old[k], nw[k] = cur, v
-		}
-	}
+	old, nw = audit.Diff(map[string]any{"name": p.Name, "timezone": p.Timezone, "daily_summary_time": p.DailySummaryTime}, updates)
 	if v, ok := updates["description"]; ok {
 		d := v.(*string)
 		if (d == nil) != (p.Description == nil) || (d != nil && *d != *p.Description) {

@@ -243,14 +243,7 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 
 // changed — значения полей пользователя до и после для журнала; только реально меняющиеся.
 func changed(u *user.User, updates map[string]any) (old, nw map[string]any) {
-	current := map[string]any{"display_name": u.DisplayName, "timezone": u.Timezone, "is_system_admin": u.IsSystemAdmin}
-	old, nw = map[string]any{}, map[string]any{}
-	for k, cur := range current {
-		if v, ok := updates[k]; ok && v != cur {
-			old[k], nw[k] = cur, v
-		}
-	}
-	return old, nw
+	return audit.Diff(map[string]any{"display_name": u.DisplayName, "timezone": u.Timezone, "is_system_admin": u.IsSystemAdmin}, updates)
 }
 
 func displayName(name string) (string, error) {

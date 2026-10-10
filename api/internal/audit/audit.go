@@ -72,7 +72,8 @@ func WithActor(ctx context.Context, userID uuid.UUID) context.Context {
 	return context.WithValue(ctx, actorKey, userID)
 }
 
-// WithSource — откуда действие; по умолчанию web.
+// WithSource — откуда действие. Без него: web, если в контексте есть актор (запрос API),
+// иначе system (воркер, плановые задания).
 func WithSource(ctx context.Context, source string) context.Context {
 	return context.WithValue(ctx, sourceKey, source)
 }
@@ -94,10 +95,10 @@ func Write(tx *gorm.DB, r Record) error {
 	}
 	e := Entry{
 		ID: uuid.New(), ProjectID: r.ProjectID, Action: r.Action,
-		EntityType: r.EntityType, EntityID: r.EntityID, Source: SourceWeb,
+		EntityType: r.EntityType, EntityID: r.EntityID, Source: SourceSystem,
 	}
 	if id, ok := ctx.Value(actorKey).(uuid.UUID); ok {
-		e.ActorID = &id
+		e.ActorID, e.Source = &id, SourceWeb
 	}
 	if s, ok := ctx.Value(sourceKey).(string); ok {
 		e.Source = s
@@ -125,6 +126,18 @@ func toJSON(v any) (*events.JSON, error) {
 	}
 	j := events.JSON(b)
 	return &j, nil
+}
+
+// Diff — прежние и новые значения полей из updates, которые реально меняются (сравнение ==
+// годится для строк, чисел и bool; прочее сравнивает вызывающий сам).
+func Diff(current, updates map[string]any) (old, nw map[string]any) {
+	old, nw = map[string]any{}, map[string]any{}
+	for k, cur := range current {
+		if v, ok := updates[k]; ok && v != cur {
+			old[k], nw[k] = cur, v
+		}
+	}
+	return old, nw
 }
 
 // Filter — фильтры журнала (§9.2): период [From, To), пользователь, тип действия.

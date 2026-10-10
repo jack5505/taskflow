@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -65,10 +66,35 @@ func TestEveryActionLeavesAuditRecord(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
 	require.Len(t, page.Items, 1, "фильтры по действию и пользователю")
 
-	for _, tok := range []string{w.manager, w.member} {
+	rec = w.do("GET", proj+"/audit", w.manager, "")
+	require.Equal(t, http.StatusForbidden, rec.Code, "журнал — только администратору, менеджеру проекта 403")
+	for _, tok := range []string{w.member, w.outsider} {
 		rec = w.do("GET", proj+"/audit", tok, "")
-		require.Equal(t, http.StatusForbidden, rec.Code, "журнал — только администратору")
+		require.Equal(t, http.StatusNotFound, rec.Code, "не участнику — 404, а не 403")
 	}
+
+	// Даты — по поясу проекта: «сегодня» проекта включает свежие записи, «завтра» — нет.
+	loc, err := time.LoadLocation("Europe/Moscow")
+	require.NoError(t, err)
+	today := time.Now().In(loc).Format(time.DateOnly)
+	tomorrow := time.Now().In(loc).AddDate(0, 0, 1).Format(time.DateOnly)
+	rec = w.do("GET", proj+"/audit?from="+today+"&to="+today, w.admin, "")
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	require.Len(t, page.Items, len(steps))
+	rec = w.do("GET", proj+"/audit?from="+tomorrow, w.admin, "")
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	require.Empty(t, page.Items)
+	// «+» смещения, не закодированный в %2B, приходит пробелом — всё равно понимаем.
+	rec = w.do("GET", proj+"/audit?to="+time.Now().Add(time.Hour).In(loc).Format(time.RFC3339), w.admin, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	require.Len(t, page.Items, len(steps))
+
+	// Журнал удалённого проекта администратор читает без восстановления.
+	rec = w.do("DELETE", proj, w.admin, "")
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	rec = w.do("GET", proj+"/audit", w.admin, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	for q, field := range map[string]string{"from=вчера": "from", "user_id=x": "user_id", "limit=500": "limit", "cursor=%25%25": "cursor"} {
 		rec = w.do("GET", proj+"/audit?"+q, w.admin, "")
 		require.Equal(t, http.StatusBadRequest, rec.Code, q)
