@@ -30,6 +30,8 @@ fmt: ## gofmt
 
 swag: ## Сгенерировать Swagger 2.0 из аннотаций → api/internal/docs
 	$(GO_RUN) sh -c 'go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/taskflow/main.go -o internal/docs --parseInternal'
+	# Контейнер пишет от root — возвращаем файлы текущему пользователю, иначе git не сможет их перезаписать.
+	docker run --rm -v $(CURDIR)/api/internal/docs:/d alpine chown -R $$(id -u):$$(id -g) /d
 
 web-gen-api: ## Сгенерировать TypeScript-клиент из swagger.json → web/src/api/client.ts
 	cd web && npm run gen:api
