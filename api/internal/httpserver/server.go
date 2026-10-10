@@ -12,10 +12,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/config"
+	_ "github.com/jack5505/taskflow/api/internal/docs" // сгенерированная спецификация Swagger (make swag)
 	"github.com/jack5505/taskflow/api/internal/web"
 )
 
@@ -74,13 +77,26 @@ func (s *Server) Router() *gin.Engine {
 
 	r.GET("/health", s.healthHandler)
 
+	// Swagger UI и спецификация: /api/docs/index.html, /api/docs/doc.json (ТЗ §10.3).
+	r.GET("/api/docs", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/api/docs/index.html") })
+	r.GET("/api/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
 	api := r.Group("/api/v1")
-	api.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"pong": true})
-	})
+	api.GET("/ping", s.pingHandler)
 
 	mountSPA(r)
 	return r
+}
+
+// pingHandler — проверка, что API отвечает; без авторизации.
+//
+// @Summary      Проверка связи
+// @Tags         system
+// @Produce      json
+// @Success      200  {object}  map[string]bool  "pong: true"
+// @Router       /api/v1/ping [get]
+func (s *Server) pingHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"pong": true})
 }
 
 // mountSPA отдаёт собранный веб-интерфейс, встроенный в бинарник (ТЗ §10.2).

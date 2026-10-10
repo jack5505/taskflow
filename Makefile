@@ -28,8 +28,11 @@ lint: ## golangci-lint
 fmt: ## gofmt
 	$(GO_RUN) gofmt -l -w .
 
-swag: ## Сгенерировать Swagger 2.0 из аннотаций
-	$(GO_RUN) sh -c 'go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/taskflow/main.go -o internal/docs'
+swag: ## Сгенерировать Swagger 2.0 из аннотаций → api/internal/docs
+	$(GO_RUN) sh -c 'go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/taskflow/main.go -o internal/docs --parseInternal'
+
+web-gen-api: ## Сгенерировать TypeScript-клиент из swagger.json → web/src/api/client.ts
+	cd web && npm run gen:api
 
 migrate-new: ## Новая миграция: make migrate-new name=create_users
 	@test -n "$(name)" || (echo "name= обязателен"; exit 1)
