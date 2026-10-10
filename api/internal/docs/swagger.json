@@ -526,6 +526,200 @@
                 }
             }
         },
+        "/api/v1/projects/{key}/members": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Участники проекта",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/project.MemberView"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: нет проекта или пользователь не участник",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/projects/{key}/members/{user_id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Менеджер проекта или администратор (§2). Добавить можно только активного пользователя. Понижение единственного активного менеджера — 409 LAST_MANAGER. В архивном проекте — 409 PROJECT_ARCHIVED.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Добавить участника или изменить роль",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "id пользователя",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "роль",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/project.putMemberRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "роль изменена или не менялась",
+                        "schema": {
+                            "$ref": "#/definitions/project.MemberView"
+                        }
+                    },
+                    "201": {
+                        "description": "участник добавлен",
+                        "schema": {
+                            "$ref": "#/definitions/project.MemberView"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED, в том числе пользователь деактивирован",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: нет проекта или пользователя",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "LAST_MANAGER, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Менеджер проекта или администратор (§2). Единственного активного менеджера — 409 LAST_MANAGER.",
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Исключить участника",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "id пользователя",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: нет проекта или участника",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "LAST_MANAGER, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/projects/{key}/restore": {
             "post": {
                 "security": [
@@ -869,6 +1063,30 @@
                 }
             }
         },
+        "project.MemberView": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "manager",
+                        "member"
+                    ]
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
         "project.View": {
             "type": "object",
             "properties": {
@@ -941,6 +1159,21 @@
                     "type": "string",
                     "maxLength": 64,
                     "example": "Europe/Moscow"
+                }
+            }
+        },
+        "project.putMemberRequest": {
+            "type": "object",
+            "required": [
+                "role"
+            ],
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "manager",
+                        "member"
+                    ]
                 }
             }
         },
