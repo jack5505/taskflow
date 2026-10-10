@@ -11,27 +11,38 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/web"
 )
 
-// Run поднимает сервер и ждёт отмены контекста.
-func Run(ctx context.Context, cfg *config.Config) error {
-	if cfg.Env == "production" {
+// Server держит зависимости обработчиков. Домены добавляют сюда свои сервисы.
+type Server struct {
+	cfg *config.Config
+	db  *gorm.DB
+}
+
+// New собирает сервер с зависимостями.
+func New(cfg *config.Config, g *gorm.DB) *Server {
+	return &Server{cfg: cfg, db: g}
+}
+
+// Run поднимает HTTP-сервер и ждёт отмены контекста.
+func (s *Server) Run(ctx context.Context) error {
+	if s.cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	r := NewRouter(cfg)
 
 	srv := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           r,
+		Addr:              s.cfg.Addr,
+		Handler:           s.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("api: listening", "addr", cfg.Addr)
+		slog.Info("api: listening", "addr", s.cfg.Addr)
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -48,15 +59,12 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 }
 
-// NewRouter собирает маршруты. Базовый путь API — /api/v1 (ТЗ §9).
-func NewRouter(cfg *config.Config) *gin.Engine {
+// Router собирает маршруты. Базовый путь API — /api/v1 (ТЗ §9).
+func (s *Server) Router() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery(), requestID(), accessLog())
 
-	// /health проверяет базу и Redis (ТЗ §10.3) — проверки появятся вместе с подключением к ним.
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
+	r.GET("/health", s.healthHandler)
 
 	api := r.Group("/api/v1")
 	api.GET("/ping", func(c *gin.Context) {

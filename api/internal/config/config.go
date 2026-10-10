@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -51,6 +52,10 @@ func Load() (*Config, error) {
 		SMTPFrom:              os.Getenv("SMTP_FROM"),
 		AttachmentsDir:        getenv("ATTACHMENTS_DIR", "./data/attachments"),
 		AttachmentMaxBytes:    50 << 20,
+	}
+
+	if c.DatabaseURL == "" {
+		return nil, errors.New("DATABASE_URL не задан")
 	}
 
 	var err error
