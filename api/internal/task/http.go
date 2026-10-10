@@ -2,10 +2,13 @@ package task
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/project"
@@ -26,6 +29,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	api.POST("/projects/:key/tasks", h.requireAuth, h.create)
 	t := api.Group("/tasks", h.requireAuth)
 	t.GET("/:task_key", h.get)
+	t.PATCH("/:task_key", h.update)
 	t.GET("/:task_key/history", h.history)
 	t.POST("/:task_key/transition", h.transition)
 	t.POST("/:task_key/take", h.take)
@@ -77,7 +81,7 @@ func (h *Handlers) create(c *gin.Context) {
 		httpserver.Abort(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, t)
+	respond(c, http.StatusCreated, t)
 }
 
 // get — карточка задачи.
@@ -97,7 +101,7 @@ func (h *Handlers) get(c *gin.Context) {
 		httpserver.Abort(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, t)
+	respond(c, http.StatusOK, t)
 }
 
 // history — история изменений задачи (§3.7).
@@ -158,7 +162,7 @@ func (h *Handlers) transition(c *gin.Context) {
 		httpserver.Abort(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, t)
+	respond(c, http.StatusOK, t)
 }
 
 // take — взять задачу себе.
@@ -180,5 +184,69 @@ func (h *Handlers) take(c *gin.Context) {
 		httpserver.Abort(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, t)
+	respond(c, http.StatusOK, t)
+}
+
+// respond — задача в ответе с ETag = version (клиент передаёт его в If-Match при PATCH).
+func respond(c *gin.Context, status int, t *Task) {
+	c.Header("ETag", strconv.Quote(strconv.Itoa(t.Version)))
+	c.JSON(status, t)
+}
+
+// ifMatch — версия из If-Match: 5, "5" или W/"5".
+func ifMatch(c *gin.Context) (int, bool) {
+	v := strings.TrimSpace(c.GetHeader("If-Match"))
+	v = strings.Trim(strings.TrimPrefix(v, "W/"), `"`)
+	n, err := strconv.Atoi(v)
+	return n, err == nil && n >= 1
+}
+
+// updateRequest — поля PATCH; null очищает необязательное поле.
+type updateRequest struct {
+	Title           Opt[string]    `json:"title" swaggertype:"string"`
+	Description     Opt[string]    `json:"description" swaggertype:"string" extensions:"x-nullable"`
+	Type            Opt[string]    `json:"type" swaggertype:"string" enums:"task,bug,feature"`
+	Priority        Opt[string]    `json:"priority" swaggertype:"string" enums:"low,medium,high,critical"`
+	AssigneeID      Opt[uuid.UUID] `json:"assignee_id" swaggertype:"string" format:"uuid" extensions:"x-nullable"`
+	SprintID        Opt[uuid.UUID] `json:"sprint_id" swaggertype:"string" format:"uuid" extensions:"x-nullable"`
+	EstimateMinutes Opt[int]       `json:"estimate_minutes" swaggertype:"integer" extensions:"x-nullable"`
+	DueDate         Opt[string]    `json:"due_date" swaggertype:"string" example:"2026-10-31" extensions:"x-nullable"`
+	Labels          Opt[[]string]  `json:"labels" swaggertype:"array,string"`
+}
+
+// update — изменение полей задачи.
+//
+// @Summary      Изменить задачу
+// @Description  Меняются только переданные поля, кроме статуса (он — через /transition); null очищает необязательное поле. Заголовок If-Match — version из карточки (ETag); если задачу уже изменили — 409 VERSION_CONFLICT, в details.current актуальная задача. Права (§2): автор, исполнитель или менеджер; исполнитель и спринт — только менеджер; оценку задачи в работе и позже — только менеджер. Исполнителя нельзя менять в закрытой задаче и снимать с задачи в работе (§4).
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string         true  "ключ задачи"
+// @Param        If-Match  header    string         true  "текущая version задачи"
+// @Param        body      body      updateRequest  true  "поля для изменения"
+// @Success      200       {object}  Task
+// @Failure      400       {object}  apierr.Response  "VALIDATION_FAILED, в том числе нет If-Match"
+// @Failure      401       {object}  apierr.Response
+// @Failure      403       {object}  apierr.Response  "FORBIDDEN"
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409       {object}  apierr.Response  "VERSION_CONFLICT, PROJECT_ARCHIVED"
+// @Router       /api/v1/tasks/{task_key} [patch]
+func (h *Handlers) update(c *gin.Context) {
+	version, ok := ifMatch(c)
+	if !ok {
+		httpserver.Abort(c, apierr.BadRequest(apierr.CodeValidation, "Нужен заголовок If-Match с версией задачи").
+			With("fields", []apierr.FieldError{{Field: "If-Match", Reason: "версия задачи из ETag карточки"}}))
+		return
+	}
+	var req updateRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	t, err := h.svc.Update(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"), version, UpdateInput(req))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	respond(c, http.StatusOK, t)
 }

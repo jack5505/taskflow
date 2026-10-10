@@ -451,6 +451,46 @@ definitions:
     required:
     - to
     type: object
+  task.updateRequest:
+    properties:
+      assignee_id:
+        format: uuid
+        type: string
+        x-nullable: true
+      description:
+        type: string
+        x-nullable: true
+      due_date:
+        example: "2026-10-31"
+        type: string
+        x-nullable: true
+      estimate_minutes:
+        type: integer
+        x-nullable: true
+      labels:
+        items:
+          type: string
+        type: array
+      priority:
+        enum:
+        - low
+        - medium
+        - high
+        - critical
+        type: string
+      sprint_id:
+        format: uuid
+        type: string
+        x-nullable: true
+      title:
+        type: string
+      type:
+        enum:
+        - task
+        - bug
+        - feature
+        type: string
+    type: object
   user.User:
     properties:
       created_at:
@@ -1288,6 +1328,64 @@ paths:
       security:
       - BearerAuth: []
       summary: Задача
+      tags:
+      - tasks
+    patch:
+      consumes:
+      - application/json
+      description: 'Меняются только переданные поля, кроме статуса (он — через /transition);
+        null очищает необязательное поле. Заголовок If-Match — version из карточки
+        (ETag); если задачу уже изменили — 409 VERSION_CONFLICT, в details.current
+        актуальная задача. Права (§2): автор, исполнитель или менеджер; исполнитель
+        и спринт — только менеджер; оценку задачи в работе и позже — только менеджер.
+        Исполнителя нельзя менять в закрытой задаче и снимать с задачи в работе (§4).'
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      - description: текущая version задачи
+        in: header
+        name: If-Match
+        required: true
+        type: string
+      - description: поля для изменения
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.updateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.Task'
+        "400":
+          description: VALIDATION_FAILED, в том числе нет If-Match
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: FORBIDDEN
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: VERSION_CONFLICT, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Изменить задачу
       tags:
       - tasks
   /api/v1/tasks/{task_key}/history:

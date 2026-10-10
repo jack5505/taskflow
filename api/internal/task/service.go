@@ -273,8 +273,14 @@ func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID
 
 // checkSprint — спринт этого проекта и не завершён; строка FOR SHARE (закрытие спринта дождётся).
 func checkSprint(tx *gorm.DB, projectID, sprintID uuid.UUID) error {
+	return checkSprintLock(tx, projectID, sprintID, " FOR SHARE")
+}
+
+// checkSprintLock — checkSprint с выбором блокировки: "" — когда уже заблокирована строка задачи
+// (закрытие спринта блокирует спринт, затем его задачи — встречная блокировка дала бы deadlock).
+func checkSprintLock(tx *gorm.DB, projectID, sprintID uuid.UUID, lock string) error {
 	var states []string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? AND project_id = ? FOR SHARE`, sprintID, projectID).
+	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? AND project_id = ?`+lock, sprintID, projectID).
 		Scan(&states).Error; err != nil {
 		return fmt.Errorf("task: sprint check: %w", err)
 	}
