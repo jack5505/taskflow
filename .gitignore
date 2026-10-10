@@ -1,0 +1,28 @@
+# Go
+/bin/
+/api/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.vite/
+api/internal/web/dist/*
+!api/internal/web/dist/index.html
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Data
+/data/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

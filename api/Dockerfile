@@ -1,0 +1,27 @@
+# Этап 1: фронтенд
+FROM node:24-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# Этап 2: бинарник Go со встроенной статикой
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY api/go.mod api/go.sum ./
+RUN go mod download
+COPY api/ ./
+COPY --from=web /web/dist ./internal/web/dist
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/taskflow ./cmd/taskflow
+
+# Этап 3: рантайм. tzdata нужен для часовых поясов (ТЗ §10.2).
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
+WORKDIR /app
+COPY --from=build /out/taskflow /app/taskflow
+COPY api/migrations /app/migrations
+USER app
+EXPOSE 8080
+ENTRYPOINT ["/app/taskflow"]
+CMD ["api"]
