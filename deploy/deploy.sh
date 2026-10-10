@@ -30,8 +30,13 @@ if [[ $IMAGE_REPO == ghcr.io/* ]] && command -v gh >/dev/null 2>&1; then
     || log "docker login ghcr.io не удался — пробуем тянуть без него"
 fi
 
-log "pull $IMAGE"
-docker pull --quiet "$IMAGE" >/dev/null
+if [ "${TASKFLOW_SKIP_PULL:-}" = "1" ]; then
+  log "pull пропущен (TASKFLOW_SKIP_PULL=1), используем локальный $IMAGE"
+  docker image inspect "$IMAGE" >/dev/null
+else
+  log "pull $IMAGE"
+  docker pull --quiet "$IMAGE" >/dev/null
+fi
 
 set_image() { sed -i '/^TASKFLOW_IMAGE=/d' .env; echo "TASKFLOW_IMAGE=$1" >> .env; }
 PREV=$(sed -n 's/^TASKFLOW_IMAGE=//p' .env | tail -1)
