@@ -1,0 +1,373 @@
+package project
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/model"
+	"github.com/jack5505/taskflow/api/internal/user"
+)
+
+var (
+	// ErrNotFound — проекта нет, он удалён или пользователь в нём не участвует (§2: чужой проект не виден).
+	ErrNotFound = apierr.NotFound("Проект не найден")
+	// ErrArchived — §3.2: в архивном проекте запрещены любые изменения.
+	ErrArchived  = apierr.Conflict(apierr.CodeProjectArchived, "Проект в архиве, изменения запрещены")
+	ErrForbidden = apierr.Forbidden("Недостаточно прав в проекте")
+	errAdminOnly = apierr.Forbidden("Доступно только администратору системы")
+)
+
+var keyRe = regexp.MustCompile(`^[A-Z]{2,10}$`)
+
+func fieldError(field, reason string) error {
+	return apierr.BadRequest(apierr.CodeValidation, "Некорректные данные запроса").
+		With("fields", []apierr.FieldError{{Field: field, Reason: reason}})
+}
+
+// Access — проект и роль в нём текущего пользователя. Role пуста у администратора
+// системы, который не участник проекта: права у него есть по глобальной роли (§2).
+type Access struct {
+	Project *Project
+	Role    string
+	Admin   bool
+}
+
+// CanManage — права менеджера проекта (§2): администратор системы или менеджер.
+func (a *Access) CanManage() bool { return a.Admin || a.Role == RoleManager }
+
+// EnsureWritable — проверка перед любым изменением данных проекта (§3.2).
+func EnsureWritable(p *Project) error {
+	if p.IsArchived {
+		return ErrArchived
+	}
+	return nil
+}
+
+// View — проект в ответе API: настройки событий с умолчаниями §8.6 и роль текущего пользователя.
+type View struct {
+	*Project
+	NotificationSettings map[string]bool `json:"notification_settings"`
+	MyRole               *string         `json:"my_role"`
+}
+
+func newView(p *Project, role string) View {
+	v := View{Project: p, NotificationSettings: EffectiveNotifications(p.NotificationSettings)}
+	if role != "" {
+		v.MyRole = &role
+	}
+	return v
+}
+
+// Service — проекты (ТЗ §3.2, §9.2).
+type Service struct {
+	db  *gorm.DB
+	now func() time.Time
+}
+
+func NewService(db *gorm.DB) *Service { return &Service{db: db, now: time.Now} }
+
+// Access находит неудалённый проект по ключу и роль пользователя в нём. Не участник и не
+// администратор получает ErrNotFound, а не 403: существование чужого проекта не раскрывается.
+func (s *Service) Access(ctx context.Context, u *user.User, key string) (*Access, error) {
+	var p Project
+	if err := s.db.WithContext(ctx).First(&p, "key = ?", key).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("project: find: %w", err)
+	}
+	var m Member
+	err := s.db.WithContext(ctx).First(&m, "project_id = ? AND user_id = ?", p.ID, u.ID).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if !u.IsSystemAdmin {
+			return nil, ErrNotFound
+		}
+	case err != nil:
+		return nil, fmt.Errorf("project: membership: %w", err)
+	}
+	return &Access{Project: &p, Role: m.Role, Admin: u.IsSystemAdmin}, nil
+}
+
+// View — проект из Access для ответа.
+func (a *Access) View() View { return newView(a.Project, a.Role) }
+
+// ListFilter — фильтры списка (§7.2): обычные, «Архив», «Удалённые» (только администратор).
+type ListFilter struct {
+	Archived bool
+	Deleted  bool
+}
+
+// List — проекты, в которых пользователь участник; администратору — все (§7.2).
+func (s *Service) List(ctx context.Context, u *user.User, f ListFilter) ([]View, error) {
+	if f.Deleted && !u.IsSystemAdmin {
+		return nil, errAdminOnly
+	}
+	q := s.db.WithContext(ctx).Model(&Project{})
+	if f.Deleted {
+		q = q.Unscoped().Where("deleted_at IS NOT NULL")
+	} else {
+		q = q.Where("is_archived = ?", f.Archived)
+	}
+	if !u.IsSystemAdmin {
+		q = q.Where("id IN (SELECT project_id FROM project_members WHERE user_id = ?)", u.ID)
+	}
+	var list []Project
+	if err := q.Order("key").Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("project: list: %w", err)
+	}
+	var members []Member
+	if err := s.db.WithContext(ctx).Where("user_id = ?", u.ID).Find(&members).Error; err != nil {
+		return nil, fmt.Errorf("project: my roles: %w", err)
+	}
+	roles := make(map[uuid.UUID]string, len(members))
+	for _, m := range members {
+		roles[m.ProjectID] = m.Role
+	}
+	out := make([]View, len(list))
+	for i := range list {
+		out[i] = newView(&list[i], roles[list[i].ID])
+	}
+	return out, nil
+}
+
+type CreateInput struct {
+	Key         string
+	Name        string
+	Description *string
+	Timezone    string
+}
+
+// Create — новый проект (администратор системы). Ключ уникален и среди удалённых (§3.2).
+func (s *Service) Create(ctx context.Context, in CreateInput) (*Project, error) {
+	if !keyRe.MatchString(in.Key) {
+		return nil, fieldError("key", "от 2 до 10 заглавных латинских букв")
+	}
+	name, err := projectName(in.Name)
+	if err != nil {
+		return nil, err
+	}
+	p := New(in.Key, name)
+	if p.Description, err = description(in.Description); err != nil {
+		return nil, err
+	}
+	if in.Timezone != "" {
+		if err := checkTimezone(in.Timezone); err != nil {
+			return nil, err
+		}
+		p.Timezone = in.Timezone
+	}
+	res := s.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoNothing: true}).Create(p)
+	if res.Error != nil {
+		return nil, fmt.Errorf("project: create: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return nil, fieldError("key", "уже занят (в том числе удалённым проектом)")
+	}
+	return p, nil
+}
+
+// UpdateInput — изменяемые поля; nil — не менять. Description "" очищает описание.
+type UpdateInput struct {
+	Name                 *string
+	Description          *string
+	Timezone             *string
+	NotificationSettings map[string]bool
+	DailySummaryTime     *string
+	IsArchived           *bool
+}
+
+func (in UpdateInput) changesData() bool {
+	return in.Name != nil || in.Description != nil || in.Timezone != nil ||
+		in.NotificationSettings != nil || in.DailySummaryTime != nil
+}
+
+// Update — PATCH /projects/{key}: менеджер; is_archived — только администратор (§9.2).
+// В архивном проекте допустимо одно изменение — разархивация администратором.
+func (s *Service) Update(ctx context.Context, a *Access, in UpdateInput) (*Project, error) {
+	if !a.CanManage() {
+		return nil, ErrForbidden
+	}
+	if in.IsArchived != nil && !a.Admin {
+		return nil, errAdminOnly
+	}
+	updates := map[string]any{}
+	if in.Name != nil {
+		name, err := projectName(*in.Name)
+		if err != nil {
+			return nil, err
+		}
+		updates["name"] = name
+	}
+	if in.Description != nil {
+		d, err := description(in.Description)
+		if err != nil {
+			return nil, err
+		}
+		updates["description"] = d
+	}
+	if in.Timezone != nil {
+		if err := checkTimezone(*in.Timezone); err != nil {
+			return nil, err
+		}
+		updates["timezone"] = *in.Timezone
+	}
+	if in.DailySummaryTime != nil {
+		t, err := time.Parse("15:04", *in.DailySummaryTime)
+		if err != nil {
+			return nil, fieldError("daily_summary_time", "время в формате ЧЧ:ММ")
+		}
+		updates["daily_summary_time"] = model.TimeOfDay(t.Format("15:04"))
+	}
+
+	var p Project
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockProject(tx, a.Project.ID, &p); err != nil {
+			return err
+		}
+		if p.IsArchived && (in.changesData() || in.IsArchived == nil || *in.IsArchived) {
+			return ErrArchived
+		}
+		if in.NotificationSettings != nil {
+			merged, err := MergeNotifications(p.NotificationSettings, in.NotificationSettings)
+			if err != nil {
+				return fieldError("notification_settings", err.Error())
+			}
+			updates["notification_settings"] = merged
+		}
+		if in.IsArchived != nil && *in.IsArchived != p.IsArchived {
+			updates["is_archived"] = *in.IsArchived
+			if *in.IsArchived {
+				// Остановку запущенных таймеров при архивации (§3.2) добавит задача таймера (#33).
+				if err := events.Publish(tx, events.ProjectArchived, map[string]any{"project_id": p.ID, "key": p.Key}); err != nil {
+					return err
+				}
+			}
+		}
+		if len(updates) == 0 {
+			return nil
+		}
+		if err := tx.Model(&p).Updates(updates).Error; err != nil {
+			return fmt.Errorf("project: update: %w", err)
+		}
+		return tx.First(&p, "id = ?", p.ID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// Delete — мягкое удаление (администратор, §3.2): проект пропадает из списков и бота,
+// Telegram-группа отключается; задачи и записи времени остаются.
+func (s *Service) Delete(ctx context.Context, key string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var p Project
+		if err := tx.First(&p, "key = ?", key).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("project: find: %w", err)
+		}
+		if err := lockProject(tx, p.ID, &p); err != nil {
+			return err
+		}
+		if err := tx.Model(&p).Updates(map[string]any{"deleted_at": s.now(), "telegram_chat_id": nil}).Error; err != nil {
+			return fmt.Errorf("project: delete: %w", err)
+		}
+		return events.Publish(tx, events.ProjectDeleted, map[string]any{"project_id": p.ID, "key": p.Key})
+	})
+}
+
+// Restore — восстановление удалённого проекта (администратор). Не удалённый возвращается как есть.
+func (s *Service) Restore(ctx context.Context, key string) (*Project, error) {
+	var p Project
+	err := s.db.WithContext(ctx).Unscoped().First(&p, "key = ?", key).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("project: find: %w", err)
+	}
+	if p.DeletedAt.Valid {
+		if err := s.db.WithContext(ctx).Unscoped().Model(&p).Update("deleted_at", nil).Error; err != nil {
+			return nil, fmt.Errorf("project: restore: %w", err)
+		}
+		p.DeletedAt = gorm.DeletedAt{}
+	}
+	return &p, nil
+}
+
+// NextTaskNumber выдаёт следующий номер задачи проекта атомарно (§3.2: UPDATE … RETURNING):
+// параллельные создания из веба и Telegram не получат одинаковых номеров. Вызывать в транзакции
+// создания задачи — при откате номер не тратится. Архивный и удалённый проект номеров не выдают.
+func NextTaskNumber(tx *gorm.DB, projectID uuid.UUID) (int, error) {
+	var n []int
+	if err := tx.Raw(`UPDATE projects SET task_counter = task_counter + 1, updated_at = now()
+		WHERE id = ? AND deleted_at IS NULL AND NOT is_archived RETURNING task_counter`, projectID).Scan(&n).Error; err != nil {
+		return 0, fmt.Errorf("project: next task number: %w", err)
+	}
+	if len(n) == 1 {
+		return n[0], nil
+	}
+	var archived []bool
+	if err := tx.Raw(`SELECT is_archived FROM projects WHERE id = ? AND deleted_at IS NULL`, projectID).Scan(&archived).Error; err != nil {
+		return 0, fmt.Errorf("project: next task number: %w", err)
+	}
+	if len(archived) == 1 && archived[0] {
+		return 0, ErrArchived
+	}
+	return 0, ErrNotFound
+}
+
+// lockProject — строка проекта FOR UPDATE (без удалённых).
+func lockProject(tx *gorm.DB, id uuid.UUID, p *Project) error {
+	res := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR UPDATE`, id).Scan(p)
+	if res.Error != nil {
+		return fmt.Errorf("project: lock: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func projectName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if n := utf8.RuneCountInString(name); n < 1 || n > 100 {
+		return "", fieldError("name", "от 1 до 100 символов")
+	}
+	return name, nil
+}
+
+func description(d *string) (*string, error) {
+	if d == nil {
+		return nil, nil
+	}
+	v := strings.TrimSpace(*d)
+	if v == "" {
+		return nil, nil
+	}
+	if utf8.RuneCountInString(v) > 2000 {
+		return nil, fieldError("description", "не длиннее 2000 символов")
+	}
+	return &v, nil
+}
+
+func checkTimezone(tz string) error {
+	if _, err := time.LoadLocation(tz); err != nil || tz == "" || tz == "Local" {
+		return fieldError("timezone", "неизвестный часовой пояс IANA")
+	}
+	return nil
+}

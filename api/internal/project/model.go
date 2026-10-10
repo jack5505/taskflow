@@ -33,7 +33,7 @@ type Project struct {
 	Timezone             string          `gorm:"not null" json:"timezone"`
 	NotificationSettings events.JSON     `gorm:"type:jsonb;not null" json:"notification_settings" swaggertype:"object"`
 	DailySummaryTime     model.TimeOfDay `gorm:"type:time;not null" json:"daily_summary_time"`
-	DeletedAt            gorm.DeletedAt  `gorm:"index" json:"deleted_at,omitempty"`
+	DeletedAt            gorm.DeletedAt  `gorm:"index" json:"deleted_at,omitempty" swaggertype:"string" format:"date-time"`
 }
 
 func (Project) TableName() string { return "projects" }

@@ -53,6 +53,56 @@ export interface AuthPasswordSetRequest {
   token: string;
 }
 
+export interface ProjectView {
+  created_at?: string;
+  daily_summary_time?: string;
+  /** @format date-time */
+  deleted_at?: string;
+  description?: string;
+  id?: string;
+  is_archived?: boolean;
+  key?: string;
+  my_role?: string;
+  name?: string;
+  notification_settings?: Record<string, boolean>;
+  telegram_chat_id?: number;
+  timezone?: string;
+  updated_at?: string;
+}
+
+export interface ProjectCreateRequest {
+  /** @maxLength 6000 */
+  description?: string;
+  /**
+   * @maxLength 10
+   * @example "TM"
+   */
+  key: string;
+  /** @maxLength 300 */
+  name: string;
+  /**
+   * @maxLength 64
+   * @example "Europe/Moscow"
+   */
+  timezone?: string;
+}
+
+export interface ProjectUpdateRequest {
+  /**
+   * @maxLength 5
+   * @example "10:00"
+   */
+  daily_summary_time?: string;
+  /** @maxLength 6000 */
+  description?: string;
+  is_archived?: boolean;
+  /** @maxLength 300 */
+  name?: string;
+  notification_settings?: Record<string, boolean>;
+  /** @maxLength 64 */
+  timezone?: string;
+}
+
 export interface UserUser {
   created_at?: string;
   display_name?: string;
@@ -477,6 +527,133 @@ export class Api<
       this.request<Record<string, boolean>, any>({
         path: `/api/v1/ping`,
         method: "GET",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Проекты, где пользователь участник; администратору системы — все. По умолчанию — не архивные; archived=true — только архив; deleted=true — только удалённые (администратор).
+     *
+     * @tags projects
+     * @name V1ProjectsList
+     * @summary Проекты
+     * @request GET:/api/v1/projects
+     * @secure
+     */
+    v1ProjectsList: (
+      query?: {
+        /** только архивные */
+        archived?: boolean;
+        /** только удалённые (администратор) */
+        deleted?: boolean;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<ProjectView[], ApierrResponse>({
+        path: `/api/v1/projects`,
+        method: "GET",
+        query: query,
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Ключ — 2–10 заглавных латинских букв, уникален и среди удалённых проектов, не меняется. Участников добавляет администратор или менеджер (§9.2, участники).
+     *
+     * @tags projects
+     * @name V1ProjectsCreate
+     * @summary Создать проект
+     * @request POST:/api/v1/projects
+     * @secure
+     */
+    v1ProjectsCreate: (
+      body: ProjectCreateRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<ProjectView, ApierrResponse>({
+        path: `/api/v1/projects`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags projects
+     * @name V1ProjectsDetail
+     * @summary Проект
+     * @request GET:/api/v1/projects/{key}
+     * @secure
+     */
+    v1ProjectsDetail: (key: string, params: RequestParams = {}) =>
+      this.request<ProjectView, ApierrResponse>({
+        path: `/api/v1/projects/${key}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Мягкое удаление (§3.2): проект пропадает из списков, бота и отчётов, Telegram-группа отключается; данные сохраняются. Восстановление — POST /projects/{key}/restore.
+     *
+     * @tags projects
+     * @name V1ProjectsDelete
+     * @summary Удалить проект
+     * @request DELETE:/api/v1/projects/{key}
+     * @secure
+     */
+    v1ProjectsDelete: (key: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/projects/${key}`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Менеджер проекта или администратор. Меняются только переданные поля; description "" очищает. notification_settings — частичный объект событий §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted, task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created). is_archived — только администратор. В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.
+     *
+     * @tags projects
+     * @name V1ProjectsPartialUpdate
+     * @summary Изменить проект
+     * @request PATCH:/api/v1/projects/{key}
+     * @secure
+     */
+    v1ProjectsPartialUpdate: (
+      key: string,
+      body: ProjectUpdateRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<ProjectView, ApierrResponse>({
+        path: `/api/v1/projects/${key}`,
+        method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags projects
+     * @name V1ProjectsRestoreCreate
+     * @summary Восстановить проект
+     * @request POST:/api/v1/projects/{key}/restore
+     * @secure
+     */
+    v1ProjectsRestoreCreate: (key: string, params: RequestParams = {}) =>
+      this.request<ProjectView, ApierrResponse>({
+        path: `/api/v1/projects/${key}/restore`,
+        method: "POST",
+        secure: true,
         format: "json",
         ...params,
       }),
