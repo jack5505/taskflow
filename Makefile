@@ -5,7 +5,7 @@ GO_TEST  := docker run --rm -v $(CURDIR)/api:/src -w /src -e GOFLAGS=-mod=mod -e
 	-v /var/run/docker.sock:/var/run/docker.sock --add-host=host.docker.internal:host-gateway \
 	-e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal $(GO_IMAGE)
 
-.PHONY: help build test test-short cover lint fmt swag migrate-new web-install web-dev web-build up down logs
+.PHONY: help build test test-short cover lint fmt swag migrate-new web-install web-gen-api web-dev web-build up down logs
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -29,7 +29,7 @@ fmt: ## gofmt
 	$(GO_RUN) gofmt -l -w .
 
 swag: ## Сгенерировать Swagger 2.0 из аннотаций → api/internal/docs
-	$(GO_RUN) sh -c 'go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/taskflow/main.go -o internal/docs --parseInternal'
+	$(GO_RUN) sh scripts/swag.sh
 	# Контейнер пишет от root — возвращаем файлы текущему пользователю, иначе git не сможет их перезаписать.
 	docker run --rm -v $(CURDIR)/api/internal/docs:/d alpine chown -R $$(id -u):$$(id -g) /d
 

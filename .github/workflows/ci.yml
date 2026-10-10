@@ -21,7 +21,7 @@ jobs:
       - run: go vet ./...
       - name: Swagger в репозитории совпадает с аннотациями (make swag)
         run: |
-          go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/taskflow/main.go -o internal/docs --parseInternal
+          sh scripts/swag.sh
           git diff --exit-code -- internal/docs
       - uses: golangci/golangci-lint-action@v8
         with:

@@ -1,33 +1,27 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import "./App.css";
 
 type Health = { status: string; checks: Record<string, string> };
 
-// Стартовая страница до появления экранов из ТЗ §7: показывает состояние сервиса
-// через сгенерированный клиент (ТЗ §10.3, /health).
-function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [error, setError] = useState<string | null>(null);
+// /health отвечает 200 или 503 с одинаковым телом: 503 — это ответ, а не сбой запроса.
+async function fetchHealth({ signal }: { signal: AbortSignal }): Promise<Health> {
+  const r = await api.health.healthList({ signal });
+  if (r.ok) return r.data as Health;
+  if (r.error && typeof r.error === "object" && "checks" in r.error) return r.error as Health;
+  throw new Error(`Сервис недоступен (${r.status})`);
+}
 
-  useEffect(() => {
-    api.health
-      .healthList()
-      .then((r) => setHealth(r.data as Health))
-      .catch((e: { error?: Health; status?: number }) => {
-        // 503 приходит с тем же телом: сервис деградировал, но отвечает.
-        if (e.error && "checks" in e.error) {
-          setHealth(e.error);
-        } else {
-          setError(`Сервис недоступен (${e.status ?? "нет ответа"})`);
-        }
-      });
-  }, []);
+// Стартовая страница до появления экранов из ТЗ §7: показывает состояние сервиса
+// через сгенерированный клиент (ТЗ §10.3).
+function App() {
+  const { data: health, error, isPending } = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
 
   return (
     <main>
       <h1>TaskFlow</h1>
-      {error && <p role="alert">{error}</p>}
+      {isPending && <p>Проверяем состояние сервиса…</p>}
+      {error && <p role="alert">{error.message}</p>}
       {health && (
         <section>
           <p>
@@ -43,7 +37,7 @@ function App() {
         </section>
       )}
       <p>
-        <a href="/api/docs/">Документация API</a>
+        <a href="/api/docs">Документация API</a>
       </p>
     </main>
   );

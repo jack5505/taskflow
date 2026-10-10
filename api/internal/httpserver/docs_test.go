@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 )
@@ -15,9 +16,17 @@ import (
 func TestSwaggerDocsAreServed(t *testing.T) {
 	r := httpserver.New(&config.Config{Env: "test"}, nil, nil).Router()
 
-	rec, _ := do(t, r, http.MethodGet, "/api/docs", "")
-	require.Equal(t, http.StatusMovedPermanently, rec.Code)
-	require.Equal(t, "/api/docs/index.html", rec.Header().Get("Location"))
+	for _, p := range []string{"/api/docs", "/api/docs/"} {
+		rec, _ := do(t, r, http.MethodGet, p, "")
+		require.Equal(t, http.StatusFound, rec.Code, p)
+		require.Equal(t, "/api/docs/index.html", rec.Header().Get("Location"), p)
+	}
+
+	// Неизвестный путь и чужой метод под /api/docs — в формате §9.3, а не plain-text от gin-swagger.
+	rec, resp := do(t, r, http.MethodGet, "/api/docs/whatever", "")
+	requireFormat(t, rec, resp, http.StatusNotFound, apierr.CodeNotFound)
+	rec, resp = do(t, r, http.MethodPost, "/api/docs/index.html", "")
+	requireFormat(t, rec, resp, http.StatusMethodNotAllowed, apierr.CodeMethodNotAllowed)
 
 	rec, _ = do(t, r, http.MethodGet, "/api/docs/index.html", "")
 	require.Equal(t, http.StatusOK, rec.Code)
