@@ -302,6 +302,135 @@ definitions:
         maxLength: 64
         type: string
     type: object
+  task.History:
+    properties:
+      created_at:
+        type: string
+      field:
+        type: string
+      id:
+        type: string
+      new_value:
+        type: object
+      old_value:
+        type: object
+      source:
+        enum:
+        - web
+        - telegram
+        - api
+        type: string
+      user_id:
+        type: string
+    type: object
+  task.Task:
+    properties:
+      assignee_id:
+        type: string
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      description:
+        type: string
+      due_date:
+        example: "2026-10-31"
+        type: string
+      estimate_minutes:
+        type: integer
+      id:
+        type: string
+      key:
+        example: TM-42
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      number:
+        type: integer
+      position:
+        type: number
+      priority:
+        enum:
+        - low
+        - medium
+        - high
+        - critical
+        type: string
+      project_id:
+        type: string
+      reporter_id:
+        type: string
+      spent_minutes:
+        type: integer
+      sprint_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        enum:
+        - todo
+        - in_progress
+        - review
+        - done
+        - cancelled
+        type: string
+      title:
+        type: string
+      type:
+        enum:
+        - task
+        - bug
+        - feature
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
+    type: object
+  task.createRequest:
+    properties:
+      assignee_id:
+        type: string
+      description:
+        maxLength: 20000
+        type: string
+      due_date:
+        example: "2026-10-31"
+        type: string
+      estimate_minutes:
+        maximum: 60000
+        minimum: 1
+        type: integer
+      labels:
+        items:
+          type: string
+        maxItems: 10
+        type: array
+      priority:
+        enum:
+        - low
+        - medium
+        - high
+        - critical
+        type: string
+      sprint_id:
+        type: string
+      title:
+        maxLength: 200
+        type: string
+      type:
+        enum:
+        - task
+        - bug
+        - feature
+        type: string
+    required:
+    - title
+    type: object
   user.User:
     properties:
       created_at:
@@ -1060,6 +1189,117 @@ paths:
       summary: Восстановить проект
       tags:
       - projects
+  /api/v1/projects/{key}/tasks:
+    post:
+      consumes:
+      - application/json
+      description: Любой участник проекта (§2). Номер — следующий в проекте, ключ
+        вида TM-42, статус todo, автор — текущий пользователь. Исполнителя (активный
+        участник) и спринт (не завершённый) при создании задаёт только менеджер или
+        администратор. Поля и ограничения — §3.3. В архивном проекте — 409 PROJECT_ARCHIVED.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: задача
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.createRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/task.Task'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: исполнитель или спринт не от менеджера'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет проекта или пользователь не участник'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Создать задачу
+      tags:
+      - tasks
+  /api/v1/tasks/{task_key}:
+    get:
+      parameters:
+      - description: ключ задачи, например TM-42
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.Task'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет задачи, она удалена или пользователь не участник
+            проекта'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Задача
+      tags:
+      - tasks
+  /api/v1/tasks/{task_key}/history:
+    get:
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/task.History'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: История задачи
+      tags:
+      - tasks
   /api/v1/users:
     get:
       description: Администратору — все пользователи целиком (user.User). Менеджеру

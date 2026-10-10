@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -125,6 +126,7 @@ func TestRightsTable(t *testing.T) {
 			{"Заводить пользователей", "POST", "/api/v1/users", `{"email":"x@example.com","display_name":"X"}`},
 			{"Деактивировать пользователей", "PATCH", "/api/v1/users/" + member, `{"is_active":false}`},
 			{"Список пользователей (только админ и менеджер)", "GET", "/api/v1/users", ""},
+			{"Назначать исполнителя (при создании задачи)", "POST", proj + "/tasks", `{"title":"X","assignee_id":"` + member + `"}`},
 		},
 	}
 	tokens := map[string]string{"manager": w.manager, "member": w.member}
@@ -137,8 +139,18 @@ func TestRightsTable(t *testing.T) {
 		}
 	}
 
+	// Задача проекта для строк про задачи.
+	rec := w.do("POST", proj+"/tasks", w.member, `{"title":"Задача"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created struct{ Key string }
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	taskPath := "/api/v1/tasks/" + created.Key
+
 	// Пользователь без роли в проекте не видит его ни через один маршрут проекта — 404.
 	for _, r := range []row{
+		{"Создание задачи", "POST", proj + "/tasks", `{"title":"X"}`},
+		{"Карточка задачи", "GET", taskPath, ""},
+		{"История задачи", "GET", taskPath + "/history", ""},
 		{"Карточка проекта", "GET", proj, ""},
 		{"Изменение проекта", "PATCH", proj, `{"name":"X"}`},
 		{"Участники", "GET", proj + "/members", ""},
@@ -173,6 +185,10 @@ func TestRightsTable(t *testing.T) {
 		{w.manager, "DELETE", proj + "/members/" + newcomer, "", http.StatusNoContent},
 		{w.admin, "PATCH", proj, `{"is_archived":true}`, http.StatusOK},
 		{w.admin, "PATCH", proj, `{"is_archived":false}`, http.StatusOK},
+		{w.member, "POST", proj + "/tasks", `{"title":"Создавать задачи — все участники"}`, http.StatusCreated},
+		{w.manager, "POST", proj + "/tasks", `{"title":"С исполнителем","assignee_id":"` + member + `"}`, http.StatusCreated},
+		{w.admin, "POST", proj + "/tasks", `{"title":"Администратор","assignee_id":"` + member + `"}`, http.StatusCreated},
+		{w.member, "GET", taskPath, "", http.StatusOK},
 	} {
 		rec := w.do(r.method, r.path, r.token, r.body)
 		require.Equal(t, r.want, rec.Code, "%s %s: %s", r.method, r.path, rec.Body.String())
