@@ -4,7 +4,8 @@
 *.exe
 *.test
 *.out
-coverage.*
+coverage.out
+coverage.html
 
 # Frontend
 web/node_modules/
