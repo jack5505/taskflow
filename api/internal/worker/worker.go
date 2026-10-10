@@ -5,7 +5,7 @@ package worker
 import (
 	"context"
 	"log/slog"
-	"time"
+	"sync"
 
 	"gorm.io/gorm"
 
@@ -16,32 +16,40 @@ import (
 )
 
 // Run запускает релей и сервер asynq и ждёт отмены контекста.
+// Порядок остановки: сервер asynq дорабатывает текущие задания, релей — текущую пачку,
+// и только потом вызывающий закрывает пул базы.
 func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	client := queue.NewClient(cfg.RedisAddr)
 	defer func() { _ = client.Close() }()
+	rdb := queue.NewRedis(cfg.RedisAddr)
+	defer func() { _ = rdb.Close() }()
 
-	d := events.NewDispatcher()
+	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
-
-	relay := outbox.NewRelay(g, client)
-	go relay.Run(ctx)
 
 	srv := queue.NewServer(cfg.RedisAddr, 10)
 	if err := srv.Start(d.Mux()); err != nil {
 		return err
 	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		outbox.NewRelay(g, client).Run(ctx)
+	}()
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 
 	<-ctx.Done()
 	srv.Shutdown()
-	time.Sleep(100 * time.Millisecond) // дать релею дописать текущую пачку
+	wg.Wait()
 	return nil
 }
 
 // registerHandlers подключает обработчики событий. Пока только лог: домены добавят свои
 // (сообщения бота, уведомления, письма) в следующих задачах.
 func registerHandlers(d *events.Dispatcher) {
-	d.On("*", func(_ context.Context, env events.Envelope) error {
+	d.On("*", "log", func(_ context.Context, env events.Envelope) error {
 		slog.Info("event", "type", env.Type, "event_id", env.EventID)
 		return nil
 	})

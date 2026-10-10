@@ -34,3 +34,20 @@ const (
 	ProjectArchived = "project.archived"
 	ProjectDeleted  = "project.deleted"
 )
+
+var known = map[string]struct{}{
+	TaskCreated: {}, TaskUpdated: {}, TaskTransitioned: {}, TaskAssigned: {}, TaskDeleted: {}, TaskRestored: {},
+	CommentCreated: {}, AttachmentAdded: {},
+	WorklogCreated: {}, WorklogUpdated: {}, WorklogDeleted: {},
+	SprintStarted: {}, SprintTaskAdded: {}, SprintTaskRemoved: {}, SprintClosed: {},
+	TimerAutoStopped: {}, TimerTrimmed: {},
+	MemberAdded: {}, MemberRemoved: {}, MemberRoleChanged: {}, UserDeactivated: {},
+	ProjectArchived: {}, ProjectDeleted: {},
+}
+
+// Known сообщает, описан ли тип события в ТЗ §9.4. Publish отклоняет неизвестные типы:
+// опечатка в имени не должна превращаться в молча потерянное уведомление.
+func Known(eventType string) bool {
+	_, ok := known[eventType]
+	return ok
+}

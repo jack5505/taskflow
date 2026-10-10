@@ -3,7 +3,9 @@ package outbox_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,8 +51,8 @@ func (c *captured) wait(t *testing.T, n int) []events.Envelope {
 func startWorker(t *testing.T, redisAddr string) *captured {
 	t.Helper()
 	c := &captured{}
-	d := events.NewDispatcher()
-	d.On("*", func(_ context.Context, env events.Envelope) error { c.add(env); return nil })
+	d := events.NewDispatcher(queue.NewRedis(redisAddr))
+	d.On("*", "capture", func(_ context.Context, env events.Envelope) error { c.add(env); return nil })
 	srv := queue.NewServer(redisAddr, 2)
 	require.NoError(t, srv.Start(d.Mux()))
 	t.Cleanup(srv.Shutdown)
@@ -159,8 +161,49 @@ func TestCleanupDeletesOldSentEvents(t *testing.T) {
 	require.EqualValues(t, 1, left)
 }
 
-func TestPublishRejectsEmptyType(t *testing.T) {
+func TestPublishRejectsUnknownType(t *testing.T) {
 	g := testutil.SharedDB(t)
-	err := g.Transaction(func(tx *gorm.DB) error { return events.Publish(tx, "", nil) })
-	require.Error(t, err)
+	for _, typ := range []string{"", "task.craeted"} {
+		err := g.Transaction(func(tx *gorm.DB) error { return events.Publish(tx, typ, nil) })
+		require.Error(t, err, typ)
+	}
+}
+
+// Обработчик, который уже отработал событие, не вызывается при повторе задания,
+// даже если другой обработчик того же события упал.
+func TestSucceededHandlerIsNotRerunOnRetry(t *testing.T) {
+	g := testutil.SharedDB(t)
+	redisAddr := testutil.SharedRedisAddr(t)
+
+	var telegramCalls, emailCalls atomic.Int32
+	d := events.NewDispatcher(queue.NewRedis(redisAddr))
+	d.On(events.TaskAssigned, "telegram", func(context.Context, events.Envelope) error {
+		telegramCalls.Add(1)
+		return nil
+	})
+	d.On(events.TaskAssigned, "email", func(context.Context, events.Envelope) error {
+		if emailCalls.Add(1) == 1 {
+			return errors.New("smtp временно недоступен")
+		}
+		return nil
+	})
+	srv := asynq.NewServer(queue.Opts(redisAddr), asynq.Config{
+		Concurrency: 1,
+		Queues:      map[string]int{queue.QueueDefault: 1},
+		// Повтор почти сразу, иначе тест ждал бы стандартную задержку asynq.
+		RetryDelayFunc: func(int, error, *asynq.Task) time.Duration { return 200 * time.Millisecond },
+	})
+	require.NoError(t, srv.Start(d.Mux()))
+	t.Cleanup(srv.Shutdown)
+
+	require.NoError(t, g.Transaction(func(tx *gorm.DB) error {
+		return events.Publish(tx, events.TaskAssigned, map[string]any{"task_key": "TM-9"})
+	}))
+	client := queue.NewClient(redisAddr)
+	t.Cleanup(func() { _ = client.Close() })
+	_, err := outbox.NewRelay(g, client).RunOnce(context.Background())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return emailCalls.Load() >= 2 }, 15*time.Second, 50*time.Millisecond)
+	require.EqualValues(t, 1, telegramCalls.Load(), "успешный обработчик не должен запускаться повторно")
 }
