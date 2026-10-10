@@ -370,3 +370,57 @@ func TestNotificationSettingsMerge(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, project.EffectiveNotifications(events.JSON("not json"))[project.NotifyTaskCreated], "битые настройки — умолчания")
 }
+
+// Ревью #80: форма настроек присылает is_archived как есть — менеджеру это не 403.
+func TestManagerMaySendUnchangedIsArchived(t *testing.T) {
+	f := newFixture(t)
+	manager, mToken := f.user(t, false)
+	p := f.project(t, map[*user.User]string{manager: project.RoleManager})
+	rec, body := f.do(t, "PATCH", "/api/v1/projects/"+p.Key, mToken, `{"name":"Из формы","is_archived":false}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "Из формы", body["name"])
+}
+
+// В архивном проекте 409 раньше валидации: клиент получает одинаковый ответ.
+func TestArchivedWinsOverValidation(t *testing.T) {
+	f := newFixture(t)
+	manager, mToken := f.user(t, false)
+	p := f.project(t, map[*user.User]string{manager: project.RoleManager})
+	require.NoError(t, f.db.Model(p).Update("is_archived", true).Error)
+	rec, body := f.do(t, "PATCH", "/api/v1/projects/"+p.Key, mToken, `{"timezone":"Bad/Zone"}`)
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Equal(t, apierr.CodeProjectArchived, errCode(body))
+}
+
+// Роль перепроверяется под блокировкой: понижение между Access и Update не даёт прав менеджера.
+func TestUpdateRechecksRoleUnderLock(t *testing.T) {
+	f := newFixture(t)
+	manager, _ := f.user(t, false)
+	p := f.project(t, map[*user.User]string{manager: project.RoleManager})
+	a, err := f.svc.Access(context.Background(), manager, p.Key)
+	require.NoError(t, err)
+	require.NoError(t, f.db.Model(&project.Member{}).Where("project_id = ? AND user_id = ?", p.ID, manager.ID).
+		Update("role", project.RoleMember).Error)
+	name := "X"
+	_, err = f.svc.Update(context.Background(), a, project.UpdateInput{Name: &name})
+	require.ErrorIs(t, err, project.ErrForbidden)
+}
+
+func TestRestoreRefreshesUpdatedAtAndTaskNumberDoesNot(t *testing.T) {
+	f := newFixture(t)
+	p := f.project(t, nil)
+	var before project.Project
+	require.NoError(t, f.db.First(&before, "id = ?", p.ID).Error)
+	_, err := project.NextTaskNumber(f.db, p.ID)
+	require.NoError(t, err)
+	var after project.Project
+	require.NoError(t, f.db.First(&after, "id = ?", p.ID).Error)
+	require.True(t, before.UpdatedAt.Equal(after.UpdatedAt), "номер задачи не меняет updated_at проекта")
+
+	require.NoError(t, f.svc.Delete(context.Background(), p.Key))
+	time.Sleep(10 * time.Millisecond)
+	restored, err := f.svc.Restore(context.Background(), p.Key)
+	require.NoError(t, err)
+	require.False(t, restored.DeletedAt.Valid)
+	require.True(t, restored.UpdatedAt.After(after.UpdatedAt), "в ответе — свежий updated_at")
+}

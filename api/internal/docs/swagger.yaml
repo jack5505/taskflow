@@ -98,14 +98,14 @@ definitions:
   project.createRequest:
     properties:
       description:
-        maxLength: 6000
+        maxLength: 2000
         type: string
       key:
         example: TM
         maxLength: 10
         type: string
       name:
-        maxLength: 300
+        maxLength: 100
         type: string
       timezone:
         example: Europe/Moscow
@@ -122,12 +122,12 @@ definitions:
         maxLength: 5
         type: string
       description:
-        maxLength: 6000
+        maxLength: 2000
         type: string
       is_archived:
         type: boolean
       name:
-        maxLength: 300
+        maxLength: 100
         type: string
       notification_settings:
         additionalProperties:
@@ -501,8 +501,8 @@ paths:
         поля; description "" очищает. notification_settings — частичный объект событий
         §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted,
         task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created).
-        is_archived — только администратор. В архивном проекте любое изменение, кроме
-        разархивации, — 409 PROJECT_ARCHIVED.
+        смену is_archived — только администратор (то же значение, что сейчас, пропускается).
+        В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.
       parameters:
       - description: ключ проекта
         in: path

@@ -71,14 +71,14 @@ export interface ProjectView {
 }
 
 export interface ProjectCreateRequest {
-  /** @maxLength 6000 */
+  /** @maxLength 2000 */
   description?: string;
   /**
    * @maxLength 10
    * @example "TM"
    */
   key: string;
-  /** @maxLength 300 */
+  /** @maxLength 100 */
   name: string;
   /**
    * @maxLength 64
@@ -93,10 +93,10 @@ export interface ProjectUpdateRequest {
    * @example "10:00"
    */
   daily_summary_time?: string;
-  /** @maxLength 6000 */
+  /** @maxLength 2000 */
   description?: string;
   is_archived?: boolean;
-  /** @maxLength 300 */
+  /** @maxLength 100 */
   name?: string;
   notification_settings?: Record<string, boolean>;
   /** @maxLength 64 */
@@ -617,7 +617,7 @@ export class Api<
       }),
 
     /**
-     * @description Менеджер проекта или администратор. Меняются только переданные поля; description "" очищает. notification_settings — частичный объект событий §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted, task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created). is_archived — только администратор. В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.
+     * @description Менеджер проекта или администратор. Меняются только переданные поля; description "" очищает. notification_settings — частичный объект событий §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted, task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created). смену is_archived — только администратор (то же значение, что сейчас, пропускается). В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.
      *
      * @tags projects
      * @name V1ProjectsPartialUpdate

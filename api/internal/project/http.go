@@ -79,8 +79,8 @@ func (h *Handlers) list(c *gin.Context) {
 
 type createRequest struct {
 	Key         string  `json:"key" binding:"required,max=10" example:"TM"`
-	Name        string  `json:"name" binding:"required,max=300"`
-	Description *string `json:"description" binding:"omitempty,max=6000"`
+	Name        string  `json:"name" binding:"required,max=100"`
+	Description *string `json:"description" binding:"omitempty,max=2000"`
 	Timezone    string  `json:"timezone" binding:"max=64" example:"Europe/Moscow"`
 }
 
@@ -132,8 +132,8 @@ func (h *Handlers) get(c *gin.Context) {
 }
 
 type updateRequest struct {
-	Name                 *string         `json:"name" binding:"omitempty,max=300"`
-	Description          *string         `json:"description" binding:"omitempty,max=6000"`
+	Name                 *string         `json:"name" binding:"omitempty,max=100"`
+	Description          *string         `json:"description" binding:"omitempty,max=2000"`
 	Timezone             *string         `json:"timezone" binding:"omitempty,max=64"`
 	NotificationSettings map[string]bool `json:"notification_settings"`
 	DailySummaryTime     *string         `json:"daily_summary_time" binding:"omitempty,max=5" example:"10:00"`
@@ -143,7 +143,7 @@ type updateRequest struct {
 // update — изменение проекта.
 //
 // @Summary      Изменить проект
-// @Description  Менеджер проекта или администратор. Меняются только переданные поля; description "" очищает. notification_settings — частичный объект событий §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted, task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created). is_archived — только администратор. В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.
+// @Description  Менеджер проекта или администратор. Меняются только переданные поля; description "" очищает. notification_settings — частичный объект событий §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted, task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created). смену is_archived — только администратор (то же значение, что сейчас, пропускается). В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.
 // @Tags         projects
 // @Accept       json
 // @Produce      json

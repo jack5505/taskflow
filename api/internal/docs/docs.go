@@ -460,7 +460,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Менеджер проекта или администратор. Меняются только переданные поля; description \"\" очищает. notification_settings — частичный объект событий §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted, task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created). is_archived — только администратор. В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.",
+                "description": "Менеджер проекта или администратор. Меняются только переданные поля; description \"\" очищает. notification_settings — частичный объект событий §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted, task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created). смену is_archived — только администратор (то же значение, что сейчас, пропускается). В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.",
                 "consumes": [
                     "application/json"
                 ],
@@ -929,7 +929,7 @@ const docTemplate = `{
             "properties": {
                 "description": {
                     "type": "string",
-                    "maxLength": 6000
+                    "maxLength": 2000
                 },
                 "key": {
                     "type": "string",
@@ -938,7 +938,7 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string",
-                    "maxLength": 300
+                    "maxLength": 100
                 },
                 "timezone": {
                     "type": "string",
@@ -957,14 +957,14 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string",
-                    "maxLength": 6000
+                    "maxLength": 2000
                 },
                 "is_archived": {
                     "type": "boolean"
                 },
                 "name": {
                     "type": "string",
-                    "maxLength": 300
+                    "maxLength": 100
                 },
                 "notification_settings": {
                     "type": "object",
