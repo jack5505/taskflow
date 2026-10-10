@@ -1,9 +1,8 @@
 package queue_test
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,39 +33,42 @@ func TestPingAgainstRealRedisAndClosedPort(t *testing.T) {
 	require.ErrorContains(t, err, "redis ping")
 }
 
-func TestServerStartsAndStops(t *testing.T) {
+func TestServerProcessesTaskAndStops(t *testing.T) {
 	addr := testutil.SharedRedisAddr(t)
+	var processed atomic.Int32
 	srv := queue.NewServer(addr, 1)
 	mux := asynq.NewServeMux()
-	mux.HandleFunc("noop", func(context.Context, *asynq.Task) error { return nil })
+	mux.HandleFunc("noop", func(context.Context, *asynq.Task) error { processed.Add(1); return nil })
 	require.NoError(t, srv.Start(mux))
+	t.Cleanup(srv.Shutdown)
 
 	client := queue.NewClient(addr)
 	t.Cleanup(func() { _ = client.Close() })
 	_, err := client.Enqueue(asynq.NewTask("noop", nil), asynq.Queue(queue.QueueLow))
 	require.NoError(t, err)
 
-	srv.Shutdown()
+	// Дожидаемся обработки: иначе задание останется в общем Redis и всплывёт в другом тесте.
+	require.Eventually(t, func() bool { return processed.Load() == 1 }, 10*time.Second, 50*time.Millisecond)
 }
 
-func TestSlogAdapterWritesToDefaultLogger(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+func TestFailedTaskAndAsynqLogsGoThroughSlog(t *testing.T) {
+	logs := testutil.CaptureLogs(t)
 
-	// Адаптер — внутренний тип; проверяем через ErrorHandler сервера и логгер asynq косвенно:
-	// падающее задание пишет строку "asynq task failed".
 	addr := testutil.SharedRedisAddr(t)
 	srv := queue.NewServer(addr, 1)
 	mux := asynq.NewServeMux()
 	mux.HandleFunc("fail", func(context.Context, *asynq.Task) error { return asynq.SkipRetry })
 	require.NoError(t, srv.Start(mux))
+
 	client := queue.NewClient(addr)
 	t.Cleanup(func() { _ = client.Close() })
 	_, err := client.Enqueue(asynq.NewTask("fail", nil))
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { return bytes.Contains(buf.Bytes(), []byte("asynq task failed")) }, 10*time.Second, 100*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return logs.Contains(`"msg":"asynq task failed"`) && logs.Contains(`"type":"fail"`)
+	}, 10*time.Second, 100*time.Millisecond)
+
 	srv.Shutdown()
-	require.Contains(t, buf.String(), "shutdown", "логи asynq идут через slog")
+	require.Contains(t, logs.String(), "shutdown", "логи asynq идут через slog")
 }

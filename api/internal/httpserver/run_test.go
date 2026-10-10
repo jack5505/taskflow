@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jack5505/taskflow/api/internal/config"
@@ -56,6 +57,8 @@ func TestRunFailsOnBusyPort(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = l.Close() })
 
+	// Env=production переключает глобальный режим Gin — возвращаем тестовый после теста.
+	t.Cleanup(func() { gin.SetMode(gin.TestMode) })
 	s := httpserver.New(&config.Config{Env: "production", Addr: l.Addr().String()}, nil, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -72,4 +75,9 @@ func TestSPAServesIndexAndAssets(t *testing.T) {
 	rec, _ = do(t, s.Router(), http.MethodGet, "/projects/TM/board", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "text/html")
+
+	// Существующий файл идёт через http.FileServer: index.html он канонизирует редиректом на /.
+	rec, _ = do(t, s.Router(), http.MethodGet, "/index.html", "")
+	require.Equal(t, http.StatusMovedPermanently, rec.Code)
+	require.Equal(t, "./", rec.Header().Get("Location"))
 }

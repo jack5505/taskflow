@@ -14,8 +14,8 @@ import (
 	"github.com/jack5505/taskflow/api/internal/testutil"
 )
 
-// Цикл Run: отправляет накопившееся, переживает отказ Redis с backoff и завершается по отмене.
-func TestRunLoopDeliversAndRecovers(t *testing.T) {
+// Цикл Run: отправляет накопившееся и завершается по отмене.
+func TestRunLoopDeliversAndStops(t *testing.T) {
 	g := testutil.SharedDB(t)
 	redisAddr := testutil.SharedRedisAddr(t)
 	got := startWorker(t, redisAddr)
@@ -41,14 +41,20 @@ func TestRunLoopDeliversAndRecovers(t *testing.T) {
 	}
 }
 
+// При лежащем Redis событие остаётся в outbox, а интервал опроса растёт:
+// за 4 с попыток не больше двух (1 с → ошибка, +2 с → ошибка, следующая через 4 с).
 func TestRunLoopBacksOffWhenRedisDown(t *testing.T) {
 	g := testutil.SharedDB(t)
+	logs := testutil.CaptureLogs(t)
 	broken := queue.NewClient("127.0.0.1:1")
 	t.Cleanup(func() { _ = broken.Close() })
 
 	require.NoError(t, g.Transaction(func(tx *gorm.DB) error {
 		return events.Publish(tx, events.CommentCreated, nil)
 	}))
+	t.Cleanup(func() {
+		require.NoError(t, g.Exec(`DELETE FROM outbox_events WHERE type = ?`, events.CommentCreated).Error)
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
@@ -56,8 +62,11 @@ func TestRunLoopBacksOffWhenRedisDown(t *testing.T) {
 	go func() { outbox.NewRelay(g, broken).Run(ctx); close(done) }()
 	<-done
 
+	attempts := logs.Count(`"msg":"outbox relay"`)
+	require.GreaterOrEqual(t, attempts, 1, "хотя бы одна попытка отправки")
+	require.LessOrEqual(t, attempts, 2, "без backoff попыток было бы около четырёх")
+
 	var unsent int64
 	require.NoError(t, g.Raw(`SELECT count(*) FROM outbox_events WHERE sent_at IS NULL AND type = ?`, events.CommentCreated).Scan(&unsent).Error)
 	require.EqualValues(t, 1, unsent, "событие ждёт восстановления Redis")
-	require.NoError(t, g.Exec(`DELETE FROM outbox_events WHERE type = ?`, events.CommentCreated).Error)
 }

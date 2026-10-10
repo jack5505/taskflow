@@ -31,6 +31,9 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := queue.Ping(pingCtx, rdb); err != nil {
+		if ctx.Err() != nil {
+			return nil // остановка во время проверки — не ошибка
+		}
 		return fmt.Errorf("worker: %w", err)
 	}
 

@@ -11,8 +11,9 @@ import (
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
-	t.Setenv("JWT_ACCESS_TTL", "")
-	t.Setenv("JWT_REFRESH_TTL", "")
+	for _, key := range []string{"APP_ADDR", "REDIS_ADDR", "JWT_ACCESS_TTL", "JWT_REFRESH_TTL"} {
+		t.Setenv(key, "") // пустое значение = не задано; иначе тест зависел бы от .env в оболочке
+	}
 
 	cfg, err := config.Load()
 	require.NoError(t, err)

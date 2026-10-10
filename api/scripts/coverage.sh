@@ -21,9 +21,18 @@ rm -f "$LOG"
 
 TOTAL=$(go tool cover -func="$PROFILE" | awk '/^total:/ {gsub("%","",$NF); print $NF}')
 echo "coverage: ${TOTAL}% (threshold ${THRESHOLD}%)"
-go tool cover -func="$PROFILE" | awk -v m=github.com/jack5505/taskflow/api/ '
-  !/^total:/ { p=$1; sub(m,"",p); sub(/\/[^\/]*$/,"",p); gsub("%","",$NF); c[p]+=$NF; n[p]++ }
-  END { for (p in c) printf "  %-28s %5.1f%%\n", p, c[p]/n[p] }' | sort
+# Разбивка по пакетам из профиля: доля покрытых выражений, а не среднее по функциям.
+# Один блок встречается в профиле по разу на каждый тестовый бинарник — берём максимум счётчика.
+awk -v m=github.com/jack5505/taskflow/api/ '
+  NR == 1 { next }                                  # строка mode:
+  { stmts[$1] = $2; if ($3 > cnt[$1]) cnt[$1] = $3 }
+  END {
+    for (k in stmts) {
+      split(k, f, ":"); p = f[1]; sub(m, "", p); sub(/\/[^\/]*$/, "", p)
+      total[p] += stmts[k]; if (cnt[k] > 0) covered[p] += stmts[k]
+    }
+    for (p in total) printf "  %-28s %5.1f%%\n", p, 100 * covered[p] / total[p]
+  }' "$PROFILE" | sort
 
 awk -v t="$TOTAL" -v th="$THRESHOLD" 'BEGIN { exit (t+0 >= th+0) ? 0 : 1 }' || {
   echo "coverage ${TOTAL}% is below ${THRESHOLD}%" >&2
