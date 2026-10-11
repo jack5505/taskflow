@@ -2,8 +2,10 @@ package telegram_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -96,13 +98,16 @@ func TestDailySummaryManyOverdue(t *testing.T) {
 	on, err := project.MergeNotifications(nil, map[string]bool{project.NotifyDailySummary: true})
 	require.NoError(t, err)
 	require.NoError(t, b.g.Exec(`UPDATE projects SET telegram_chat_id = ?, notification_settings = ? WHERE id = ?`, chat, on, b.pr.ID).Error)
+	long := strings.Repeat("Длинное название ", 11) // 187 символов, близко к пределу 200 (§3.3)
 	for range telegram.MaxOverdue + 2 {
 		tk := b.create(t, nil)
-		require.NoError(t, b.g.Exec(`UPDATE tasks SET due_date = '2026-10-01' WHERE id = ?`, tk.ID).Error)
+		require.NoError(t, b.g.Exec(`UPDATE tasks SET due_date = '2026-10-01', title = ? WHERE id = ?`, long, tk.ID).Error)
 	}
 	got := b.summaries(t, d, "2026-10-11T07:00:00Z", chat)
 	require.Len(t, got, 1)
 	require.Contains(t, got[0], "\nи ещё 2")
+	require.Contains(t, got[0], "…»", "название в списке сокращено")
+	require.LessOrEqual(t, utf8.RuneCountInString(got[0]), 4096, "лимит Telegram")
 }
 
 // Сценарий приёмки «напоминание о сроке»: личное сообщение исполнителю с кнопкой «Открыть»,

@@ -94,6 +94,7 @@ func TestDueReminders(t *testing.T) {
 	f := newDueFixture(t, "Europe/Moscow")
 	tk := f.task(t, "2026-10-12")
 
+	require.Empty(t, f.run(t, "2026-10-10T19:30:00Z"), "22:30 по Москве накануне — ночью не будим")
 	require.Empty(t, f.run(t, "2026-10-11T05:59:00Z"), "08:59 по Москве — рано")
 	require.Equal(t, []string{tk.Key + " due_tomorrow"}, kinds(f.run(t, "2026-10-11T06:00:00Z")))
 	require.Empty(t, f.run(t, "2026-10-11T12:00:00Z"), "один раз")

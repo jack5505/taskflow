@@ -74,18 +74,24 @@ func (d *Digest) Summaries(ctx context.Context, now time.Time) (int64, error) {
 		}
 		text, err := d.summary(ctx, p.ID, p.Key, p.Name, p.Today)
 		if err != nil {
-			return sent, err
+			slog.Error("telegram: summary", "project", p.Key, "err", err) // остальные проекты — своим чередом
+			continue
 		}
-		res := d.db.WithContext(ctx).Exec(`INSERT INTO daily_summaries (project_id, date) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+		mark := d.db.WithContext(ctx).Exec(`INSERT INTO daily_summaries (project_id, date) VALUES (?, ?) ON CONFLICT DO NOTHING`,
 			p.ID, p.Today.Format(time.DateOnly))
-		if res.Error != nil {
-			return sent, fmt.Errorf("telegram: summary mark: %w", res.Error)
+		if mark.Error != nil {
+			return sent, fmt.Errorf("telegram: summary mark: %w", mark.Error)
 		}
-		if res.RowsAffected == 0 {
+		if mark.RowsAffected == 0 {
 			continue // другой процесс воркера успел раньше
 		}
 		if err := d.out.Send(ctx, Message{Op: OpSend, ChatID: p.TelegramChatID, Text: text}, 0); err != nil {
+			// Очередь недоступна — снимаем отметку, следующий проход в пределах окна повторит.
 			slog.Error("telegram: summary not queued", "project", p.Key, "err", err)
+			if err := d.db.WithContext(ctx).Exec(`DELETE FROM daily_summaries WHERE project_id = ? AND date = ?`,
+				p.ID, p.Today.Format(time.DateOnly)).Error; err != nil {
+				slog.Error("telegram: summary unmark", "project", p.Key, "err", err)
+			}
 			continue
 		}
 		sent++
@@ -156,8 +162,12 @@ func (d *Digest) summary(ctx context.Context, projectID uuid.UUID, key, name str
 		}
 		s := &sprintSummary{Name: sp[0].Name, Statuses: strings.Join(parts, " · "),
 			Spent: duration.Format(spent), Estimate: duration.Format(estimate)}
-		if sp[0].StartDate != nil && sp[0].EndDate != nil {
-			s.Dates = sp[0].StartDate.Format("02.01") + "–" + sp[0].EndDate.Format("02.01.2006")
+		if start, end := sp[0].StartDate, sp[0].EndDate; start != nil && end != nil {
+			layout := "02.01"
+			if start.Year() != end.Year() {
+				layout = "02.01.2006" // спринт через Новый год
+			}
+			s.Dates = start.Format(layout) + "–" + end.Format("02.01.2006")
 		}
 		data.Sprint = s
 	}
@@ -187,9 +197,25 @@ func (d *Digest) summary(ctx context.Context, projectID uuid.UUID, key, name str
 		if o.Assignee != nil {
 			a = *o.Assignee
 		}
-		data.Overdue = append(data.Overdue, overdueTask{Key: o.Key, Title: o.Title, Assignee: a, Due: o.DueDate.Format("02.01.2006")})
+		data.Overdue = append(data.Overdue, overdueTask{Key: o.Key, Title: clip(o.Title, maxTitle), Assignee: a, Due: o.DueDate.Format("02.01.2006")})
 	}
-	return Text("daily_summary", data), nil
+	return clip(Text("daily_summary", data), maxMessage), nil
+}
+
+// Лимиты длины: Telegram не принимает сообщения длиннее 4096 символов (такое отбрасывается
+// без повтора), поэтому названия в списке сокращаются, а весь текст — с запасом.
+const (
+	maxTitle   = 80
+	maxMessage = 4000
+)
+
+// clip сокращает s до n символов с многоточием.
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // SendDue — личное напоминание о сроке (§8.7) исполнителю, если он привязал Telegram и не
