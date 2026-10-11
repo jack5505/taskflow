@@ -140,7 +140,7 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 				return err
 			}
 		}
-		if err := sprintChanged(tx, t, nil, t.SprintID); err != nil {
+		if err := sprintChanged(tx, t, nil, t.SprintID, u.ID); err != nil {
 			return err
 		}
 		return events.Publish(tx, events.TaskCreated, map[string]any{

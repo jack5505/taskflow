@@ -200,22 +200,10 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 		}
 	}
 	if in.SprintID.Set && !samePtr(t.SprintID, in.SprintID.Value) {
-		if !a.manager {
-			return errSprintForbidden
-		}
-		if err := leaveSprint(tx, t); err != nil {
+		if err := changeSprint(tx, t, a, in.SprintID.Value); err != nil {
 			return err
-		}
-		if v := in.SprintID.Value; v != nil {
-			// Целевой спринт — под FOR SHARE из change(): закрыться до конца транзакции не успеет.
-			if err := checkSprint(tx, t.ProjectID, *v); err != nil {
-				return err
-			}
 		}
 		changed = append(changed, "sprint_id")
-		if err := moveTo(tx, t, in.SprintID.Value); err != nil {
-			return err
-		}
 	}
 	if len(changed) == 0 {
 		return errNoChange
@@ -223,6 +211,24 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 	return events.Publish(tx, events.TaskUpdated, map[string]any{
 		"task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "by": uid, "fields": changed,
 	})
+}
+
+// changeSprint — смена секции задачи (PATCH sprint_id и /move): только менеджер, не из
+// завершённого спринта, в спринт этого проекта (не завершённый; его строка предблокирована
+// в change()), с историей и журналом спринта.
+func changeSprint(tx *gorm.DB, t *Task, a actor, target *uuid.UUID) error {
+	if !a.manager {
+		return errSprintForbidden
+	}
+	if err := leaveSprint(tx, t); err != nil {
+		return err
+	}
+	if target != nil {
+		if err := checkSprint(tx, t.ProjectID, *target); err != nil {
+			return err
+		}
+	}
+	return moveTo(tx, t, target, a.user.ID)
 }
 
 // leaveSprint — из завершённого спринта задачу не переносят: она остаётся в его отчёте.

@@ -1,14 +1,24 @@
 package task_test
 
 import (
+	"context"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
+
+func (f *fixture) adminU(t *testing.T) *user.User {
+	t.Helper()
+	u, _ := f.user(t, true)
+	return u
+}
 
 func (f *fixture) moveTask(t *testing.T, token, key, body string) (int, map[string]any) {
 	t.Helper()
@@ -105,4 +115,64 @@ func TestMoveRenumbersWhenGapExhausted(t *testing.T) {
 	code, _ := f.moveTask(t, f.member, c, `{"after_task_id":"`+f.id(t, a)+`"}`)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, []string{a, c, b}, f.order(t, "sprint_id=null"))
+}
+
+// Ревью #91: перенос на то же место — без новой версии и события.
+func TestMoveNoOp(t *testing.T) {
+	f := newFixture(t)
+	a := f.create(t, f.member, `{"title":"A"}`)["key"].(string)
+	b := f.create(t, f.member, `{"title":"B"}`)["key"].(string)
+	code, body := f.moveTask(t, f.member, b, `{"after_task_id":"`+f.id(t, a)+`"}`)
+	require.Equal(t, http.StatusOK, code)
+	require.EqualValues(t, 1, body["version"], "уже после A")
+	code, body = f.moveTask(t, f.member, a, `{"after_task_id":null}`)
+	require.Equal(t, http.StatusOK, code)
+	require.EqualValues(t, 1, body["version"], "уже первая")
+}
+
+// Ревью #91: одновременные перестановки в одной секции — без ошибок и без одинаковых позиций,
+// в том числе с перенумерацией.
+func TestConcurrentReorder(t *testing.T) {
+	f := newFixture(t)
+	svc := task.NewService(f.db, project.NewService(f.db))
+	var keys []string
+	for range 6 {
+		keys = append(keys, f.create(t, f.member, `{"title":"X"}`)["key"].(string))
+	}
+	require.NoError(t, f.db.Exec(`UPDATE tasks SET position = 1 + number * 1e-9 WHERE key IN ?`, keys).Error) // зазоры исчерпаны
+	first := f.get(t, keys[0]).ID
+	var wg sync.WaitGroup
+	errs := make([]error, len(keys)-1)
+	for i, k := range keys[1:] {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = svc.Move(context.Background(), f.memberU, k, task.MoveInput{AfterTaskID: &first})
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	var dup int64
+	require.NoError(t, f.db.Raw(`SELECT count(*) FROM (SELECT position FROM tasks WHERE key IN ? GROUP BY position HAVING count(*) > 1) d`, keys).Scan(&dup).Error)
+	require.Zero(t, dup, "позиции не совпадают")
+	require.Equal(t, keys[0], f.order(t, "sprint_id=null")[0])
+}
+
+// Ревью #91: удаление и восстановление задачи активного спринта — в журнале спринта.
+func TestDeleteInActiveSprintLogs(t *testing.T) {
+	f := newFixture(t)
+	active := f.sprint(t, f.p.ID, "active")
+	key := f.create(t, f.manager, `{"title":"X","sprint_id":"`+active.String()+`"}`)["key"].(string)
+	svc := task.NewService(f.db, project.NewService(f.db))
+	require.NoError(t, svc.Delete(context.Background(), f.managerU, key))
+	_, err := svc.Restore(context.Background(), f.adminU(t), key)
+	require.NoError(t, err)
+	var log []string
+	require.NoError(t, f.db.Raw(`SELECT l.action FROM sprint_log l JOIN tasks t ON t.id = l.task_id WHERE t.key = ? ORDER BY l.created_at`, key).Scan(&log).Error)
+	require.Equal(t, []string{"added", "removed", "added"}, log)
+	var by []string
+	require.NoError(t, f.db.Raw(`SELECT l.user_id::text FROM sprint_log l JOIN tasks t ON t.id = l.task_id WHERE t.key = ? ORDER BY l.created_at LIMIT 1`, key).Scan(&by).Error)
+	require.Equal(t, []string{f.managerU.ID.String()}, by, "кто действовал — явно, не из контекста")
 }

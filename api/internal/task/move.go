@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -22,34 +21,25 @@ type MoveInput struct {
 	AfterTaskID *uuid.UUID
 }
 
-var errMoveSprintForbidden = apierr.Forbidden("Переносить задачи между бэклогом и спринтами может менеджер проекта")
-
 // Move — перенос между секциями (менеджер) и порядок внутри секции (любой участник).
+// Перестановки в проекте сериализуются (reorderProject в change()): два переноса не получат одну
+// позицию, а перенумерация секции не встанет в deadlock со встречным переносом.
 func (s *Service) Move(ctx context.Context, u *user.User, key string, in MoveInput) (*Task, error) {
-	var pre preLock
+	pre := preLock{reorder: true}
 	if in.SprintID.Value != nil {
 		pre.sprints = []uuid.UUID{*in.SprintID.Value}
 	}
 	return s.change(ctx, u, key, nil, pre, func(tx *gorm.DB, t *Task, a actor) error {
-		target := t.SprintID
-		if in.SprintID.Set {
-			target = in.SprintID.Value
-		}
-		if !samePtr(target, t.SprintID) {
-			if !a.manager {
-				return errMoveSprintForbidden
-			}
-			if err := leaveSprintAllowed(tx, t); err != nil {
+		fields := []string{"position"}
+		if in.SprintID.Set && !samePtr(in.SprintID.Value, t.SprintID) {
+			if err := changeSprint(tx, t, a, in.SprintID.Value); err != nil {
 				return err
 			}
-			if target != nil {
-				if err := checkSprint(tx, t.ProjectID, *target); err != nil {
-					return err
-				}
-			}
-			if err := moveTo(tx, t, target); err != nil {
-				return err
-			}
+			fields = append([]string{"sprint_id"}, fields...)
+		} else if same, err := alreadyAfter(tx, t, in.AfterTaskID); err != nil {
+			return err
+		} else if same {
+			return errNoChange // уже на этом месте — без новой версии и события
 		}
 		pos, err := placeAfter(tx, t, in.AfterTaskID)
 		if err != nil {
@@ -57,29 +47,30 @@ func (s *Service) Move(ctx context.Context, u *user.User, key string, in MoveInp
 		}
 		t.Position = pos
 		return events.Publish(tx, events.TaskUpdated, map[string]any{
-			"task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "by": u.ID, "fields": []string{"position"},
+			"task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "by": u.ID, "fields": fields,
 		})
 	})
 }
 
-// leaveSprintAllowed — §5.4: из завершённого спринта задачи не переносятся.
-func leaveSprintAllowed(tx *gorm.DB, t *Task) error {
-	if t.SprintID == nil {
-		return nil
+// alreadyAfter — задача уже стоит сразу после after (nil — уже первая в секции).
+func alreadyAfter(tx *gorm.DB, t *Task, after *uuid.UUID) (bool, error) {
+	section, err := sectionRows(tx, t)
+	if err != nil {
+		return false, err
 	}
-	var state string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, *t.SprintID).Scan(&state).Error; err != nil {
-		return fmt.Errorf("task: sprint: %w", err)
+	var prev *uuid.UUID
+	for i := range section {
+		if section[i].Position < t.Position || (section[i].Position == t.Position && section[i].Number < t.Number) {
+			prev = &section[i].ID
+		}
 	}
-	if state == "closed" {
-		return fieldError("sprint_id", "задача в завершённом спринте — переносить её нельзя")
-	}
-	return nil
+	return samePtr(prev, after), nil
 }
 
 type neighbour struct {
 	ID       uuid.UUID
 	Position float64
+	Number   int
 }
 
 // placeAfter — позиция в секции задачи: в начало (after == nil) или сразу после after.
@@ -132,7 +123,7 @@ func placeAfter(tx *gorm.DB, t *Task, after *uuid.UUID) (float64, error) {
 
 // sectionRows — задачи секции t (без самой t) по порядку.
 func sectionRows(tx *gorm.DB, t *Task) ([]neighbour, error) {
-	q := tx.Model(&Task{}).Select("id, position").Where("project_id = ? AND deleted_at IS NULL AND id <> ?", t.ProjectID, t.ID)
+	q := tx.Model(&Task{}).Select("id, position, number").Where("project_id = ? AND deleted_at IS NULL AND id <> ?", t.ProjectID, t.ID)
 	if t.SprintID == nil {
 		q = q.Where("sprint_id IS NULL")
 	} else {

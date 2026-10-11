@@ -447,7 +447,7 @@ func (h *Handlers) restore(c *gin.Context) {
 
 type moveRequest struct {
 	SprintID    Opt[uuid.UUID] `json:"sprint_id" swaggertype:"string" format:"uuid" extensions:"x-nullable"`
-	AfterTaskID *uuid.UUID     `json:"after_task_id" extensions:"x-nullable"`
+	AfterTaskID *uuid.UUID     `json:"after_task_id" swaggertype:"string" format:"uuid" extensions:"x-nullable"`
 }
 
 // move — перетаскивание задачи.
