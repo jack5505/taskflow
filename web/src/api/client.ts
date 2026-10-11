@@ -227,6 +227,15 @@ export interface SprintScope {
   without_estimate?: number;
 }
 
+export interface SprintSummary {
+  done?: number;
+  estimate_minutes?: number;
+  moved?: number;
+  moved_keys?: string[];
+  spent_minutes?: number;
+  total?: number;
+}
+
 export interface SprintView {
   closed_at?: string;
   created_at?: string;
@@ -243,6 +252,16 @@ export interface SprintView {
   state?: "planned" | "active" | "closed";
   tasks_count?: number;
   updated_at?: string;
+}
+
+export interface SprintCloseRequest {
+  /** @example "backlog" */
+  move_open_to: string;
+}
+
+export interface SprintCloseResponse {
+  sprint?: SprintView;
+  summary?: SprintSummary;
 }
 
 export interface SprintRequest {
@@ -1514,6 +1533,30 @@ export class Api<
       this.request<SprintView, ApierrResponse>({
         path: `/api/v1/sprints/${id}`,
         method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Менеджер (§5.4). move_open_to — куда перенести незакрытые задачи (todo, in_progress, review): "backlog" или id запланированного спринта этого проекта; done и cancelled остаются. Спринт становится closed и больше не меняется. Не активный — 409 INVALID_TRANSITION (details.reason = not_active).
+     *
+     * @tags sprints
+     * @name V1SprintsCloseCreate
+     * @summary Завершить спринт
+     * @request POST:/api/v1/sprints/{id}/close
+     * @secure
+     */
+    v1SprintsCloseCreate: (
+      id: string,
+      body: SprintCloseRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<SprintCloseResponse, ApierrResponse>({
+        path: `/api/v1/sprints/${id}/close`,
+        method: "POST",
         body: body,
         secure: true,
         type: ContentType.Json,

@@ -293,18 +293,39 @@ func (s *Service) Start(ctx context.Context, u *user.User, id uuid.UUID) (*View,
 // же, что у изменений задач («спринт → задача → проект»): встречные транзакции не встают в deadlock.
 // Права менеджера и архив проверяются под блокировкой.
 func (s *Service) locked(ctx context.Context, u *user.User, id uuid.UUID, fn func(*gorm.DB, *Sprint, *project.Project) error) error {
+	return s.lockedWith(ctx, u, id, nil, func(tx *gorm.DB, sp, _ *Sprint, p *project.Project) error {
+		return fn(tx, sp, p)
+	})
+}
+
+// lockedWith — locked с ещё одним спринтом (цель переноса при завершении): строки обоих спринтов
+// и их задач FOR UPDATE в порядке id, затем проект. Цель не найдена или из другого проекта —
+// other == nil; ошибку выбирает fn.
+func (s *Service) lockedWith(ctx context.Context, u *user.User, id uuid.UUID, otherID *uuid.UUID,
+	fn func(*gorm.DB, *Sprint, *Sprint, *project.Project) error) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var sp Sprint
-		res := tx.Raw(`SELECT * FROM sprints WHERE id = ? FOR UPDATE`, id).Scan(&sp)
-		if res.Error != nil {
-			return fmt.Errorf("sprint: lock: %w", res.Error)
+		ids := []uuid.UUID{id}
+		if otherID != nil && *otherID != id {
+			ids = append(ids, *otherID)
 		}
-		if res.RowsAffected == 0 {
+		var rows []Sprint
+		if err := tx.Raw(`SELECT * FROM sprints WHERE id IN ? ORDER BY id FOR UPDATE`, ids).Scan(&rows).Error; err != nil {
+			return fmt.Errorf("sprint: lock: %w", err)
+		}
+		var sp, other *Sprint
+		for i := range rows {
+			if rows[i].ID == id {
+				sp = &rows[i]
+			} else {
+				other = &rows[i]
+			}
+		}
+		if sp == nil {
 			return ErrNotFound
 		}
-		// Задачи спринта — раньше проекта: тот же порядок, что у правок задач (задача → проект),
-		// иначе правка задачи этого спринта и запуск/удаление встали бы в deadlock.
-		if err := tx.Exec(`SELECT id FROM tasks WHERE sprint_id = ? ORDER BY id FOR UPDATE`, sp.ID).Error; err != nil {
+		// Задачи спринтов — раньше проекта: тот же порядок, что у правок задач (задача → проект).
+		// Если поднять блокировку проекта выше, вернётся deadlock с параллельными правками задач.
+		if err := tx.Exec(`SELECT id FROM tasks WHERE sprint_id IN ? ORDER BY id FOR UPDATE`, ids).Error; err != nil {
 			return fmt.Errorf("sprint: lock tasks: %w", err)
 		}
 		p, err := project.LockForUpdate(tx, sp.ProjectID)
@@ -327,7 +348,10 @@ func (s *Service) locked(ctx context.Context, u *user.User, id uuid.UUID, fn fun
 		if err := project.EnsureWritable(p); err != nil {
 			return err
 		}
-		return fn(tx, &sp, p)
+		if other != nil && other.ProjectID != sp.ProjectID {
+			other = nil // чужой спринт — как несуществующий; решает fn, в нужном месте порядка ответов
+		}
+		return fn(tx, sp, other, p)
 	})
 }
 

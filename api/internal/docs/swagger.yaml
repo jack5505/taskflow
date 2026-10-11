@@ -362,6 +362,23 @@ definitions:
       without_estimate:
         type: integer
     type: object
+  sprint.Summary:
+    properties:
+      done:
+        type: integer
+      estimate_minutes:
+        type: integer
+      moved:
+        type: integer
+      moved_keys:
+        items:
+          type: string
+        type: array
+      spent_minutes:
+        type: integer
+      total:
+        type: integer
+    type: object
   sprint.View:
     properties:
       closed_at:
@@ -396,6 +413,21 @@ definitions:
         type: integer
       updated_at:
         type: string
+    type: object
+  sprint.closeRequest:
+    properties:
+      move_open_to:
+        example: backlog
+        type: string
+    required:
+    - move_open_to
+    type: object
+  sprint.closeResponse:
+    properties:
+      sprint:
+        $ref: '#/definitions/sprint.View'
+      summary:
+        $ref: '#/definitions/sprint.Summary'
     type: object
   sprint.request:
     properties:
@@ -2162,6 +2194,58 @@ paths:
       security:
       - BearerAuth: []
       summary: Изменить спринт
+      tags:
+      - sprints
+  /api/v1/sprints/{id}/close:
+    post:
+      consumes:
+      - application/json
+      description: 'Менеджер (§5.4). move_open_to — куда перенести незакрытые задачи
+        (todo, in_progress, review): "backlog" или id запланированного спринта этого
+        проекта; done и cancelled остаются. Спринт становится closed и больше не меняется.
+        Не активный — 409 INVALID_TRANSITION (details.reason = not_active).'
+      parameters:
+      - description: id спринта
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: куда перенести незакрытые
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/sprint.closeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sprint.closeResponse'
+        "400":
+          description: 'VALIDATION_FAILED: move_open_to'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: FORBIDDEN
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Завершить спринт
       tags:
       - sprints
   /api/v1/sprints/{id}/start:
