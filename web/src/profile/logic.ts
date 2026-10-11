@@ -1,6 +1,7 @@
 // Логика профиля (ТЗ §7.8): что отправить в PATCH /me, личные уведомления §8.7, код привязки
 // Telegram §8.1. Проверки здесь — только подсказки до запроса, правила проверяет сервер.
 import type { MeProfile, MeUpdate } from "../api/client";
+import { newPasswordError } from "../lib/password";
 
 /** Личные уведомления §8.7 — ключи notification_settings из API (api/internal/user/notifications.go). */
 export const PERSONAL_EVENTS: { key: string; label: string }[] = [
@@ -105,17 +106,12 @@ export interface PasswordChangeForm {
   repeat: string;
 }
 
-/** Правила нового пароля — как при установке (§7.1): не короче 10 символов и не длиннее 72 байт (предел bcrypt). */
-export const MIN_PASSWORD = 10;
-const MAX_PASSWORD_BYTES = 72;
-
-/** Ошибки формы смены пароля до запроса: по полям, пустой объект — можно отправлять. */
+/** Ошибки формы смены пароля до запроса (новый — по правилам §7.1): по полям, пустой объект — можно отправлять. */
 export function passwordChangeErrors(f: PasswordChangeForm): Partial<Record<keyof PasswordChangeForm, string>> {
   const out: Partial<Record<keyof PasswordChangeForm, string>> = {};
   if (!f.current) out.current = "Введите текущий пароль";
-  if ([...f.next].length < MIN_PASSWORD) out.next = `Не короче ${MIN_PASSWORD} символов`;
-  else if (new TextEncoder().encode(f.next).length > MAX_PASSWORD_BYTES)
-    out.next = "Слишком длинный: не больше 72 байт (около 36 букв кириллицы)";
+  const next = newPasswordError(f.next);
+  if (next) out.next = next;
   if (f.repeat !== f.next) out.repeat = "Пароли не совпадают";
   return out;
 }

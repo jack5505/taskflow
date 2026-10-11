@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -87,6 +88,32 @@ func TestChangePasswordWrongCurrentAndLockout(t *testing.T) {
 	require.NoError(t, f.svc.ChangePassword(ctx, f.u, newPassword, password, ""))
 }
 
+// Параллельный перебор: из 30 одновременных попыток проверяется не больше 10, остальные — 429.
+func TestChangePasswordLockoutUnderConcurrency(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	errs := make([]error, 30)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = f.svc.ChangePassword(ctx, f.u, "wrong", newPassword, "")
+		}()
+	}
+	wg.Wait()
+	checked := 0
+	for _, err := range errs {
+		if errors.Is(err, auth.ErrBadCurrentPassword) {
+			checked++
+		} else {
+			require.ErrorIs(t, err, auth.ErrPasswordChangeLocked)
+		}
+	}
+	require.Equal(t, 10, checked)
+	require.ErrorIs(t, f.svc.ChangePassword(ctx, f.u, password, newPassword, ""), auth.ErrPasswordChangeLocked)
+}
+
 // Успешная смена сбрасывает счётчик: 9 неудач, успех, снова 9 неудач — блокировки нет.
 func TestChangePasswordSuccessResetsCounter(t *testing.T) {
 	f := newFixture(t)
@@ -99,6 +126,14 @@ func TestChangePasswordSuccessResetsCounter(t *testing.T) {
 		require.Error(t, f.svc.ChangePassword(ctx, f.u, "wrong", password, ""))
 	}
 	require.NoError(t, f.svc.ChangePassword(ctx, f.u, newPassword, password, ""))
+
+	// Вход заблокирован чужим перебором — смена пароля в профиле открывает его, как установка по ссылке.
+	for i := 0; i < 10; i++ {
+		_, _ = f.svc.Login(ctx, f.u.Email, "wrong", "")
+	}
+	require.NoError(t, f.svc.ChangePassword(ctx, f.u, password, newPassword, ""))
+	_, err := f.svc.Login(ctx, f.u.Email, newPassword, "")
+	require.NoError(t, err)
 }
 
 // Две одновременные смены с одним и тем же текущим паролем: проходит ровно одна,

@@ -44,6 +44,11 @@ func (l lockout) locked(ctx context.Context, id string) (bool, time.Duration, er
 	if n < maxFailures {
 		return false, 0, nil
 	}
+	return l.wait(ctx, id)
+}
+
+// wait — сколько ещё держится блокировка (ключ уже насчитал maxFailures).
+func (l lockout) wait(ctx context.Context, id string) (bool, time.Duration, error) {
 	ttl, err := l.rdb.TTL(ctx, l.key(id)).Result()
 	if err != nil {
 		return false, 0, fmt.Errorf("lockout ttl: %w", err)
@@ -60,6 +65,36 @@ func (l lockout) locked(ctx context.Context, id string) (bool, time.Duration, er
 		ttl = lockoutWindow
 	}
 	return true, ttl, nil
+}
+
+// take засчитывает попытку ДО проверки пароля: иначе параллельные запросы разом проходят
+// проверку блокировки, и сверх maxFailures проверяется сколько угодно паролей. Попытка сверх
+// maxFailures отклоняется (locked) со сроком ожидания. После take неверный пароль отмечается
+// takeFailed(n) — сама попытка уже учтена, верный — reset.
+func (l lockout) take(ctx context.Context, id string) (n int64, locked bool, wait time.Duration, err error) {
+	pipe := l.rdb.TxPipeline()
+	incr := pipe.Incr(ctx, l.key(id))
+	pipe.ExpireNX(ctx, l.key(id), lockoutWindow)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, false, 0, fmt.Errorf("lockout incr: %w", err)
+	}
+	n = incr.Val()
+	if n <= maxFailures {
+		return n, false, 0, nil
+	}
+	locked, wait, err = l.wait(ctx, id)
+	return n, locked, wait, err
+}
+
+// takeFailed — неверный пароль после take: с maxFailures-й неудачи блокировка держится ровно lockoutWindow.
+func (l lockout) takeFailed(ctx context.Context, id string, n int64) error {
+	if n < maxFailures {
+		return nil
+	}
+	if err := l.rdb.Expire(ctx, l.key(id), lockoutWindow).Err(); err != nil {
+		return fmt.Errorf("lockout expire: %w", err)
+	}
+	return nil
 }
 
 // fail засчитывает неудачную попытку; окно отсчитывается от первой неудачи.

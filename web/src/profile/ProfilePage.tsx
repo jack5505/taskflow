@@ -4,8 +4,8 @@ import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { timeZones } from "../projects/logic";
 import { useLogoutAll, usePasswordChange, usePasswordLink, useUpdateMe } from "./hooks";
+import { MIN_PASSWORD } from "../lib/password";
 import {
-  MIN_PASSWORD,
   PERSONAL_EVENTS,
   changedNotifications,
   displayNameError,
@@ -172,13 +172,12 @@ function PasswordChangeForm({ email }: { email: string }) {
   const apiError = parseApiError(change.error);
   const fields = fieldErrors(apiError);
   const local = touched ? passwordChangeErrors(form) : {};
-  const errors = {
-    current: local.current || fields.find((f) => f.field === "current_password")?.reason,
-    next: local.next || fields.find((f) => f.field === "new_password")?.reason,
-    repeat: local.repeat,
-  };
+  const serverCurrent = fields.find((f) => f.field === "current_password")?.reason;
+  const serverNext = fields.find((f) => f.field === "new_password")?.reason;
+  const errors = { current: local.current || serverCurrent, next: local.next || serverNext, repeat: local.repeat };
+  // Ошибка без поля формы (429, сеть, иное поле) — общей строкой, чтобы отказ не пропал молча.
   const generalError =
-    change.isError && fields.length === 0
+    change.isError && !serverCurrent && !serverNext
       ? [errorText(change.error), apiError?.status === 429 ? retryAfterText(apiError.details) : ""].filter(Boolean).join(" ")
       : "";
   const linkError = link.isError
@@ -239,7 +238,7 @@ function PasswordChangeForm({ email }: { email: string }) {
         <button
           type="button"
           className="link"
-          disabled={link.isPending || link.isSuccess || !email}
+          disabled={link.isPending || !email}
           onClick={() =>
             window.confirm(`Отправить ссылку для установки нового пароля на ${email}?`) && link.mutate(email)
           }

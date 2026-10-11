@@ -135,11 +135,8 @@ func (s *Service) passwordLink(ctx context.Context, userID uuid.UUID) (string, e
 // и неверного текущего пароля при смене в профиле.
 // bcrypt считается только после проверки токена: открытый эндпоинт не должен тратить CPU на мусор.
 func (s *Service) SetPassword(ctx context.Context, token, password string) error {
-	if utf8.RuneCountInString(password) < MinPasswordLength {
-		return passwordFieldError("не короче 10 символов")
-	}
-	if len(password) > MaxPasswordBytes {
-		return passwordFieldError("не длиннее 72 байт")
+	if err := validatePassword("password", password); err != nil {
+		return err
 	}
 
 	var email, userID string
@@ -192,7 +189,18 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 	return nil
 }
 
-func passwordFieldError(reason string) error {
+// validatePassword — правила нового пароля (§7.1) для установки по ссылке и смены в профиле;
+// нарушение — 400 VALIDATION_FAILED у поля field.
+func validatePassword(field, password string) error {
+	reason := ""
+	switch {
+	case utf8.RuneCountInString(password) < MinPasswordLength:
+		reason = "не короче 10 символов"
+	case len(password) > MaxPasswordBytes:
+		reason = "не длиннее 72 байт"
+	default:
+		return nil
+	}
 	return apierr.BadRequest(apierr.CodeValidation, "Некорректные данные запроса").
-		With("fields", []apierr.FieldError{{Field: "password", Reason: reason}})
+		With("fields", []apierr.FieldError{{Field: field, Reason: reason}})
 }

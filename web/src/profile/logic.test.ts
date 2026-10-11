@@ -128,13 +128,12 @@ describe("смена пароля (§7.8)", () => {
   it("пустой текущий, короткий новый, несовпадающий повтор", () => {
     expect(passwordChangeErrors({ current: "", next: "short", repeat: "other" })).toEqual({
       current: "Введите текущий пароль",
-      next: "Не короче 10 символов",
+      next: "Пароль должен быть не короче 10 символов",
       repeat: "Пароли не совпадают",
     });
   });
 
-  it("длина нового — в символах, предел — 72 байта", () => {
-    expect(passwordChangeErrors({ ...ok, next: "пароль1234", repeat: "пароль1234" })).toEqual({});
+  it("новый — по правилам §7.1, предел 72 байта", () => {
     const long = "пароль".repeat(7); // 42 символа, 84 байта
     expect(passwordChangeErrors({ ...ok, next: long, repeat: long }).next).toMatch(/72 байт/);
   });

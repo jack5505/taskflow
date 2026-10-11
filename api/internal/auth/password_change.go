@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -22,27 +21,26 @@ var (
 
 // ChangePassword — смена пароля в профиле с вводом текущего (ТЗ §7.8, §9.1).
 //
-// Неверный текущий пароль засчитывается в счётчик pwLock — те же 10 неудач за 15 минут, что
+// Перебор текущего пароля ограничен счётчиком pwLock — те же 10 неудач за 15 минут, что
 // у входа (§10.3), но по id пользователя и отдельно от счётчика входа: опечатки в форме профиля
 // не должны закрывать вход по email на других устройствах, а неудачи входа — смену пароля.
-// Подобрать пароль через этот эндпоинт можно только с действующим access-токеном, и перебор
-// в нём ограничен так же, как во входе.
+// Попытка засчитывается до проверки (take), успех счётчик сбрасывает: параллельные запросы
+// не проверят больше 10 паролей за окно.
 //
 // После смены отзываются все сессии пользователя, кроме keepRefresh — refresh-токена клиента,
 // который меняет пароль (cookie запроса): он остаётся в системе. Пустой keepRefresh — отзываются все.
 // Заодно гасятся неиспользованные ссылки установки пароля: выданные до смены не должны его перебить.
 func (s *Service) ChangePassword(ctx context.Context, u *user.User, current, next, keepRefresh string) error {
 	// Новый пароль проверяем до текущего: ошибка в нём не тратит попытку и не стоит bcrypt.
-	if utf8.RuneCountInString(next) < MinPasswordLength {
-		return newPasswordFieldError("не короче 10 символов")
-	}
-	if len(next) > MaxPasswordBytes {
-		return newPasswordFieldError("не длиннее 72 байт")
+	if err := validatePassword("new_password", next); err != nil {
+		return err
 	}
 	id := u.ID.String()
-	if locked, wait, err := s.pwLock.locked(ctx, id); err != nil {
+	n, locked, wait, err := s.pwLock.take(ctx, id)
+	if err != nil {
 		return err
-	} else if locked {
+	}
+	if locked {
 		return ErrPasswordChangeLocked.With("retry_after_seconds", int(wait.Seconds()))
 	}
 
@@ -52,7 +50,7 @@ func (s *Service) ChangePassword(ctx context.Context, u *user.User, current, nex
 		return fmt.Errorf("auth: load user: %w", err)
 	}
 	if !CheckPassword(stored.PasswordHash, current) {
-		if err := s.pwLock.fail(ctx, id); err != nil {
+		if err := s.pwLock.takeFailed(ctx, id, n); err != nil {
 			return err
 		}
 		return ErrBadCurrentPassword
@@ -90,14 +88,13 @@ func (s *Service) ChangePassword(ctx context.Context, u *user.User, current, nex
 	if err != nil {
 		return err
 	}
+	// Пароль уже сменён; при сбое Redis счётчики истекут сами. Счётчик входа сбрасываем,
+	// как и при установке пароля по ссылке: с новым паролем вход должен открыться сразу.
 	if err := s.pwLock.reset(ctx, id); err != nil {
-		// Пароль уже сменён; счётчик истечёт сам.
 		slog.Warn("auth: pwchange lockout reset", "err", err)
 	}
+	if err := s.lock.reset(ctx, u.Email); err != nil {
+		slog.Warn("auth: lockout reset after password change", "err", err)
+	}
 	return nil
-}
-
-func newPasswordFieldError(reason string) error {
-	return apierr.BadRequest(apierr.CodeValidation, "Некорректные данные запроса").
-		With("fields", []apierr.FieldError{{Field: "new_password", Reason: reason}})
 }
