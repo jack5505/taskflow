@@ -114,6 +114,12 @@ export function describeNotification(n: NotificationNotification): NotificationT
             link: taskLink,
           };
     }
+    case "due": {
+      const date = formatDate(str(p, "due_date"));
+      return str(p, "kind") === "overdue"
+        ? { text: `Срок задачи ${taskRef(p)} просрочен`, detail: `Срок ${date}`, link: taskLink }
+        : { text: `Срок задачи ${taskRef(p)} — завтра`, detail: `Срок ${date}`, link: taskLink };
+    }
     default:
       return { text: key ? `Событие по задаче ${taskRef(p)}` : "Новое событие", link: taskLink };
   }
