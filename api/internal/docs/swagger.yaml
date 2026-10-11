@@ -63,6 +63,22 @@ definitions:
     - password
     - token
     type: object
+  project.MemberView:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      is_active:
+        type: boolean
+      role:
+        enum:
+        - manager
+        - member
+        type: string
+      user_id:
+        type: string
+    type: object
   project.View:
     properties:
       created_at:
@@ -114,6 +130,17 @@ definitions:
     required:
     - key
     - name
+    type: object
+  project.putMemberRequest:
+    properties:
+      role:
+        description: допустимость проверяет сервис — одно правило и для бота
+        enum:
+        - manager
+        - member
+        type: string
+    required:
+    - role
     type: object
   project.updateRequest:
     properties:
@@ -545,6 +572,134 @@ paths:
       security:
       - BearerAuth: []
       summary: Изменить проект
+      tags:
+      - projects
+  /api/v1/projects/{key}/members:
+    get:
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/project.MemberView'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет проекта или пользователь не участник'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Участники проекта
+      tags:
+      - projects
+  /api/v1/projects/{key}/members/{user_id}:
+    delete:
+      description: Менеджер проекта или администратор (§2). Единственного активного
+        менеджера — 409 LAST_MANAGER.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: id пользователя
+        in: path
+        name: user_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет проекта или участника'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: LAST_MANAGER, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Исключить участника
+      tags:
+      - projects
+    put:
+      consumes:
+      - application/json
+      description: Менеджер проекта или администратор (§2). Добавить можно только
+        активного пользователя. Понижение единственного активного менеджера — 409
+        LAST_MANAGER. В архивном проекте — 409 PROJECT_ARCHIVED.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: id пользователя
+        in: path
+        name: user_id
+        required: true
+        type: string
+      - description: роль
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.putMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: роль изменена или не менялась
+          schema:
+            $ref: '#/definitions/project.MemberView'
+        "201":
+          description: участник добавлен
+          schema:
+            $ref: '#/definitions/project.MemberView'
+        "400":
+          description: VALIDATION_FAILED, в том числе пользователь деактивирован
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет проекта или пользователя'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: LAST_MANAGER, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Добавить участника или изменить роль
       tags:
       - projects
   /api/v1/projects/{key}/restore:

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/auth"
@@ -30,6 +31,29 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.PATCH("/:key", h.update)
 	g.DELETE("/:key", auth.RequireSystemAdmin(), h.delete)
 	g.POST("/:key/restore", auth.RequireSystemAdmin(), h.restore)
+	g.GET("/:key/members", h.members)
+	g.PUT("/:key/members/:user_id", h.putMember)
+	g.DELETE("/:key/members/:user_id", h.removeMember)
+}
+
+// access — проект из пути и роль текущего пользователя; не участник — 404 (§2).
+func (h *Handlers) access(c *gin.Context) (*Access, bool) {
+	a, err := h.svc.Access(c.Request.Context(), auth.CurrentUser(c), c.Param("key"))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return nil, false
+	}
+	return a, true
+}
+
+// manage — access + права менеджера (§2). Сервис перепроверяет роль под блокировкой.
+func (h *Handlers) manage(c *gin.Context) (*Access, bool) {
+	a, ok := h.access(c)
+	if ok && !a.CanManage() {
+		httpserver.Abort(c, ErrForbidden)
+		return nil, false
+	}
+	return a, ok
 }
 
 func boolQuery(c *gin.Context, name string) (bool, error) {
@@ -123,9 +147,8 @@ func (h *Handlers) create(c *gin.Context) {
 // @Failure      404  {object}  apierr.Response  "NOT_FOUND: нет, удалён или пользователь не участник"
 // @Router       /api/v1/projects/{key} [get]
 func (h *Handlers) get(c *gin.Context) {
-	a, err := h.svc.Access(c.Request.Context(), auth.CurrentUser(c), c.Param("key"))
-	if err != nil {
-		httpserver.Abort(c, err)
+	a, ok := h.access(c)
+	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, a.View())
@@ -158,9 +181,8 @@ type updateRequest struct {
 // @Failure      409   {object}  apierr.Response  "PROJECT_ARCHIVED"
 // @Router       /api/v1/projects/{key} [patch]
 func (h *Handlers) update(c *gin.Context) {
-	a, err := h.svc.Access(c.Request.Context(), auth.CurrentUser(c), c.Param("key"))
-	if err != nil {
-		httpserver.Abort(c, err)
+	a, ok := h.manage(c)
+	if !ok {
 		return
 	}
 	var req updateRequest
@@ -214,4 +236,113 @@ func (h *Handlers) restore(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, newView(p, ""))
+}
+
+// members — участники проекта.
+//
+// @Summary      Участники проекта
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        key  path      string  true  "ключ проекта"
+// @Success      200  {array}   MemberView
+// @Failure      401  {object}  apierr.Response
+// @Failure      404  {object}  apierr.Response  "NOT_FOUND: нет проекта или пользователь не участник"
+// @Router       /api/v1/projects/{key}/members [get]
+func (h *Handlers) members(c *gin.Context) {
+	a, ok := h.access(c)
+	if !ok {
+		return
+	}
+	list, err := h.svc.Members(c.Request.Context(), a)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+type putMemberRequest struct {
+	Role string `json:"role" binding:"required" enums:"manager,member"` // допустимость проверяет сервис — одно правило и для бота
+}
+
+// putMember — добавить участника или изменить роль.
+//
+// @Summary      Добавить участника или изменить роль
+// @Description  Менеджер проекта или администратор (§2). Добавить можно только активного пользователя. Понижение единственного активного менеджера — 409 LAST_MANAGER. В архивном проекте — 409 PROJECT_ARCHIVED.
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        key      path      string            true  "ключ проекта"
+// @Param        user_id  path      string            true  "id пользователя"
+// @Param        body     body      putMemberRequest  true  "роль"
+// @Success      200      {object}  MemberView        "роль изменена или не менялась"
+// @Success      201      {object}  MemberView        "участник добавлен"
+// @Failure      400      {object}  apierr.Response   "VALIDATION_FAILED, в том числе пользователь деактивирован"
+// @Failure      401      {object}  apierr.Response
+// @Failure      403      {object}  apierr.Response   "FORBIDDEN: не менеджер"
+// @Failure      404      {object}  apierr.Response   "NOT_FOUND: нет проекта или пользователя"
+// @Failure      409      {object}  apierr.Response   "LAST_MANAGER, PROJECT_ARCHIVED"
+// @Router       /api/v1/projects/{key}/members/{user_id} [put]
+func (h *Handlers) putMember(c *gin.Context) {
+	a, ok := h.manage(c)
+	if !ok {
+		return
+	}
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		httpserver.Abort(c, ErrUserNotFound)
+		return
+	}
+	// Архив — 409 раньше ошибок тела, как у PATCH проекта; под блокировкой сервис проверит ещё раз.
+	if err := EnsureWritable(a.Project); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	var req putMemberRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	m, added, err := h.svc.PutMember(c.Request.Context(), a, userID, req.Role)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	status := http.StatusOK
+	if added {
+		status = http.StatusCreated
+	}
+	c.JSON(status, m)
+}
+
+// removeMember — исключить участника.
+//
+// @Summary      Исключить участника
+// @Description  Менеджер проекта или администратор (§2). Единственного активного менеджера — 409 LAST_MANAGER.
+// @Tags         projects
+// @Security     BearerAuth
+// @Param        key      path  string  true  "ключ проекта"
+// @Param        user_id  path  string  true  "id пользователя"
+// @Success      204
+// @Failure      401  {object}  apierr.Response
+// @Failure      403  {object}  apierr.Response  "FORBIDDEN: не менеджер"
+// @Failure      404  {object}  apierr.Response  "NOT_FOUND: нет проекта или участника"
+// @Failure      409  {object}  apierr.Response  "LAST_MANAGER, PROJECT_ARCHIVED"
+// @Router       /api/v1/projects/{key}/members/{user_id} [delete]
+func (h *Handlers) removeMember(c *gin.Context) {
+	a, ok := h.manage(c)
+	if !ok {
+		return
+	}
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		httpserver.Abort(c, ErrNotMember)
+		return
+	}
+	if err := h.svc.RemoveMember(c.Request.Context(), a, userID); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

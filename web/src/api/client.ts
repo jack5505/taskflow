@@ -53,6 +53,14 @@ export interface AuthPasswordSetRequest {
   token: string;
 }
 
+export interface ProjectMemberView {
+  display_name?: string;
+  email?: string;
+  is_active?: boolean;
+  role?: "manager" | "member";
+  user_id?: string;
+}
+
 export interface ProjectView {
   created_at?: string;
   daily_summary_time?: string;
@@ -85,6 +93,11 @@ export interface ProjectCreateRequest {
    * @example "Europe/Moscow"
    */
   timezone?: string;
+}
+
+export interface ProjectPutMemberRequest {
+  /** допустимость проверяет сервис — одно правило и для бота */
+  role: "manager" | "member";
 }
 
 export interface ProjectUpdateRequest {
@@ -637,6 +650,70 @@ export class Api<
         secure: true,
         type: ContentType.Json,
         format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags projects
+     * @name V1ProjectsMembersList
+     * @summary Участники проекта
+     * @request GET:/api/v1/projects/{key}/members
+     * @secure
+     */
+    v1ProjectsMembersList: (key: string, params: RequestParams = {}) =>
+      this.request<ProjectMemberView[], ApierrResponse>({
+        path: `/api/v1/projects/${key}/members`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Менеджер проекта или администратор (§2). Добавить можно только активного пользователя. Понижение единственного активного менеджера — 409 LAST_MANAGER. В архивном проекте — 409 PROJECT_ARCHIVED.
+     *
+     * @tags projects
+     * @name V1ProjectsMembersUpdate
+     * @summary Добавить участника или изменить роль
+     * @request PUT:/api/v1/projects/{key}/members/{user_id}
+     * @secure
+     */
+    v1ProjectsMembersUpdate: (
+      key: string,
+      userId: string,
+      body: ProjectPutMemberRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<ProjectMemberView, ApierrResponse>({
+        path: `/api/v1/projects/${key}/members/${userId}`,
+        method: "PUT",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Менеджер проекта или администратор (§2). Единственного активного менеджера — 409 LAST_MANAGER.
+     *
+     * @tags projects
+     * @name V1ProjectsMembersDelete
+     * @summary Исключить участника
+     * @request DELETE:/api/v1/projects/{key}/members/{user_id}
+     * @secure
+     */
+    v1ProjectsMembersDelete: (
+      key: string,
+      userId: string,
+      params: RequestParams = {},
+    ) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/projects/${key}/members/${userId}`,
+        method: "DELETE",
+        secure: true,
         ...params,
       }),
 
