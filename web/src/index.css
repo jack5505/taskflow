@@ -1082,3 +1082,27 @@ button.link.danger {
 .archive-sprint .card-stats {
   margin-bottom: 12px;
 }
+
+/* Создание задачи (ТЗ §7.6) */
+.modal.create-task {
+  width: 600px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.create-task .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.create-notice {
+  padding: 4px 10px;
+  font-size: 14px;
+}
