@@ -526,6 +526,100 @@
                 }
             }
         },
+        "/api/v1/projects/{key}/audit": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Действия менеджеров и администраторов (ТЗ §3.8): участники и роли, настройки, архив, удаление и восстановление. Только администратор системы; доступен и для удалённого проекта. Новые записи первыми; следующая страница — cursor из next_cursor. Даты from/to — по часовому поясу проекта.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Журнал проекта",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "с (ГГГГ-ММ-ДД или RFC 3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "по (ГГГГ-ММ-ДД включительно или RFC 3339 не включая)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "кто действовал",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "тип действия, например member.added",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "до 200, по умолчанию 50",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "курсор следующей страницы",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/audit.Page"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: участник, но не администратор системы",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: нет проекта или пользователь в нём не участвует",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/projects/{key}/members": {
             "get": {
                 "security": [
@@ -994,6 +1088,61 @@
             "properties": {
                 "error": {
                     "$ref": "#/definitions/apierr.Body"
+                }
+            }
+        },
+        "audit.Entry": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "actor_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "new_value": {
+                    "type": "object"
+                },
+                "old_value": {
+                    "type": "object"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string",
+                    "enum": [
+                        "web",
+                        "bot",
+                        "cli",
+                        "system"
+                    ]
+                }
+            }
+        },
+        "audit.Page": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/audit.Entry"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
                 }
             }
         },

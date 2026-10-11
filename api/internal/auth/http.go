@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -259,6 +260,7 @@ func (h *Handlers) RequireAuth() gin.HandlerFunc {
 			return
 		}
 		c.Set(ctxUser, u)
+		c.Request = c.Request.WithContext(audit.WithActor(c.Request.Context(), u.ID))
 		c.Next()
 	}
 }

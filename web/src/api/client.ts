@@ -22,6 +22,24 @@ export interface ApierrResponse {
   error?: ApierrBody;
 }
 
+export interface AuditEntry {
+  action?: string;
+  actor_id?: string;
+  created_at?: string;
+  entity_id?: string;
+  entity_type?: string;
+  id?: string;
+  new_value?: object;
+  old_value?: object;
+  project_id?: string;
+  source?: "web" | "bot" | "cli" | "system";
+}
+
+export interface AuditPage {
+  items?: AuditEntry[];
+  next_cursor?: string;
+}
+
 export interface AuthSessionResponse {
   access_token?: string;
   /** @example 900 */
@@ -649,6 +667,42 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Действия менеджеров и администраторов (ТЗ §3.8): участники и роли, настройки, архив, удаление и восстановление. Только администратор системы; доступен и для удалённого проекта. Новые записи первыми; следующая страница — cursor из next_cursor. Даты from/to — по часовому поясу проекта.
+     *
+     * @tags projects
+     * @name V1ProjectsAuditList
+     * @summary Журнал проекта
+     * @request GET:/api/v1/projects/{key}/audit
+     * @secure
+     */
+    v1ProjectsAuditList: (
+      key: string,
+      query?: {
+        /** с (ГГГГ-ММ-ДД или RFC 3339) */
+        from?: string;
+        /** по (ГГГГ-ММ-ДД включительно или RFC 3339 не включая) */
+        to?: string;
+        /** кто действовал */
+        user_id?: string;
+        /** тип действия, например member.added */
+        action?: string;
+        /** до 200, по умолчанию 50 */
+        limit?: number;
+        /** курсор следующей страницы */
+        cursor?: string;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<AuditPage, ApierrResponse>({
+        path: `/api/v1/projects/${key}/audit`,
+        method: "GET",
+        query: query,
+        secure: true,
         format: "json",
         ...params,
       }),
