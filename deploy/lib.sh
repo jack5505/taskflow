@@ -28,7 +28,8 @@ log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
 PROJECT=$(env_get COMPOSE_PROJECT_NAME "$(basename "$ROOT")")
 export COMPOSE_PROJECT_NAME="$PROJECT"
-BACKUP_DIR=$(env_get BACKUP_DIR "$ROOT/backups")
+# BACKUP_DIR из окружения важнее .env: так проверяют бэкап, скачанный из внешнего хранилища в другой каталог.
+BACKUP_DIR=${BACKUP_DIR:-$(env_get BACKUP_DIR "$ROOT/backups")}
 BACKUP_KEEP_DAYS=$(env_get BACKUP_KEEP_DAYS 30)
 BACKUP_REMOTE=$(env_get BACKUP_REMOTE)
 PORT=$(env_get TASKFLOW_PORT 8100)
