@@ -38,10 +38,11 @@ type Cards struct {
 	db      *gorm.DB
 	out     *Queue
 	baseURL string
+	now     func() time.Time
 }
 
 func NewCards(db *gorm.DB, out *Queue, baseURL string) *Cards {
-	return &Cards{db: db, out: out, baseURL: strings.TrimRight(baseURL, "/")}
+	return &Cards{db: db, out: out, baseURL: strings.TrimRight(baseURL, "/"), now: time.Now}
 }
 
 // RegisterCards подключает карточки задач: сборку сообщения KindCard в отправителе и обработчики
@@ -67,7 +68,8 @@ func (c *Cards) onEvent(created bool) events.Handler {
 			return fmt.Errorf("telegram: %s payload: %w", env.Type, err)
 		}
 		if created {
-			return c.out.Send(ctx, Message{Op: OpSend, Kind: KindCard, Ref: p.TaskID.String()}, 0)
+			// id без секунды: повтор события не опубликует вторую карточку.
+			return c.out.SendOnce(ctx, Message{Op: OpSend, Kind: KindCard, Ref: p.TaskID.String()}, 0, "tg-card-new:"+p.TaskID.String())
 		}
 		if env.Type == events.TaskUpdated && len(p.Fields) > 0 && !slices.ContainsFunc(p.Fields, func(f string) bool {
 			return slices.Contains(cardFields, f)
@@ -101,9 +103,11 @@ func (c *Cards) onDeactivated(ctx context.Context, env events.Envelope) error {
 	return nil
 }
 
-// Edit ставит правку карточки задачи через CardDelay; пока правка ждёт, новые не ставятся.
+// Edit ставит правку карточки задачи через CardDelay; события той же секунды правку не
+// дублируют, а задание выполняется уже после её конца — по последнему состоянию.
 func (c *Cards) Edit(ctx context.Context, taskID uuid.UUID) error {
-	return c.out.SendOnce(ctx, Message{Op: OpEdit, Kind: KindCard, Ref: taskID.String()}, CardDelay, "tg-card:"+taskID.String())
+	return c.out.SendOnce(ctx, Message{Op: OpEdit, Kind: KindCard, Ref: taskID.String()}, CardDelay,
+		Bucket("tg-card:"+taskID.String(), c.now()))
 }
 
 // cardRow — задача со всем, что печатается в карточке.
@@ -117,7 +121,6 @@ type cardRow struct {
 	EstimateMinutes   *int
 	DueDate           *time.Time
 	TelegramMessageID *int
-	Version           int
 	Deleted           bool
 	AssigneeID        *uuid.UUID
 	ChatID            *int64
@@ -131,7 +134,7 @@ type cardRow struct {
 func (c *Cards) load(ctx context.Context, taskID string) (*cardRow, error) {
 	var r cardRow
 	res := c.db.WithContext(ctx).Raw(`SELECT t.id, t.key, t.title, t.type, t.priority, t.status, t.estimate_minutes,
-			t.due_date, t.telegram_message_id, t.version, t.deleted_at IS NOT NULL AS deleted, t.assignee_id,
+			t.due_date, t.telegram_message_id, t.deleted_at IS NOT NULL AS deleted, t.assignee_id,
 			CASE WHEN p.deleted_at IS NULL THEN p.telegram_chat_id END AS chat_id, p.notification_settings AS settings,
 			r.display_name AS reporter, a.display_name AS assignee, a.telegram_username AS assignee_username, s.name AS sprint
 		FROM tasks t
@@ -157,10 +160,10 @@ func (c *Cards) render(ctx context.Context, m *Message) (bool, error) {
 	if err != nil || r == nil || r.ChatID == nil {
 		return false, err
 	}
-	m.ChatID, m.HTML, m.stamp, m.Keyboard = *r.ChatID, true, r.Version, nil
+	m.ChatID, m.HTML = *r.ChatID, true
 	switch {
-	case m.Op == OpSend && m.Replace:
-		if r.TelegramMessageID == nil || r.Deleted {
+	case m.Op == OpSend && m.Replaces != 0:
+		if r.TelegramMessageID == nil || *r.TelegramMessageID != m.Replaces || r.Deleted {
 			return false, nil // карточку уже заменили или задачу удалили
 		}
 	case m.Op == OpSend:
@@ -173,33 +176,42 @@ func (c *Cards) render(ctx context.Context, m *Message) (bool, error) {
 		}
 		m.MessageID = *r.TelegramMessageID
 	}
-	if r.Deleted {
-		m.Text = Text("card_deleted", r)
-		return true, nil
-	}
-	m.Text = Text("card", c.view(r))
-	m.Keyboard = c.keyboard(r)
+	m.Text, m.Keyboard = c.content(r)
 	return true, nil
 }
 
+// content — текст и кнопки карточки; удалённая задача — «Задача удалена» без кнопок (§4).
+func (c *Cards) content(r *cardRow) (string, *models.InlineKeyboardMarkup) {
+	if r.Deleted {
+		return Text("card_deleted", r), nil
+	}
+	return Text("card", c.view(r)), c.keyboard(r)
+}
+
 // sent — после отправки (KindHooks.Sent): новая карточка запоминается в задаче
-// (telegram_message_id, §8.3); если задача изменилась, пока карточка собиралась и
-// отправлялась, ставится ещё одна правка.
+// (telegram_message_id, §8.3); если карточка за время отправки устарела (задачу изменили),
+// ставится ещё одна правка. Изменения, которых в карточке не видно, правку не вызывают.
 func (c *Cards) sent(ctx context.Context, m Message, msg *models.Message) error {
 	if msg != nil {
 		if err := c.db.WithContext(ctx).Exec(`UPDATE tasks SET telegram_message_id = ? WHERE id = ?`, msg.ID, m.Ref).Error; err != nil {
 			return fmt.Errorf("telegram: card message id: %w", err)
 		}
 	}
-	var version int
-	if err := c.db.WithContext(ctx).Raw(`SELECT version FROM tasks WHERE id = ?`, m.Ref).Scan(&version).Error; err != nil {
-		return fmt.Errorf("telegram: card version: %w", err)
+	r, err := c.load(ctx, m.Ref)
+	if err != nil || r == nil {
+		return err
 	}
-	if version == m.stamp {
+	text, kb := c.content(r)
+	if text == m.Text && sameKeyboard(kb, m.Keyboard) {
 		return nil
 	}
-	// Своё задание ещё выполняется — SendOnce с тем же id не поставился бы.
-	return c.out.Send(ctx, Message{Op: OpEdit, Kind: KindCard, Ref: m.Ref}, CardDelay)
+	return c.Edit(ctx, r.ID)
+}
+
+func sameKeyboard(a, b *models.InlineKeyboardMarkup) bool {
+	ja, _ := json.Marshal(a)
+	jb, _ := json.Marshal(b)
+	return string(ja) == string(jb)
 }
 
 // cardView — данные шаблона карточки (texts.go).

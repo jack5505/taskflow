@@ -35,7 +35,10 @@ func newCardBot(t *testing.T) *cardBot {
 	gb := newGroupBot(t)
 	b := &cardBot{groupBot: gb, tasks: task.NewService(gb.g, project.NewService(gb.g)), d: events.NewDispatcher(nil), seen: map[string]bool{}}
 	rt := telegram.NewRouter("TaskBot")
-	telegram.RegisterCards(rt, b.d, telegram.NewCards(gb.g, gb.out, "https://tasks.example/"))
+	cards := telegram.NewCards(gb.g, gb.out, "https://tasks.example/")
+	fixed := time.Now()
+	cards.SetClock(func() time.Time { return fixed }) // все правки теста — в одной секунде
+	telegram.RegisterCards(rt, b.d, cards)
 	b.send = telegram.NewDeliverer(gb.api, gb.rdb, gb.out).WithRouter(rt)
 
 	var mgrTG int64
@@ -259,4 +262,34 @@ func TestDeliverDropsUnknownKind(t *testing.T) {
 	b := newCardBot(t)
 	require.NoError(t, b.deliver(t, b.send, telegram.Message{Op: telegram.OpSend, Kind: "nope", Ref: "x"}))
 	require.Empty(t, b.tg.Calls(""))
+}
+
+// Две отклонённые правки одной карточки публикуют одну новую: замена — только пока старая текущая.
+func TestCardReplaceOnlyOnce(t *testing.T) {
+	b := newCardBot(t)
+	tk := b.create(t, task.CreateInput{Title: "Задача"})
+	b.events(t)
+	b.flush(t)
+	cur := int(*b.messageID(t, tk))
+	stale := telegram.Message{Op: telegram.OpSend, Kind: telegram.KindCard, Ref: tk.ID.String(), Replaces: cur - 1}
+	require.NoError(t, b.deliver(t, b.send, stale))
+	require.Len(t, b.tg.Calls("sendMessage"), 1, "карточку уже заменили — вторую не публикуем")
+}
+
+// Группа стала супергруппой раньше, чем пришло служебное обновление: карточка не отправляется
+// по кругу в старый чат, а ждёт с паузой и счётчиком попыток.
+func TestCardWaitsForGroupMigration(t *testing.T) {
+	b := newCardBot(t)
+	b.create(t, task.CreateInput{Title: "Задача"})
+	b.events(t)
+	msgs := b.messages(t)
+	require.Len(t, msgs, 1)
+	b.tg.Respond("sendMessage", `{"ok":false,"error_code":400,"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":-1009876}}`)
+	require.NoError(t, b.deliver(t, b.send, msgs[0]))
+	queued := b.queued(t, telegram.TaskSend)
+	require.Len(t, queued, 1)
+	require.Equal(t, "scheduled", queued[0].State.String())
+	var m telegram.Message
+	require.NoError(t, json.Unmarshal(queued[0].Payload, &m))
+	require.Equal(t, 1, m.Attempt)
 }

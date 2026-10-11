@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,10 +59,9 @@ type Message struct {
 	// заполняет Render.
 	Kind string `json:"kind,omitempty"`
 	Ref  string `json:"ref,omitempty"`
-	// Replace — send вместо edit, который Telegram отклонил (сообщение старше 48 часов или удалено).
-	Replace bool `json:"replace,omitempty"`
-	// stamp — версия данных, по которой Render собрал сообщение (для KindHooks.Sent).
-	stamp int
+	// Replaces — send вместо edit этого сообщения, который Telegram отклонил (старше 48 часов
+	// или удалено): новое публикуется, только если старое всё ещё текущее.
+	Replaces int `json:"replaces,omitempty"`
 }
 
 // KindHooks — сборка сообщения вида Kind при отправке и действие после неё.
@@ -71,7 +71,7 @@ type KindHooks struct {
 	Render func(ctx context.Context, m *Message) (bool, error)
 	// Sent вызывается после успешной операции; sent — новое сообщение (для send), иначе nil.
 	Sent func(ctx context.Context, m Message, sent *models.Message) error
-	// ReplaceOnEditError — edit, отклонённый Telegram (400), повторить как send с Replace.
+	// ReplaceOnEditError — edit, отклонённый Telegram (400), повторить как send с Replaces.
 	ReplaceOnEditError bool
 }
 
@@ -83,6 +83,26 @@ func NewQueue(jobs *asynq.Client) *Queue { return &Queue{jobs: jobs} }
 
 // Send ставит сообщение в очередь; delay > 0 — отправить не раньше чем через delay.
 func (q *Queue) Send(ctx context.Context, m Message, delay time.Duration) error {
+	return q.enqueue(ctx, m, delay)
+}
+
+// SendOnce — Send, который не ставит второе задание с тем же id, пока первое ждёт: так события
+// за одну секунду по одной задаче дают одну отправку. id включает номер секунды (Bucket), чтобы
+// задание, отброшенное asynq после повторов, не держало id навсегда.
+func (q *Queue) SendOnce(ctx context.Context, m Message, delay time.Duration, id string) error {
+	err := q.enqueue(ctx, m, delay, asynq.TaskID(id))
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		return nil
+	}
+	return err
+}
+
+// Bucket — id задания SendOnce для ключа key в текущую секунду.
+func Bucket(key string, now time.Time) string {
+	return key + ":" + strconv.FormatInt(now.Unix(), 10)
+}
+
+func (q *Queue) enqueue(ctx context.Context, m Message, delay time.Duration, extra ...asynq.Option) error {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("telegram: message payload: %w", err)
@@ -93,22 +113,7 @@ func (q *Queue) Send(ctx context.Context, m Message, delay time.Duration) error 
 	if delay > 0 {
 		opts = append(opts, asynq.ProcessIn(delay))
 	}
-	if _, err := q.jobs.EnqueueContext(ctx, asynq.NewTask(TaskSend, payload), opts...); err != nil {
-		return fmt.Errorf("telegram: enqueue message: %w", err)
-	}
-	return nil
-}
-
-// SendOnce — Send, который не ставит второе такое же задание id, пока первое ждёт или
-// выполняется: так события за одну секунду по одной задаче дают одну отправку.
-func (q *Queue) SendOnce(ctx context.Context, m Message, delay time.Duration, id string) error {
-	payload, err := json.Marshal(m)
-	if err != nil {
-		return fmt.Errorf("telegram: message payload: %w", err)
-	}
-	_, err = q.jobs.EnqueueContext(ctx, asynq.NewTask(TaskSend, payload), asynq.Queue(queue.QueueDefault),
-		asynq.MaxRetry(infraRetries), asynq.Timeout(sendTimeout+5*time.Second), asynq.ProcessIn(delay), asynq.TaskID(id))
-	if err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+	if _, err := q.jobs.EnqueueContext(ctx, asynq.NewTask(TaskSend, payload), append(opts, extra...)...); err != nil {
 		return fmt.Errorf("telegram: enqueue message: %w", err)
 	}
 	return nil
@@ -170,7 +175,7 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if err != nil && hooks.ReplaceOnEditError && m.Op == OpEdit && errors.Is(err, bot.ErrorBadRequest) {
 		// Сообщение нельзя изменить (старше 48 часов или удалено) — публикуем новое (§8.3).
 		slog.Info("telegram: edit refused, sending new message", "kind", m.Kind, "ref", m.Ref, "err", err)
-		m.Op, m.MessageID, m.Replace = OpSend, 0, true
+		m.Op, m.MessageID, m.Replaces = OpSend, 0, m.MessageID
 		return d.out.Send(ctx, m, 0)
 	}
 	if err == nil {
@@ -188,7 +193,16 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		slog.Info("telegram: chat migrated, resending", "chat_id", m.ChatID, "to", migrated.MigrateToChatID)
 		// Номера сообщений старой группы в новой не действуют — без ответа на сообщение.
 		m.ChatID, m.ReplyTo = int64(migrated.MigrateToChatID), 0
-		return d.out.Send(ctx, m, 0)
+		if m.Kind == "" {
+			return d.out.Send(ctx, m, 0)
+		}
+		// Собираемое сообщение возьмёт чат из проекта: ждём, пока служебное обновление
+		// migrate_to_chat_id перепишет его, — с паузой и счётчиком попыток.
+		if m.Attempt++; m.Attempt >= MaxAttempts {
+			slog.Error("telegram: message dropped, group migrated", "kind", m.Kind, "ref", m.Ref)
+			return nil
+		}
+		return d.out.Send(ctx, m, backoff(m.Attempt))
 	}
 	m.Attempt++
 	log := slog.With("op", m.Op, "chat_id", m.ChatID, "message_id", m.MessageID, "attempt", m.Attempt, "err", err)
