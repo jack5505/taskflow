@@ -53,6 +53,26 @@ type Message struct {
 	DeleteAfter int `json:"delete_after,omitempty"`
 	// Attempt — сколько попыток уже не удалось.
 	Attempt int `json:"attempt,omitempty"`
+	// Kind и Ref — сообщение, которое собирается при отправке по текущим данным (Router.Kind):
+	// например карточка задачи (Kind "card", Ref — id задачи). Text, ChatID и MessageID тогда
+	// заполняет Render.
+	Kind string `json:"kind,omitempty"`
+	Ref  string `json:"ref,omitempty"`
+	// Replace — send вместо edit, который Telegram отклонил (сообщение старше 48 часов или удалено).
+	Replace bool `json:"replace,omitempty"`
+	// stamp — версия данных, по которой Render собрал сообщение (для KindHooks.Sent).
+	stamp int
+}
+
+// KindHooks — сборка сообщения вида Kind при отправке и действие после неё.
+type KindHooks struct {
+	// Render заполняет сообщение по текущим данным; false — отправлять нечего (группа отключена,
+	// сообщения нет). Для каждой попытки вызывается заново.
+	Render func(ctx context.Context, m *Message) (bool, error)
+	// Sent вызывается после успешной операции; sent — новое сообщение (для send), иначе nil.
+	Sent func(ctx context.Context, m Message, sent *models.Message) error
+	// ReplaceOnEditError — edit, отклонённый Telegram (400), повторить как send с Replace.
+	ReplaceOnEditError bool
 }
 
 // Queue ставит сообщения в очередь отправки. Отправляет их только воркер: так лимиты
@@ -79,6 +99,21 @@ func (q *Queue) Send(ctx context.Context, m Message, delay time.Duration) error 
 	return nil
 }
 
+// SendOnce — Send, который не ставит второе такое же задание id, пока первое ждёт или
+// выполняется: так события за одну секунду по одной задаче дают одну отправку.
+func (q *Queue) SendOnce(ctx context.Context, m Message, delay time.Duration, id string) error {
+	payload, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("telegram: message payload: %w", err)
+	}
+	_, err = q.jobs.EnqueueContext(ctx, asynq.NewTask(TaskSend, payload), asynq.Queue(queue.QueueDefault),
+		asynq.MaxRetry(infraRetries), asynq.Timeout(sendTimeout+5*time.Second), asynq.ProcessIn(delay), asynq.TaskID(id))
+	if err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return fmt.Errorf("telegram: enqueue message: %w", err)
+	}
+	return nil
+}
+
 // Deliverer — обработчик заданий telegram:send в воркере. Повторы он ведёт сам, а не через
 // повторы asynq: задержка зависит от ответа Telegram (retry_after), а ожидание лимита группы
 // не считается неудачной попыткой.
@@ -86,16 +121,34 @@ type Deliverer struct {
 	api   API
 	limit *Limiter
 	out   *Queue
+	kinds map[string]KindHooks
 }
 
 func NewDeliverer(api API, rdb *redis.Client, out *Queue) *Deliverer {
 	return &Deliverer{api: api, limit: NewLimiter(rdb), out: out}
 }
 
+// WithRouter — сборка сообщений по видам, зарегистрированным в роутере (Router.Kind).
+func (d *Deliverer) WithRouter(rt *Router) *Deliverer {
+	d.kinds = rt.kinds
+	return d
+}
+
 func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	var m Message
 	if err := json.Unmarshal(t.Payload(), &m); err != nil {
 		return fmt.Errorf("telegram: message payload: %w: %w", err, asynq.SkipRetry)
+	}
+	hooks, kind := d.kinds[m.Kind]
+	if m.Kind != "" {
+		if !kind || hooks.Render == nil {
+			slog.Error("telegram: unknown message kind, dropped", "kind", m.Kind)
+			return nil
+		}
+		ok, err := hooks.Render(ctx, &m)
+		if err != nil || !ok {
+			return err // база недоступна — asynq повторит задание (infraRetries)
+		}
 	}
 	if m.ChatID < 0 && m.Op != OpDelete {
 		// Группа: не больше GroupLimit сообщений в минуту. Удаление сообщением не считается.
@@ -108,6 +161,18 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		}
 	}
 	sent, err := d.call(ctx, m)
+	if err == nil && hooks.Sent != nil {
+		if err := hooks.Sent(ctx, m, sent); err != nil {
+			// Сообщение уже в Telegram — повторять нельзя, иначе будет второе.
+			slog.Error("telegram: after send", "kind", m.Kind, "ref", m.Ref, "err", err)
+		}
+	}
+	if err != nil && hooks.ReplaceOnEditError && m.Op == OpEdit && errors.Is(err, bot.ErrorBadRequest) {
+		// Сообщение нельзя изменить (старше 48 часов или удалено) — публикуем новое (§8.3).
+		slog.Info("telegram: edit refused, sending new message", "kind", m.Kind, "ref", m.Ref, "err", err)
+		m.Op, m.MessageID, m.Replace = OpSend, 0, true
+		return d.out.Send(ctx, m, 0)
+	}
 	if err == nil {
 		if m.DeleteAfter > 0 && sent != nil {
 			del := Message{Op: OpDelete, ChatID: m.ChatID, MessageID: sent.ID}
