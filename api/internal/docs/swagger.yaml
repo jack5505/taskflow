@@ -253,6 +253,10 @@ definitions:
         type: integer
       telegram_chat_id:
         type: integer
+      telegram_chat_title:
+        description: TelegramChatTitle — название подключённой группы на момент подключения
+          или переименования (§7.9).
+        type: string
       timezone:
         type: string
       updated_at:
@@ -301,6 +305,10 @@ definitions:
         type: object
       telegram_chat_id:
         type: integer
+      telegram_chat_title:
+        description: TelegramChatTitle — название подключённой группы на момент подключения
+          или переименования (§7.9).
+        type: string
       timezone:
         type: string
       updated_at:
@@ -1215,6 +1223,23 @@ definitions:
         example: "2026-10-11"
         format: date
         maxLength: 40
+        type: string
+    type: object
+  telegram.BindCode:
+    properties:
+      bot_username:
+        description: BotUsername — имя бота без @, чтобы найти его при добавлении
+          в группу; пусто, если не задано.
+        example: taskflow_bot
+        type: string
+      code:
+        example: K7M2X9QD
+        type: string
+      command:
+        description: 'Command — что написать в группе: /bind <код>.'
+        example: /bind K7M2X9QD
+        type: string
+      expires_at:
         type: string
     type: object
   telegram.LinkCode:
@@ -2495,6 +2520,84 @@ paths:
       summary: Создать задачу
       tags:
       - tasks
+  /api/v1/projects/{key}/telegram:
+    delete:
+      description: 'Кнопка «Отключить» в настройках проекта (§8.2, шаг 5): группа
+        отвязывается от проекта, другие проекты этой группы не меняются. Группа не
+        подключена — тоже 204. Менеджер проекта или администратор; в архивном проекте
+        — 409.'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отключить Telegram-группу
+      tags:
+      - projects
+  /api/v1/projects/{key}/telegram-bind-code:
+    post:
+      description: 'Одноразовый код из 8 символов на 15 минут (§8.2): менеджер добавляет
+        бота в группу и пишет в ней /bind <код>. Новый код гасит прежний неиспользованный
+        код проекта. Менеджер проекта или администратор; в архивном проекте — 409.
+        Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me),
+        иначе 404.'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/telegram.BindCode'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет проекта, пользователь не участник или бот не
+            подключён'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Код подключения Telegram-группы
+      tags:
+      - projects
   /api/v1/projects/{key}/trash:
     get:
       description: Удалённые задачи проекта (§7.9) — только администратор системы

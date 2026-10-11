@@ -63,7 +63,9 @@ func (p *Processor) Handle(ctx context.Context, upd *models.Update, receivedAt t
 	if !r.IsCallback() {
 		if err := h(ctx, r); err != nil {
 			log.Error("telegram: handler failed", "err", err)
-			p.sendLater(ctx, r.reply(Text("internal_error", nil)))
+			if !r.service {
+				p.sendLater(ctx, r.reply(Text("internal_error", nil)))
+			}
 		}
 		return
 	}
@@ -130,5 +132,5 @@ func (a *acker) send(ctx context.Context, text string, alert bool) bool {
 func Mount(mux *asynq.ServeMux, api API, router *Router, rdb *redis.Client, jobs *asynq.Client) {
 	out := NewQueue(jobs)
 	mux.Handle(TaskUpdate, NewProcessor(api, router, out))
-	mux.Handle(TaskSend, NewDeliverer(api, rdb, out))
+	mux.Handle(TaskSend, NewDeliverer(api, rdb, out).WithRouter(router))
 }

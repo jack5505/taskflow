@@ -171,7 +171,8 @@ func (h *Handlers) transition(c *gin.Context) {
 	if !httpserver.Bind(c, &req) {
 		return
 	}
-	t, err := h.svc.Transition(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"), TransitionInput(req))
+	t, err := h.svc.Transition(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"),
+		TransitionInput{To: req.To, Comment: req.Comment, AssigneeID: req.AssigneeID})
 	if err != nil {
 		httpserver.Abort(c, err)
 		return

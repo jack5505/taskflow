@@ -140,6 +140,7 @@ func TestRightsTable(t *testing.T) {
 			{"Приглашать пользователей в проект", "PUT", proj + "/members/" + w.managerU.ID.String(), `{"role":"member"}`},
 			{"Менять роли", "PUT", proj + "/members/" + member, `{"role":"manager"}`},
 			{"Исключать из проекта", "DELETE", proj + "/members/" + member, ""},
+			{"Подключать Telegram-группу к проекту", "DELETE", proj + "/telegram", ""},
 			{"Настраивать уведомления бота для проекта", "PATCH", proj, `{"notification_settings":{"daily_summary":true}}`},
 			{"Менять настройки проекта", "PATCH", proj, `{"name":"X"}`},
 			{"Заводить пользователей", "POST", "/api/v1/users", `{"email":"x@example.com","display_name":"X"}`},

@@ -1797,6 +1797,116 @@
                 }
             }
         },
+        "/api/v1/projects/{key}/telegram": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Кнопка «Отключить» в настройках проекта (§8.2, шаг 5): группа отвязывается от проекта, другие проекты этой группы не меняются. Группа не подключена — тоже 204. Менеджер проекта или администратор; в архивном проекте — 409.",
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Отключить Telegram-группу",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/projects/{key}/telegram-bind-code": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Одноразовый код из 8 символов на 15 минут (§8.2): менеджер добавляет бота в группу и пишет в ней /bind \u003cкод\u003e. Новый код гасит прежний неиспользованный код проекта. Менеджер проекта или администратор; в архивном проекте — 409. Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me), иначе 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Код подключения Telegram-группы",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/telegram.BindCode"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: нет проекта, пользователь не участник или бот не подключён",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/projects/{key}/trash": {
             "get": {
                 "security": [
@@ -3993,6 +4103,10 @@
                 "telegram_chat_id": {
                     "type": "integer"
                 },
+                "telegram_chat_title": {
+                    "description": "TelegramChatTitle — название подключённой группы на момент подключения или переименования (§7.9).",
+                    "type": "string"
+                },
                 "timezone": {
                     "type": "string"
                 },
@@ -4064,6 +4178,10 @@
                 },
                 "telegram_chat_id": {
                     "type": "integer"
+                },
+                "telegram_chat_title": {
+                    "description": "TelegramChatTitle — название подключённой группы на момент подключения или переименования (§7.9).",
+                    "type": "string"
                 },
                 "timezone": {
                     "type": "string"
@@ -5379,6 +5497,28 @@
                     "format": "date",
                     "maxLength": 40,
                     "example": "2026-10-11"
+                }
+            }
+        },
+        "telegram.BindCode": {
+            "type": "object",
+            "properties": {
+                "bot_username": {
+                    "description": "BotUsername — имя бота без @, чтобы найти его при добавлении в группу; пусто, если не задано.",
+                    "type": "string",
+                    "example": "taskflow_bot"
+                },
+                "code": {
+                    "type": "string",
+                    "example": "K7M2X9QD"
+                },
+                "command": {
+                    "description": "Command — что написать в группе: /bind \u003cкод\u003e.",
+                    "type": "string",
+                    "example": "/bind K7M2X9QD"
+                },
+                "expires_at": {
+                    "type": "string"
                 }
             }
         },

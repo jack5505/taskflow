@@ -35,6 +35,7 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 		Mount(authH.Register).
 		Mount(users.NewHandlers(users.NewService(g, authSvc), requireAuth).Register).
 		Mount(project.NewHandlers(projects, requireAuth).Register).
+		Mount(telegram.NewGroupHandlers(telegram.NewGroups(g, cfg.TelegramBotUsername), projects, requireAuth, cfg.TelegramEnabled()).Register).
 		Mount(task.NewHandlers(tasks, projects, requireAuth).Register).
 		Mount(sprint.NewHandlers(sprint.NewService(g, projects), projects, requireAuth).Register).
 		Mount(report.NewHandlers(report.NewService(g, projects), requireAuth).Register).
