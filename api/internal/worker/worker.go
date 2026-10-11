@@ -1,5 +1,5 @@
 // Package worker — режим `taskflow worker` (ТЗ §10.1): релей outbox и сервер asynq.
-// Сюда же позже встанут планировщик сводок и напоминаний, таймеры и отправка писем.
+// Сюда же позже встанут планировщик сводок и напоминаний.
 package worker
 
 import (
@@ -17,7 +17,9 @@ import (
 	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/outbox"
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/task"
 )
 
 // Run запускает релей и сервер asynq и ждёт отмены контекста.
@@ -43,6 +45,15 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
 	notification.Register(d, g)
+	tasks := task.NewService(g, project.NewService(g))
+	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }
+	// Архивация и удаление проекта останавливают его таймеры (§3.2) — тем же обходом, что и автостоп.
+	for _, typ := range []string{events.ProjectArchived, events.ProjectDeleted} {
+		d.On(typ, "timers", func(ctx context.Context, _ events.Envelope) error {
+			_, err := stopTimers(ctx)
+			return err
+		})
+	}
 
 	smtp, err := mail.NewSMTP(cfg)
 	if err != nil {
@@ -60,7 +71,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		outbox.NewRelay(g, client).Run(ctx)
@@ -74,6 +85,10 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		runDaily(ctx, "notifications cleanup", func(ctx context.Context) (int64, error) {
 			return notification.Cleanup(ctx, g, time.Now())
 		})
+	}()
+	go func() {
+		defer wg.Done()
+		runEvery(ctx, "timers stop", time.Minute, stopTimers)
 	}()
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 
@@ -94,17 +109,23 @@ func registerHandlers(d *events.Dispatcher) {
 
 // runDaily выполняет уборку при старте и затем раз в сутки, пока ctx жив.
 func runDaily(ctx context.Context, name string, job func(context.Context) (int64, error)) {
+	runEvery(ctx, name, 24*time.Hour, job)
+}
+
+// runEvery выполняет job при старте и затем каждые interval, пока ctx жив. Результат — число
+// обработанных строк (удалённых, остановленных) для лога.
+func runEvery(ctx context.Context, name string, interval time.Duration, job func(context.Context) (int64, error)) {
 	run := func() {
 		jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		if n, err := job(jobCtx); err != nil {
 			slog.Error(name, "err", err)
 		} else if n > 0 {
-			slog.Info(name, "deleted", n)
+			slog.Info(name, "rows", n)
 		}
 	}
 	run()
-	t := time.NewTicker(24 * time.Hour)
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {

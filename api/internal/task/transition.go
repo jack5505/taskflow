@@ -202,7 +202,7 @@ func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (
 // спринта: FOR SHARE строк действующего пользователя и pre, затем FOR UPDATE строки задачи,
 // затем FOR SHARE проекта. Права берутся из строк под блокировкой, а не из снимка при входе.
 // ifMatch — версии из If-Match: nil — без сверки, иначе версия задачи должна быть в списке.
-// После fn — version+1 и сохранение; fn, вернувший errNoChange, ничего не меняет — тогда
+// После fn — остановка таймеров, которым больше нельзя идти на задаче (§6.4), version+1 и сохранение; fn, вернувший errNoChange, ничего не меняет — тогда
 // возвращается задача, какой она была до fn.
 func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch []int, pre preLock,
 	fn func(*gorm.DB, *Task, actor) error) (*Task, error) {
@@ -227,6 +227,9 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		a := o.actor
 		before = t
 		if err := fn(tx, &t, a); err != nil {
+			return err
+		}
+		if err := stopStaleTaskTimers(tx, &t, s.now()); err != nil {
 			return err
 		}
 		t.Version = before.Version + 1
