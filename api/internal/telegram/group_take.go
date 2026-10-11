@@ -85,7 +85,7 @@ func (tc *TaskCommands) checkAccess(ctx context.Context, r *Request, ref *taskRe
 			inGroup = inGroup || p.Key == ref.ProjectKey
 		}
 		if !inGroup {
-			return false, r.Answer(ctx, Text("task_not_found", ref), true)
+			return false, r.Answer(ctx, Text("cmd_task_not_found", ref), true)
 		}
 	}
 	_, err := tc.projects.Access(ctx, r.User, ref.ProjectKey)
@@ -93,7 +93,7 @@ func (tc *TaskCommands) checkAccess(ctx context.Context, r *Request, ref *taskRe
 	case errors.Is(err, project.ErrNotFound) && !r.Private():
 		return false, r.Answer(ctx, Text("not_project_member", ref), true)
 	case errors.Is(err, project.ErrNotFound):
-		return false, r.Answer(ctx, Text("task_not_found", ref), true)
+		return false, r.Answer(ctx, Text("cmd_task_not_found", ref), true)
 	case err != nil:
 		return false, err
 	}
@@ -159,7 +159,7 @@ func taskErrorText(ref *taskRef, err error) (string, error) {
 	}
 	switch ae.Code {
 	case apierr.CodeNotFound:
-		return Text("task_not_found", ref), nil
+		return Text("cmd_task_not_found", ref), nil
 	case apierr.CodeProjectArchived:
 		return Text("project_archived", map[string]string{"Key": ref.ProjectKey}), nil
 	case apierr.CodeValidation:
