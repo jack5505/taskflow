@@ -45,6 +45,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	t.POST("/:task_key/take", h.take)
 	h.registerAttachments(api)
 	h.registerWorklogs(api)
+	h.registerTimer(api)
 }
 
 // createRequest — ограничения §3.3 (сервис проверяет их ещё раз: бот вызывает его напрямую).

@@ -1,20 +1,19 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
 import { api } from "../api";
-import type { ProjectListItem } from "../api/client";
 import { errorText } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { CreateProjectForm } from "../projects/CreateProjectForm";
 import {
   filterFromParams,
   isSystemAdmin,
-  listQuery,
   myTasksQueryKey,
   paramsForFilter,
   projectsQueryKey,
   visibleFilters,
 } from "../projects/logic";
+import { useProjectsList } from "../projects/hooks";
 import { MyTasks } from "../projects/MyTasks";
 import { ProjectCard } from "../projects/ProjectCard";
 
@@ -34,13 +33,8 @@ export function HomePage() {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
 
-  const projects = useQuery({
-    queryKey: [...projectsQueryKey, filter],
-    queryFn: async ({ signal }): Promise<ProjectListItem[]> =>
-      (await api.api.v1ProjectsList(listQuery(filter), { signal })).data ?? [],
-    // «Удалённые» не администратору сервер отклонит: ждём профиль, чтобы не слать лишний запрос.
-    enabled: me.isSuccess,
-  });
+  // «Удалённые» не администратору сервер отклонит: ждём профиль, чтобы не слать лишний запрос.
+  const projects = useProjectsList(filter, me.isSuccess);
 
   const restore = useMutation({
     mutationFn: (key: string) => api.api.v1ProjectsRestoreCreate(key),

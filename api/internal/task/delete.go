@@ -16,7 +16,7 @@ var errDeleteForbidden = apierr.Forbidden("Удалять задачи може�
 
 // Delete — мягкое удаление (§4, §2: менеджер): deleted_at, задача пропадает с доски, из
 // бэклога, поиска и бота; записи времени остаются. История, журнал аудита (§3.8) и
-// task.deleted — в той же транзакции. Остановку запущенного таймера добавит задача таймера.
+// task.deleted — в той же транзакции. Запущенный на задаче таймер останавливает change() (§4).
 func (s *Service) Delete(ctx context.Context, u *user.User, key string) error {
 	_, err := s.change(ctx, u, key, nil, preLock{}, func(tx *gorm.DB, t *Task, a actor) error {
 		if !a.manager {

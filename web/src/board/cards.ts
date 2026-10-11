@@ -5,6 +5,9 @@ import { BOARD_COLUMNS, type BoardStatus, type Status } from "./transitions";
 /** Ключ кэша задач доски проекта; хвост — параметры запроса. */
 export const boardQueryKey = (key: string) => ["board", key] as const;
 
+/** Ключ мутаций перехода с доски: пока они идут, доску не перечитываем — ответ откатил бы карточку. */
+export const moveKey = ["board-move"];
+
 /** Инициалы для аватара: «Иван Петров» → «ИП». */
 export function initials(name: string | undefined): string {
   return (name ?? "")

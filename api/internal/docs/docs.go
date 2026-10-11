@@ -727,6 +727,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/me/timer/stop": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Запись времени source = timer, длительность округляется вверх до минуты; меньше минуты — записи нет. Через полночь по поясу пользователя — две записи на разные даты.\nЗапись сверх дневного лимита 24 часа обрезается до остатка (trimmed, событие timer.trimmed), остатка нет — записи нет (§6.4).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "timer"
+                ],
+                "summary": "Остановить таймер",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.TimerStop"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: таймер не запущен",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ping": {
             "get": {
                 "produces": [
@@ -2703,6 +2740,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tasks/{task_key}/timer/start": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Исполнитель задачи в статусе in_progress (§6.4). У пользователя один таймер: запущенный на другой задаче останавливается с записью времени (поле stopped). Повторный старт на той же задаче — 409 TIMER_ALREADY_RUNNING (в details — timer).\nТаймер останавливается сам: при уходе задачи из in_progress, смене исполнителя, удалении задачи, деактивации пользователя, архивации проекта и через 12 часов (timer.auto_stopped).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "timer"
+                ],
+                "summary": "Запустить таймер",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.TimerStart"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не исполнитель задачи",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "TIMER_ALREADY_RUNNING, INVALID_TRANSITION: задача не в работе, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tasks/{task_key}/transition": {
             "post": {
                 "security": [
@@ -3439,7 +3534,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "timer": {
-                    "type": "object"
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/task.TimerView"
+                        }
+                    ],
+                    "x-nullable": true
                 },
                 "timezone": {
                     "type": "string"
@@ -4391,6 +4491,68 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "task.TimerStart": {
+            "type": "object",
+            "properties": {
+                "stopped": {
+                    "$ref": "#/definitions/task.TimerStop"
+                },
+                "timer": {
+                    "$ref": "#/definitions/task.TimerView"
+                }
+            }
+        },
+        "task.TimerStop": {
+            "type": "object",
+            "properties": {
+                "auto_stopped": {
+                    "type": "boolean"
+                },
+                "duration": {
+                    "type": "string",
+                    "example": "47m"
+                },
+                "minutes": {
+                    "type": "integer",
+                    "example": 47
+                },
+                "task_key": {
+                    "type": "string",
+                    "example": "TM-42"
+                },
+                "trimmed": {
+                    "type": "boolean"
+                },
+                "worklogs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.WorklogView"
+                    }
+                }
+            }
+        },
+        "task.TimerView": {
+            "type": "object",
+            "properties": {
+                "elapsed_seconds": {
+                    "type": "integer",
+                    "example": 2820
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "task_key": {
+                    "type": "string",
+                    "example": "TM-42"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },

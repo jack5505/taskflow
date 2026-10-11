@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { Link } from "react-router";
 import type { ProjectMemberView, TaskListItem } from "../api/client";
@@ -22,10 +23,15 @@ function Avatar({ assigneeId, member }: { assigneeId?: string; member?: ProjectM
 interface CardProps {
   task: TaskListItem;
   assignee?: ProjectMemberView;
+  /**
+   * На задаче идёт таймер. API отдаёт только свой таймер (GET /me), поэтому индикатор — только
+   * у своего: чужие таймеры в списке задач не приходят.
+   */
+  timerRunning?: boolean;
 }
 
-/** Содержимое карточки доски (ТЗ §7.3). Индикатор таймера появится вместе с таймером. */
-export function CardBody({ task: t, assignee, linked = false }: CardProps & { linked?: boolean }) {
+/** Содержимое карточки доски (ТЗ §7.3). */
+export function CardBody({ task: t, assignee, timerRunning, linked = false }: CardProps & { linked?: boolean }) {
   const type = (t.type ?? "task") as TaskType;
   const priority = (t.priority ?? "medium") as Priority;
   const due = formatDate(t.due_date);
@@ -60,6 +66,11 @@ export function CardBody({ task: t, assignee, linked = false }: CardProps & { li
         <span className="muted" title="Списано / оценка">
           {formatSpentEstimate(t.spent_minutes, t.estimate_minutes)}
         </span>
+        {timerRunning && (
+          <span className="timer-indicator" title="Идёт таймер" aria-label="Идёт таймер">
+            ⏱
+          </span>
+        )}
         {due && (
           <span className={t.overdue ? "due overdue" : "due muted"} title={t.overdue ? "Срок просрочен" : "Срок"}>
             {due}
@@ -80,6 +91,8 @@ export function BoardCard(
     /** Кнопка «Взять в работу»: свободная задача в «К выполнению». */
     onTake?: () => void;
     taking?: boolean;
+    /** Кнопка «Старт / Стоп» таймера (§6.4) — тоже вне перетаскиваемой области. */
+    timer?: ReactNode;
   },
 ) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -93,7 +106,7 @@ export function BoardCard(
         className={props.draggable ? "task-drag draggable" : "task-drag"}
         {...(props.draggable ? { ...attributes, ...listeners, "aria-roledescription": "перетаскиваемая карточка" } : {})}
       >
-        <CardBody task={props.task} assignee={props.assignee} linked />
+        <CardBody task={props.task} assignee={props.assignee} timerRunning={props.timerRunning} linked />
       </div>
       {props.onTake && (
         <button
@@ -105,6 +118,7 @@ export function BoardCard(
           {props.taking ? "Берём…" : "Взять в работу"}
         </button>
       )}
+      {props.timer}
     </article>
   );
 }

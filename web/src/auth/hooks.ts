@@ -10,14 +10,19 @@ export function useAuthStatus(): AuthStatus {
 
 export const meQueryKey = ["me"] as const;
 
-/** Профиль текущего пользователя (GET /me): имя для шапки, часовой пояс для дат. */
-export function useMe() {
+/**
+ * Профиль текущего пользователя (GET /me): имя для шапки, часовой пояс для дат, запущенный
+ * таймер. refetchInterval — для шапки: таймер могли запустить или остановить в боте или
+ * другой вкладке, а сервер останавливает его сам через 12 часов (§6.4).
+ */
+export function useMe(opts: { refetchInterval?: number } = {}) {
   const status = useAuthStatus();
   return useQuery({
     queryKey: meQueryKey,
     queryFn: async ({ signal }): Promise<MeProfile> => (await api.api.v1MeList({ signal })).data,
     enabled: status === "in",
     staleTime: 5 * 60_000,
+    refetchInterval: opts.refetchInterval,
   });
 }
 

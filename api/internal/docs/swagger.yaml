@@ -143,7 +143,9 @@ definitions:
       telegram_username:
         type: string
       timer:
-        type: object
+        allOf:
+        - $ref: '#/definitions/task.TimerView'
+        x-nullable: true
       timezone:
         type: string
       updated_at:
@@ -794,6 +796,48 @@ definitions:
         type: string
       version:
         type: integer
+    type: object
+  task.TimerStart:
+    properties:
+      stopped:
+        $ref: '#/definitions/task.TimerStop'
+      timer:
+        $ref: '#/definitions/task.TimerView'
+    type: object
+  task.TimerStop:
+    properties:
+      auto_stopped:
+        type: boolean
+      duration:
+        example: 47m
+        type: string
+      minutes:
+        example: 47
+        type: integer
+      task_key:
+        example: TM-42
+        type: string
+      trimmed:
+        type: boolean
+      worklogs:
+        items:
+          $ref: '#/definitions/task.WorklogView'
+        type: array
+    type: object
+  task.TimerView:
+    properties:
+      elapsed_seconds:
+        example: 2820
+        type: integer
+      started_at:
+        type: string
+      task_id:
+        type: string
+      task_key:
+        example: TM-42
+        type: string
+      title:
+        type: string
     type: object
   task.WorklogView:
     properties:
@@ -1521,6 +1565,31 @@ paths:
       summary: Мои задачи
       tags:
       - tasks
+  /api/v1/me/timer/stop:
+    post:
+      description: |-
+        Запись времени source = timer, длительность округляется вверх до минуты; меньше минуты — записи нет. Через полночь по поясу пользователя — две записи на разные даты.
+        Запись сверх дневного лимита 24 часа обрезается до остатка (trimmed, событие timer.trimmed), остатка нет — записи нет (§6.4).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.TimerStop'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: таймер не запущен'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Остановить таймер
+      tags:
+      - timer
   /api/v1/ping:
     get:
       produces:
@@ -2859,6 +2928,46 @@ paths:
       summary: Взять в работу
       tags:
       - tasks
+  /api/v1/tasks/{task_key}/timer/start:
+    post:
+      description: |-
+        Исполнитель задачи в статусе in_progress (§6.4). У пользователя один таймер: запущенный на другой задаче останавливается с записью времени (поле stopped). Повторный старт на той же задаче — 409 TIMER_ALREADY_RUNNING (в details — timer).
+        Таймер останавливается сам: при уходе задачи из in_progress, смене исполнителя, удалении задачи, деактивации пользователя, архивации проекта и через 12 часов (timer.auto_stopped).
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.TimerStart'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не исполнитель задачи'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: 'TIMER_ALREADY_RUNNING, INVALID_TRANSITION: задача не в работе,
+            PROJECT_ARCHIVED'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Запустить таймер
+      tags:
+      - timer
   /api/v1/tasks/{task_key}/transition:
     post:
       consumes:
