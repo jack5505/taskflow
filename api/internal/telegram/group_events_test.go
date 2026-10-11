@@ -3,6 +3,7 @@ package telegram_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,4 +247,45 @@ func TestPluralAndDates(t *testing.T) {
 	}
 	require.Equal(t, "28.12.2026–08.01.2027", telegram.DateRange("2026-12-28", "2027-01-08"))
 	require.Equal(t, "", telegram.DateRange("", "2027-01-08"))
+}
+
+// События одной задачи обработаны не по порядку (взятие после отправки на проверку): в группу
+// уходит сообщение о текущем состоянии, а не о последнем обработанном событии.
+func TestGroupEventsOutOfOrder(t *testing.T) {
+	b := newEventBot(t)
+	tk := b.createdCard(t, task.CreateInput{Title: "Порядок"})
+	_, err := b.tasks.Take(context.Background(), b.member, tk.Key)
+	require.NoError(t, err)
+	_, err = b.tasks.Transition(context.Background(), b.member, tk.Key, task.TransitionInput{To: "review"})
+	require.NoError(t, err)
+	by := b.member.ID.String()
+	b.publish(t, events.TaskTransitioned, `{"task_id":"`+tk.ID.String()+`","from":"in_progress","to":"review","by":"`+by+`"}`)
+	b.publish(t, events.TaskTransitioned, `{"task_id":"`+tk.ID.String()+`","from":"todo","to":"in_progress","by":"`+by+`"}`)
+	b.flush(t)
+	sent := b.sent(t)
+	require.Len(t, sent, 1)
+	require.Contains(t, sent[0]["text"], "отправлена на проверку")
+}
+
+// Сбой после сборки сообщения (задание повторяется с начала) не теряет событие: события
+// забываются только после отправки.
+func TestGroupEventSurvivesRetry(t *testing.T) {
+	b := newEventBot(t)
+	tk := b.createdCard(t, task.CreateInput{Title: "Повтор"})
+	_, err := b.tasks.Transition(context.Background(), b.manager, tk.Key, task.TransitionInput{To: "cancelled", Comment: strings.Repeat("я", 600)})
+	require.NoError(t, err)
+	b.events(t)
+	msgs := b.messages(t)
+	b.tg.Respond("sendMessage", `{"ok":false,"error_code":500,"description":"Internal Server Error"}`)
+	for _, m := range msgs {
+		require.NoError(t, b.deliver(t, b.send, m)) // первая попытка не удалась, повтор поставлен
+	}
+	b.flush(t)
+	sent := b.sent(t)
+	require.Len(t, sent, 2, "первая попытка — ответ 500, повтор — тот же текст")
+	require.Equal(t, sent[0], sent[1])
+	require.Equal(t, "❌ "+tk.Key+" «Повтор» отменена — Анна Смирнова: "+strings.Repeat("я", 500)+"…", sent[1]["text"], "длинная причина обрезана")
+	n, err := b.rdb.Exists(context.Background(), "tg:events:"+tk.ID.String()).Result()
+	require.NoError(t, err)
+	require.Zero(t, n, "после отправки события забыты")
 }

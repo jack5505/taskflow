@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -24,8 +23,16 @@ const KindTaskEvent = "task_event"
 // уходит одно сообщение по последнему (§8.6).
 const EventDelay = time.Second
 
-// lastEventTTL — сколько хранить последнее неотправленное событие задачи (с запасом на очередь).
-const lastEventTTL = 10 * time.Minute
+// pendingTTL — сколько хранить неотправленные события задачи (с запасом на простой воркера).
+const pendingTTL = 24 * time.Hour
+
+// maxCommentRunes — сколько символов причины (возврат, отмена) печатать: комментарий бывает до
+// 5000 символов (§3.6), а сообщение Telegram — до 4096.
+const maxCommentRunes = 500
+
+// maxSprintText — предел текста о запуске спринта: длинные названия задач не должны довести его
+// до лимита Telegram 4096 символов (400 «message is too long» не повторяется).
+const maxSprintText = 3500
 
 // maxSprintTasks — сколько свободных задач с кнопками «Взять» перечислять при запуске спринта
 // (как /tasks, §8.5).
@@ -34,9 +41,11 @@ const maxSprintTasks = 20
 // taskEvent — событие задачи, о котором пишем в группу. Kind — шаблон ev_<kind> в texts.go
 // и (через eventSetting) настройка проекта §8.6.
 type taskEvent struct {
-	Kind    string    `json:"kind"`
-	By      uuid.UUID `json:"by"`
-	Comment string    `json:"comment,omitempty"`
+	Kind     string     `json:"kind"`
+	By       uuid.UUID  `json:"by"`
+	Comment  string     `json:"comment,omitempty"`
+	To       string     `json:"to,omitempty"`       // переход: статус после него
+	Assignee *uuid.UUID `json:"assignee,omitempty"` // назначение: кого назначили
 }
 
 // eventSetting — событие → ключ notification_settings проекта (§8.6).
@@ -112,41 +121,41 @@ func (ge *GroupEvents) onTransitioned(ctx context.Context, env events.Envelope) 
 	if kind == "" {
 		return nil
 	}
-	return ge.queue(ctx, p.TaskID, taskEvent{Kind: kind, By: p.By, Comment: p.Comment})
+	return ge.queue(ctx, p.TaskID, taskEvent{Kind: kind, By: p.By, Comment: truncate(p.Comment, maxCommentRunes), To: p.To})
 }
 
 // onAssigned — назначение менеджером (§8.4): «📌 … исполнитель … — назначение: …». Взятие себе
 // task.assigned не публикует — о нём пишет переход.
 func (ge *GroupEvents) onAssigned(ctx context.Context, env events.Envelope) error {
 	var p struct {
-		TaskID uuid.UUID `json:"task_id"`
-		By     uuid.UUID `json:"by"`
+		TaskID     uuid.UUID `json:"task_id"`
+		By         uuid.UUID `json:"by"`
+		AssigneeID uuid.UUID `json:"assignee_id"`
 	}
 	if err := decodePayload(env, &p); err != nil {
 		return err
 	}
-	return ge.queue(ctx, p.TaskID, taskEvent{Kind: "assigned", By: p.By})
+	return ge.queue(ctx, p.TaskID, taskEvent{Kind: "assigned", By: p.By, Assignee: &p.AssigneeID})
 }
 
-func lastEventKey(taskID string) string { return "tg:event:" + taskID }
+func pendingKey(taskID string) string { return "tg:events:" + taskID }
 
-// queue запоминает событие как последнее по задаче и ставит отправку через EventDelay; пока
-// отправка ждёт, следующее событие только заменяет последнее.
+// queue добавляет событие к неотправленным событиям задачи и ставит отправку через EventDelay;
+// события той же секунды второй отправки не ставят.
 func (ge *GroupEvents) queue(ctx context.Context, taskID uuid.UUID, ev taskEvent) error {
 	raw, err := json.Marshal(ev)
 	if err != nil {
 		return fmt.Errorf("telegram: event: %w", err)
 	}
-	if err := ge.rdb.Set(ctx, lastEventKey(taskID.String()), raw, lastEventTTL).Err(); err != nil {
-		return fmt.Errorf("telegram: last event: %w", err)
+	key := pendingKey(taskID.String())
+	pipe := ge.rdb.TxPipeline()
+	pipe.RPush(ctx, key, raw)
+	pipe.Expire(ctx, key, pendingTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("telegram: pending events: %w", err)
 	}
-	return ge.schedule(ctx, taskID.String())
-}
-
-// schedule ставит отправку последнего события задачи через EventDelay; события той же секунды
-// второй отправки не ставят.
-func (ge *GroupEvents) schedule(ctx context.Context, taskID string) error {
-	return ge.out.SendOnce(ctx, Message{Op: OpSend, Kind: KindTaskEvent, Ref: taskID}, EventDelay, Bucket("tg-event:"+taskID, ge.now()))
+	return ge.out.SendOnce(ctx, Message{Op: OpSend, Kind: KindTaskEvent, Ref: taskID.String()}, EventDelay,
+		Bucket("tg-event:"+taskID.String(), ge.now()))
 }
 
 // eventRow — задача и группа для сообщения о событии.
@@ -161,62 +170,77 @@ type eventRow struct {
 	Settings          events.JSON
 	Assignee          *string
 	AssigneeUsername  *string
-	Actor             string
+	Status            string
+	AssigneeID        *uuid.UUID
 }
 
-// render собирает сообщение по последнему событию задачи (KindHooks.Render). Собранное раньше
-// (повтор после ошибки Telegram или ожидания лимита) не пересобирается: последнее событие уже
-// забрано. Нет события, группы, задача удалена или событие выключено в проекте — не отправляем.
+// render собирает одно сообщение по неотправленным событиям задачи (KindHooks.Render): берётся
+// последнее событие, которое совпадает с текущим состоянием задачи (статусом или исполнителем), —
+// обработчики событий могут выполниться не по порядку, а писать нужно о последнем состоянии
+// (§8.6). События не удаляются до отправки (sent): повтор задания найдёт их снова. Собранное
+// сообщение при повторе после ошибки Telegram не пересобирается. Нет группы, задача удалена,
+// событие выключено в проекте или состояние уже другое — события забываются без сообщения.
 func (ge *GroupEvents) render(ctx context.Context, m *Message) (bool, error) {
 	if m.Text != "" {
 		return true, nil
 	}
-	raw, err := ge.rdb.GetDel(ctx, lastEventKey(m.Ref)).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return false, nil
-	}
+	key := pendingKey(m.Ref)
+	list, err := ge.rdb.LRange(ctx, key, 0, -1).Result()
 	if err != nil {
-		return false, fmt.Errorf("telegram: last event: %w", err)
+		return false, fmt.Errorf("telegram: pending events: %w", err)
 	}
-	var ev taskEvent
-	if err := json.Unmarshal(raw, &ev); err != nil {
-		return false, fmt.Errorf("telegram: last event: %w", err)
+	if len(list) == 0 {
+		return false, nil
 	}
 	var r eventRow
 	res := ge.db.WithContext(ctx).Raw(`SELECT t.key, t.title, t.deleted_at IS NOT NULL AS deleted, t.telegram_message_id,
-			t.spent_minutes, t.estimate_minutes,
+			t.spent_minutes, t.estimate_minutes, t.status, t.assignee_id,
 			CASE WHEN p.deleted_at IS NULL THEN p.telegram_chat_id END AS chat_id, p.notification_settings AS settings,
-			a.display_name AS assignee, a.telegram_username AS assignee_username, COALESCE(b.display_name, '') AS actor
+			a.display_name AS assignee, a.telegram_username AS assignee_username
 		FROM tasks t
 		JOIN projects p ON p.id = t.project_id
 		LEFT JOIN users a ON a.id = t.assignee_id
-		LEFT JOIN users b ON b.id = ?
-		WHERE t.id = ?`, ev.By, m.Ref).Scan(&r)
+		WHERE t.id = ?`, m.Ref).Scan(&r)
 	if res.Error != nil {
-		// Событие уже забрано — вернём его, чтобы повтор задания его нашёл.
-		_ = ge.rdb.SetNX(context.WithoutCancel(ctx), lastEventKey(m.Ref), raw, lastEventTTL).Err()
 		return false, fmt.Errorf("telegram: event task: %w", res.Error)
 	}
-	if res.RowsAffected == 0 || r.ChatID == nil || r.Deleted || !project.EffectiveNotifications(r.Settings)[eventSetting[ev.Kind]] {
-		return false, nil
+	var ev *taskEvent
+	for i := len(list) - 1; i >= 0 && ev == nil; i-- {
+		var e taskEvent
+		if json.Unmarshal([]byte(list[i]), &e) != nil {
+			continue
+		}
+		if (e.To != "" && e.To == r.Status) || (e.Assignee != nil && r.AssigneeID != nil && *e.Assignee == *r.AssigneeID) {
+			ev = &e
+		}
 	}
-	data := map[string]any{"Key": r.Key, "Title": r.Title, "Actor": r.Actor, "Comment": ev.Comment,
+	if res.RowsAffected == 0 || ev == nil || r.ChatID == nil || r.Deleted || !project.EffectiveNotifications(r.Settings)[eventSetting[ev.Kind]] {
+		return false, ge.consume(ctx, key, len(list))
+	}
+	var actor string
+	if err := ge.db.WithContext(ctx).Raw(`SELECT display_name FROM users WHERE id = ?`, ev.By).Scan(&actor).Error; err != nil {
+		return false, fmt.Errorf("telegram: event actor: %w", err)
+	}
+	data := map[string]any{"Key": r.Key, "Title": r.Title, "Actor": actor, "Comment": ev.Comment,
 		"Assignee": mention(r.Assignee, r.AssigneeUsername), "Spent": spentText(r.SpentMinutes, r.EstimateMinutes)}
-	m.ChatID, m.Text, m.HTML = *r.ChatID, Text("ev_"+ev.Kind, data), false
+	m.ChatID, m.Text, m.HTML, m.Stamp = *r.ChatID, Text("ev_"+ev.Kind, data), false, len(list)
 	if r.TelegramMessageID != nil {
 		m.ReplyTo = *r.TelegramMessageID // ответом на карточку задачи (§8.6)
 	}
 	return true, nil
 }
 
-// sent — пока сообщение собиралось и отправлялось, могло прийти новое событие той же секунды,
-// а его задание не поставилось: тогда ставим отправку ещё раз.
+// sent — сообщение ушло: события, по которым оно собрано, забываются; пришедшие за это время
+// остаются для своего задания.
 func (ge *GroupEvents) sent(ctx context.Context, m Message, _ *models.Message) error {
-	n, err := ge.rdb.Exists(ctx, lastEventKey(m.Ref)).Result()
-	if err != nil || n == 0 {
-		return err
+	return ge.consume(ctx, pendingKey(m.Ref), m.Stamp)
+}
+
+func (ge *GroupEvents) consume(ctx context.Context, key string, n int) error {
+	if err := ge.rdb.LTrim(ctx, key, int64(n), -1).Err(); err != nil {
+		return fmt.Errorf("telegram: pending events: %w", err)
 	}
-	return ge.schedule(ctx, m.Ref)
+	return nil
 }
 
 // onComment — «💬 Иван Петров к TM-42: <первые 200 символов>» (§8.6, по умолчанию выключено).
@@ -297,7 +321,7 @@ func (ge *GroupEvents) onSprintStarted(ctx context.Context, env events.Envelope)
 	}
 	if err := ge.db.WithContext(ctx).Raw(`SELECT id, key, title FROM tasks
 		WHERE sprint_id = ? AND status = 'todo' AND assignee_id IS NULL AND deleted_at IS NULL
-		ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, position, key
+		ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, position, number
 		LIMIT ?`, p.SprintID, maxSprintTasks+1).Scan(&free).Error; err != nil {
 		return fmt.Errorf("telegram: sprint free tasks: %w", err)
 	}
@@ -306,16 +330,21 @@ func (ge *GroupEvents) onSprintStarted(ctx context.Context, env events.Envelope)
 		free = free[:maxSprintTasks]
 	}
 	type item struct{ Key, Title string }
-	items := make([]item, len(free))
+	var items []item
 	var kb [][]models.InlineKeyboardButton
+	data := map[string]any{"Name": p.Name, "Dates": dateRange(p.StartDate, p.EndDate),
+		"Tasks": plural(p.Tasks, "задача", "задачи", "задач"), "Estimate": duration.Format(p.EstimateMinutes), "More": more}
 	for i, t := range free {
-		items[i] = item{t.Key, t.Title}
-		kb = append(kb, []models.InlineKeyboardButton{{Text: Text("button_take_key", t.Key), CallbackData: ActionTake + ":" + t.ID.String()}})
+		next := append(items, item{t.Key, truncate(t.Title, 100)})
+		data["Free"] = next
+		if len(Text("ev_sprint_started", data)) > maxSprintText {
+			data["Free"], data["More"] = items, true
+			break
+		}
+		items = next
+		kb = append(kb, []models.InlineKeyboardButton{{Text: Text("button_take_key", free[i].Key), CallbackData: ActionTake + ":" + t.ID.String()}})
 	}
-	m := Message{Op: OpSend, ChatID: chatID, Text: Text("ev_sprint_started", map[string]any{
-		"Name": p.Name, "Dates": dateRange(p.StartDate, p.EndDate), "Tasks": plural(p.Tasks, "задача", "задачи", "задач"),
-		"Estimate": duration.Format(p.EstimateMinutes), "Free": items, "More": more,
-	})}
+	m := Message{Op: OpSend, ChatID: chatID, Text: Text("ev_sprint_started", data)}
 	if len(kb) > 0 {
 		m.Keyboard = &models.InlineKeyboardMarkup{InlineKeyboard: kb}
 	}
@@ -398,4 +427,13 @@ func plural(n int, one, few, many string) string {
 		form = few
 	}
 	return fmt.Sprintf("%d %s", n, form)
+}
+
+// truncate — не больше n символов, с «…» при обрезке.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
