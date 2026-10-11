@@ -122,7 +122,7 @@ func TestTakeCommand(t *testing.T) {
 	b.messages(t)
 
 	b.command(memberTG, b.chat, "/take "+strings.ToLower(t1.Key))
-	b.command(memberTG, b.chat, "/take@TaskBot "+strings.TrimPrefix(t2.Key, b.p.Key+"-"))
+	b.command(memberTG, b.chat, "/take@TaskBot 0"+strings.TrimPrefix(t2.Key, b.p.Key+"-"))
 	for _, tk := range []*task.Task{t1, t2} {
 		status, name := b.assignee(t, tk)
 		require.Equal(t, "in_progress", status)
@@ -138,7 +138,9 @@ func TestTakeCommand(t *testing.T) {
 		return msgs[0]
 	}
 	b.command(memberTG, b.chat, "/take "+t1.Key)
-	require.Empty(t, b.messages(t), "своя задача уже в работе — повтор без изменений и без ответа")
+	again := b.messages(t)
+	require.Len(t, again, 1, "своя задача уже в работе — повтор без изменений, подтверждение временным ответом")
+	require.Equal(t, 30, again[0].DeleteAfter)
 	m := reply(memberTG, b.chat, "/take 999")
 	require.Equal(t, 30, m.DeleteAfter, "отказ в группе удаляется через 30 секунд")
 	require.Equal(t, 70, m.ReplyTo)
@@ -148,7 +150,7 @@ func TestTakeCommand(t *testing.T) {
 	require.Equal(t, "Задача "+t2.Key+" в статусе На проверке, взять нельзя", reply(memberTG, b.chat, "/take "+t2.Key).Text)
 	require.Equal(t, "Задача "+b.p.Key+"-999 не найдена", reply(memberTG, b.chat, "/take 999").Text)
 	require.Equal(t, "Формат: /take TM-42", reply(memberTG, b.chat, "/take").Text)
-	require.Equal(t, "Задача ZZ-1 не найдена", reply(memberTG, b.chat, "/take ZZ-1").Text, "проект не этой группы")
+	require.Equal(t, "Вы не участник проекта ZZ", reply(memberTG, b.chat, "/take ZZ-1").Text, "проект не этой группы (§8.4, шаг 2)")
 
 	_, outsiderTG := b.linked(t, "Посторонний")
 	require.Equal(t, "Вы не участник проекта "+b.p.Key, reply(outsiderTG, b.chat, "/take "+t1.Key).Text)
@@ -208,4 +210,27 @@ func TestTakeButtonPrivate(t *testing.T) {
 	require.Equal(t, "🛠 "+tk.Key+" «Личная» взята в работу", answers["cb-1"][0])
 	require.Equal(t, [2]string{"Задача не найдена", "true"}, answers["cb-2"])
 	require.Equal(t, [2]string{"Задача не найдена", "true"}, answers["cb-3"])
+}
+
+// Успех в группе без сообщения о событии (событие «взята в работу» выключено в проекте или задача
+// уже была в работе без исполнителя) — бот отвечает сам временным ответом.
+func TestTakeReplyWhenNotAnnounced(t *testing.T) {
+	b := newTakeBot(t)
+	memberTG := b.tgOf(t, b.member)
+	t1 := b.createdCard(t, task.CreateInput{Title: "В работе без исполнителя"})
+	require.NoError(t, b.g.Exec(`UPDATE tasks SET status = 'in_progress' WHERE id = ?`, t1.ID).Error)
+	b.messages(t)
+	b.command(memberTG, b.chat, "/take "+t1.Key)
+	msgs := b.messages(t)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "🛠 "+t1.Key+" «В работе без исполнителя» взята в работу", msgs[0].Text)
+	require.Equal(t, 30, msgs[0].DeleteAfter)
+
+	require.NoError(t, b.g.Model(b.p).Update("notification_settings", `{"task_taken":false}`).Error)
+	t2 := b.createdCard(t, task.CreateInput{Title: "Тихо"})
+	b.messages(t)
+	b.command(memberTG, b.chat, "/take "+t2.Key)
+	msgs = b.messages(t)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "🛠 "+t2.Key+" «Тихо» взята в работу", msgs[0].Text)
 }

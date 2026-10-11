@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 )
@@ -40,64 +43,92 @@ var (
 	numberRe  = regexp.MustCompile(`^\d+$`)
 )
 
-// taskRef — задача, на которую указывает аргумент команды: ключ и проект.
+// taskRef — задача, на которую указывает аргумент команды: ключ, проект и (в группе) проекты
+// этой группы.
 type taskRef struct {
 	Key        string
 	ProjectKey string
+	chat       []project.Project
+	inGroup    bool
+}
+
+// inGroup — команда или кнопка в группе. Нажатие без сообщения (чат неизвестен) — как в личном.
+func inGroup(r *Request) bool {
+	return r.Chat.Type == models.ChatTypeGroup || r.Chat.Type == models.ChatTypeSupergroup
+}
+
+// newRef — ключ задачи из проекта и номера; «007» — это задача 7.
+func newRef(projectKey, number string) *taskRef {
+	n, _ := strconv.Atoi(number)
+	pk := strings.ToUpper(projectKey)
+	return &taskRef{Key: pk + "-" + strconv.Itoa(n), ProjectKey: pk}
 }
 
 // resolveKey разбирает ключ задачи из аргумента (§8.5): «TM-42» в любом регистре; в группе,
-// к которой привязан ровно один проект, — и просто «42». Пустой ref — ответ пользователю уже
+// к которой привязан ровно один проект, — и просто «42». nil — ответ пользователю уже
 // отправлен (формат, подсказка со списком проектов группы). usage — «Формат: …» команды.
 func (tc *TaskCommands) resolveKey(ctx context.Context, r *Request, arg, usage string) (*taskRef, error) {
 	arg = strings.TrimSpace(arg)
+	var ref *taskRef
 	if m := fullKeyRe.FindStringSubmatch(arg); m != nil {
-		pk := strings.ToUpper(m[1])
-		return &taskRef{Key: pk + "-" + m[2], ProjectKey: pk}, nil
-	}
-	if !numberRe.MatchString(arg) || r.Private() {
+		ref = newRef(m[1], m[2])
+	} else if !numberRe.MatchString(arg) || !inGroup(r) {
 		return nil, r.Answer(ctx, Text("cmd_usage", usage), true)
+	}
+	if !inGroup(r) {
+		return ref, nil
 	}
 	ps, err := tc.groups.ChatProjects(ctx, r.Chat.ID)
 	if err != nil {
 		return nil, err
 	}
-	switch len(ps) {
-	case 0:
-		return nil, r.Answer(ctx, Text("group_no_projects", nil), true)
-	case 1:
-		return &taskRef{Key: ps[0].Key + "-" + arg, ProjectKey: ps[0].Key}, nil
+	if ref == nil {
+		switch len(ps) {
+		case 0:
+			return nil, r.Answer(ctx, Text("group_no_projects", nil), true)
+		case 1:
+			ref = newRef(ps[0].Key, arg)
+		default:
+			return nil, r.Answer(ctx, Text("cmd_choose_project", map[string]any{"Projects": ps, "Cmd": "/" + r.Command, "Num": arg}), true)
+		}
 	}
-	return nil, r.Answer(ctx, Text("cmd_choose_project", map[string]any{"Projects": ps, "Cmd": "/" + r.Command, "Num": arg}), true)
+	ref.chat, ref.inGroup = ps, true
+	return ref, nil
 }
 
-// checkAccess — §8.4, шаг 2: в группе задача должна быть из проекта этой группы, а пользователь —
-// участником проекта («Вы не участник проекта TM»). В личном чате о чужом проекте не
-// говорим — «не найдена», как ответил бы сервис. false — ответ уже отправлен.
-func (tc *TaskCommands) checkAccess(ctx context.Context, r *Request, ref *taskRef) (bool, error) {
-	if !r.Private() {
-		ps, err := tc.groups.ChatProjects(ctx, r.Chat.ID)
-		if err != nil {
-			return false, err
-		}
-		inGroup := false
-		for _, p := range ps {
-			inGroup = inGroup || p.Key == ref.ProjectKey
-		}
-		if !inGroup {
-			return false, r.Answer(ctx, Text("cmd_task_not_found", ref), true)
+// inChat — §8.4, шаг 2: в группе задача должна быть из проекта этой группы.
+func (ref *taskRef) inChat() bool {
+	if !ref.inGroup {
+		return true
+	}
+	for _, p := range ref.chat {
+		if p.Key == ref.ProjectKey {
+			return true
 		}
 	}
-	_, err := tc.projects.Access(ctx, r.User, ref.ProjectKey)
-	switch {
-	case errors.Is(err, project.ErrNotFound) && !r.Private():
-		return false, r.Answer(ctx, Text("not_project_member", ref), true)
-	case errors.Is(err, project.ErrNotFound):
-		return false, r.Answer(ctx, Text("cmd_task_not_found", ref), true)
-	case err != nil:
-		return false, err
+	return false
+}
+
+// refuse — отказ по шагу 2 §8.4 или ошибке сервиса: всплывающим окном у кнопки, ответом,
+// который в группе удаляется через 30 секунд, у команды. В группе «не найдена» уточняется:
+// если пользователь не участник проекта — «Вы не участник проекта TM». Права проверяет сервис
+// под блокировкой; здесь — только выбор текста отказа.
+func (tc *TaskCommands) refuse(ctx context.Context, r *Request, ref *taskRef, err error) error {
+	if ref.inGroup && (err == nil || errors.Is(err, task.ErrNotFound)) {
+		if _, aerr := tc.projects.Access(ctx, r.User, ref.ProjectKey); errors.Is(aerr, project.ErrNotFound) {
+			return r.Answer(ctx, Text("not_project_member", ref), true)
+		} else if aerr != nil {
+			return aerr
+		}
+		if err == nil { // участник, но проект не этой группы
+			return r.Answer(ctx, Text("not_project_member", ref), true)
+		}
 	}
-	return true, nil
+	text, ferr := taskErrorText(ref, err)
+	if ferr != nil {
+		return ferr
+	}
+	return r.Answer(ctx, text, true)
 }
 
 // takeCommand — /take <ключ> в группе или личном чате (§8.4, §8.5).
@@ -116,39 +147,75 @@ func (tc *TaskCommands) takeButton(ctx context.Context, r *Request) error {
 	if err != nil {
 		return r.Answer(ctx, Text("p_task_not_found", nil), true)
 	}
-	var keys []string
-	if err := tc.db.WithContext(ctx).Raw(`SELECT key FROM tasks WHERE id = ? AND deleted_at IS NULL`, id).Scan(&keys).Error; err != nil {
-		return fmt.Errorf("telegram: task by id: %w", err)
-	}
-	if len(keys) == 0 {
+	key, err := tc.tasks.KeyByID(ctx, id)
+	if errors.Is(err, task.ErrNotFound) {
 		return r.Answer(ctx, Text("p_task_not_found", nil), true)
 	}
-	pk, _, _ := strings.Cut(keys[0], "-")
-	return tc.take(ctx, r, &taskRef{Key: keys[0], ProjectKey: pk})
+	if err != nil {
+		return err
+	}
+	pk, number, _ := strings.Cut(key, "-")
+	ref := newRef(pk, number)
+	if inGroup(r) {
+		if ref.chat, err = tc.groups.ChatProjects(ctx, r.Chat.ID); err != nil {
+			return err
+		}
+		ref.inGroup = true
+	}
+	return tc.take(ctx, r, ref)
 }
 
 // take — §8.4, шаги 2–5: переход todo → in_progress сервисом в одной транзакции с блокировкой
-// строки задачи (из двух одновременных нажатий задачу получает ровно один). Отказ — всплывающим
-// уведомлением у кнопки или ответом, который в группе удаляется через 30 секунд. Успех в группе
-// виден сразу: карточка правится, а «🛠 … взята в работу — …» публикуется ответом на неё —
-// по событиям задачи, как при взятии из веба (§8.6).
+// строки задачи (из двух одновременных нажатий задачу получает ровно один). Успех в группе
+// обычно виден сразу: карточка правится, а «🛠 … взята в работу — …» публикуется ответом на
+// неё — по событию задачи, как при взятии из веба (§8.6). Если такого сообщения не будет
+// (событие выключено в проекте или задача уже была в работе без исполнителя), бот отвечает сам
+// временным ответом; у кнопки и в личном чате — ответом всегда.
 func (tc *TaskCommands) take(ctx context.Context, r *Request, ref *taskRef) error {
-	ok, err := tc.checkAccess(ctx, r, ref)
-	if !ok || err != nil {
+	if !ref.inChat() {
+		return tc.refuse(ctx, r, ref, nil)
+	}
+	before, err := tc.status(ctx, ref.Key)
+	if err != nil {
 		return err
 	}
 	t, err := tc.tasks.Take(ctx, r.User, ref.Key)
 	if err != nil {
-		text, ferr := taskErrorText(ref, err)
-		if ferr != nil {
-			return ferr
-		}
-		return r.Answer(ctx, text, true)
+		return tc.refuse(ctx, r, ref, err)
 	}
-	if r.Private() || r.IsCallback() {
+	if !ref.inGroup || r.IsCallback() {
 		return r.Answer(ctx, Text("taken_reply", t), false)
 	}
-	return nil // в группе ответ — сообщение о событии под карточкой
+	announced, err := tc.announced(ctx, ref.ProjectKey, project.NotifyTaskTaken)
+	if err != nil {
+		return err
+	}
+	if before == task.StatusTodo && announced {
+		return nil
+	}
+	return r.ReplyTemp(ctx, Text("taken_reply", t))
+}
+
+// status — статус задачи до действия (выбор ответа, не проверка прав).
+func (tc *TaskCommands) status(ctx context.Context, key string) (string, error) {
+	var st []string
+	if err := tc.db.WithContext(ctx).Raw(`SELECT status FROM tasks WHERE key = ?`, key).Scan(&st).Error; err != nil {
+		return "", fmt.Errorf("telegram: task status: %w", err)
+	}
+	if len(st) == 0 {
+		return "", nil
+	}
+	return st[0], nil
+}
+
+// announced — включено ли событие setting (§8.6) в проекте: тогда об успехе в группе напишет
+// сообщение о событии.
+func (tc *TaskCommands) announced(ctx context.Context, projectKey, setting string) (bool, error) {
+	var raw []events.JSON
+	if err := tc.db.WithContext(ctx).Raw(`SELECT notification_settings FROM projects WHERE key = ?`, projectKey).Scan(&raw).Error; err != nil {
+		return false, fmt.Errorf("telegram: project settings: %w", err)
+	}
+	return len(raw) == 1 && project.EffectiveNotifications(raw[0])[setting], nil
 }
 
 // taskErrorText — ответ на отказ сервиса задач (§8.4, §8.5, §9.3); ошибка сервера — err.
