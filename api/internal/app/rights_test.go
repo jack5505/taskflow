@@ -183,6 +183,23 @@ func TestRightsTable(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: удалять чужие вложения — нет")
 	rec = w.upload(taskPath, w.outsider)
 	require.Equal(t, http.StatusNotFound, rec.Code, "посторонний не добавляет вложения")
+	// Время (§2, §6): исполнитель — только на свои задачи; чужие записи — менеджер.
+	rec = w.do("POST", taskPath+"/worklogs", w.member, `{"duration":"1h"}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: списывать время на чужую задачу — нет")
+	rec = w.do("POST", taskPath+"/worklogs", w.manager, `{"duration":"1h"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, "менеджер: списывать время на любую задачу — да; %s", rec.Body.String())
+	var worklog struct{ ID string }
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &worklog))
+	rec = w.do("PATCH", "/api/v1/worklogs/"+worklog.ID, w.member, `{"duration":"2h"}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: редактировать чужие записи времени — нет")
+	rec = w.do("DELETE", "/api/v1/worklogs/"+worklog.ID, w.member, "")
+	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: удалять чужие записи времени — нет")
+	rec = w.do("PATCH", "/api/v1/worklogs/"+worklog.ID, w.outsider, `{"duration":"2h"}`)
+	require.Equal(t, http.StatusNotFound, rec.Code, "посторонний не видит записи времени")
+	rec = w.do("POST", taskPath+"/worklogs", w.admin, `{"duration":"1h"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, "администратор: списывать время — да")
+	rec = w.do("PATCH", "/api/v1/worklogs/"+worklog.ID, w.admin, `{"duration":"2h"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "администратор: редактировать чужие записи — да")
 
 	// Пользователь без роли в проекте не видит его ни через один маршрут проекта — 404.
 	for _, r := range []row{
@@ -190,6 +207,8 @@ func TestRightsTable(t *testing.T) {
 		{"Карточка задачи", "GET", taskPath, ""},
 		{"История задачи", "GET", taskPath + "/history", ""},
 		{"Вложения задачи", "GET", taskPath + "/attachments", ""},
+		{"Записи времени задачи", "GET", taskPath + "/worklogs", ""},
+		{"Списать время", "POST", taskPath + "/worklogs", `{"duration":"1h"}`},
 		{"Список задач", "GET", proj + "/tasks", ""},
 		{"Карточка проекта", "GET", proj, ""},
 		{"Изменение проекта", "PATCH", proj, `{"name":"X"}`},

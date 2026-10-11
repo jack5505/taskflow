@@ -601,6 +601,41 @@ definitions:
       version:
         type: integer
     type: object
+  task.WorklogView:
+    properties:
+      comment:
+        type: string
+      created_at:
+        type: string
+      duration:
+        example: 2h 30m
+        type: string
+      hours:
+        example: "2.50"
+        type: string
+      id:
+        type: string
+      minutes:
+        example: 150
+        type: integer
+      source:
+        enum:
+        - manual
+        - timer
+        - telegram
+        type: string
+      task_id:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+      user_name:
+        type: string
+      work_date:
+        example: "2026-10-11"
+        type: string
+    type: object
   task.commentRequest:
     properties:
       body:
@@ -718,6 +753,35 @@ definitions:
         - task
         - bug
         - feature
+        type: string
+    type: object
+  task.worklogPatchRequest:
+    properties:
+      comment:
+        type: string
+        x-nullable: true
+      duration:
+        example: 1h 15m
+        type: string
+      work_date:
+        example: "2026-10-10"
+        type: string
+    type: object
+  task.worklogRequest:
+    properties:
+      comment:
+        description: до 500 символов
+        example: Разбор логов
+        type: string
+        x-nullable: true
+      duration:
+        description: '§6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h'
+        example: 2h 30m
+        type: string
+      work_date:
+        description: по умолчанию сегодня по поясу пользователя
+        example: "2026-10-11"
+        format: date
         type: string
     type: object
   user.User:
@@ -2329,6 +2393,90 @@ paths:
       summary: Сменить статус
       tags:
       - tasks
+  /api/v1/tasks/{task_key}/worklogs:
+    get:
+      description: Новые сверху (по дате работы). Участник проекта; записи удалённой
+        задачи — администратор системы.
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/task.WorklogView'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Записи времени задачи
+      tags:
+      - worklogs
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Исполнитель задачи или менеджер проекта (§2), запись — от имени текущего пользователя (source manual, через бота — telegram).
+        duration — §6.1 («2h 30m», «45m», «3h», «1d» = 8h), от 1m до 24h, иначе 400 INVALID_DURATION. work_date — не позже сегодня и не раньше даты создания задачи по поясу пользователя (§3.5).
+        Сумма записей пользователя за дату по всем задачам — не больше 24 часов (§6.3), иначе 409 DAILY_LIMIT_EXCEEDED (в details used_minutes и available_minutes).
+        Отменённая задача и задача закрытого спринта (§4, §6.5) — 409 INVALID_TRANSITION. spent_minutes задачи пересчитывается, version не меняется. Событие worklog.created.
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      - description: запись
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.worklogRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/task.WorklogView'
+        "400":
+          description: INVALID_DURATION, VALIDATION_FAILED (work_date, comment), INVALID_JSON
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не исполнитель и не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: DAILY_LIMIT_EXCEEDED, INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Списать время
+      tags:
+      - worklogs
   /api/v1/users:
     get:
       description: Администратору — все пользователи целиком (user.User). Менеджеру
@@ -2445,6 +2593,90 @@ paths:
       summary: Изменить пользователя
       tags:
       - users
+  /api/v1/worklogs/{id}:
+    delete:
+      description: Права и сроки — как у правки (§6.5); удаление чужой записи — в
+        журнал аудита (§3.8). spent_minutes задачи пересчитывается. Событие worklog.deleted.
+      parameters:
+      - description: id записи
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: чужая запись или прошло 7 дней'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: 'INVALID_TRANSITION: закрытый спринт; PROJECT_ARCHIVED'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Удалить запись времени
+      tags:
+      - worklogs
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Автор — в течение 7 календарных дней после work_date, менеджер проекта — любую без срока (§6.5). Правка чужой записи пишется в журнал аудита (§3.8).
+        Ограничения полей и дневной лимит — как при создании; день и лимит — по поясу владельца записи. Задача закрытого спринта — 409 INVALID_TRANSITION. Событие worklog.updated.
+      parameters:
+      - description: id записи
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: изменяемые поля
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.worklogPatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.WorklogView'
+        "400":
+          description: INVALID_DURATION, VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: чужая запись или прошло 7 дней'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: DAILY_LIMIT_EXCEEDED, INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Изменить запись времени
+      tags:
+      - worklogs
   /health:
     get:
       description: Проверяет PostgreSQL и Redis. 200 — всё доступно, 503 — есть недоступный

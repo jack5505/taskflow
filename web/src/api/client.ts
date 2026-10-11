@@ -340,6 +340,25 @@ export interface TaskTask {
   version?: number;
 }
 
+export interface TaskWorklogView {
+  comment?: string;
+  created_at?: string;
+  /** @example "2h 30m" */
+  duration?: string;
+  /** @example "2.50" */
+  hours?: string;
+  id?: string;
+  /** @example 150 */
+  minutes?: number;
+  source?: "manual" | "timer" | "telegram";
+  task_id?: string;
+  updated_at?: string;
+  user_id?: string;
+  user_name?: string;
+  /** @example "2026-10-11" */
+  work_date?: string;
+}
+
 export interface TaskCommentRequest {
   /**
    * 1–5000 после обрезки пробелов — сервис
@@ -398,6 +417,33 @@ export interface TaskUpdateRequest {
   sprint_id?: string | null;
   title?: string;
   type?: "task" | "bug" | "feature";
+}
+
+export interface TaskWorklogPatchRequest {
+  comment?: string | null;
+  /** @example "1h 15m" */
+  duration?: string;
+  /** @example "2026-10-10" */
+  work_date?: string;
+}
+
+export interface TaskWorklogRequest {
+  /**
+   * до 500 символов
+   * @example "Разбор логов"
+   */
+  comment?: string | null;
+  /**
+   * §6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h
+   * @example "2h 30m"
+   */
+  duration?: string;
+  /**
+   * по умолчанию сегодня по поясу пользователя
+   * @format date
+   * @example "2026-10-11"
+   */
+  work_date?: string;
 }
 
 export interface UserUser {
@@ -1581,6 +1627,48 @@ export class Api<
       }),
 
     /**
+     * @description Новые сверху (по дате работы). Участник проекта; записи удалённой задачи — администратор системы.
+     *
+     * @tags worklogs
+     * @name V1TasksWorklogsList
+     * @summary Записи времени задачи
+     * @request GET:/api/v1/tasks/{task_key}/worklogs
+     * @secure
+     */
+    v1TasksWorklogsList: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskWorklogView[], ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/worklogs`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Исполнитель задачи или менеджер проекта (§2), запись — от имени текущего пользователя (source manual, через бота — telegram). duration — §6.1 («2h 30m», «45m», «3h», «1d» = 8h), от 1m до 24h, иначе 400 INVALID_DURATION. work_date — не позже сегодня и не раньше даты создания задачи по поясу пользователя (§3.5). Сумма записей пользователя за дату по всем задачам — не больше 24 часов (§6.3), иначе 409 DAILY_LIMIT_EXCEEDED (в details used_minutes и available_minutes). Отменённая задача и задача закрытого спринта (§4, §6.5) — 409 INVALID_TRANSITION. spent_minutes задачи пересчитывается, version не меняется. Событие worklog.created.
+     *
+     * @tags worklogs
+     * @name V1TasksWorklogsCreate
+     * @summary Списать время
+     * @request POST:/api/v1/tasks/{task_key}/worklogs
+     * @secure
+     */
+    v1TasksWorklogsCreate: (
+      taskKey: string,
+      body: TaskWorklogRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskWorklogView, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/worklogs`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
      * @description Администратору — все пользователи целиком (user.User). Менеджеру проекта — только активные и только id, email, display_name (user.Brief) — для добавления в проект.
      *
      * @tags users
@@ -1634,6 +1722,47 @@ export class Api<
     ) =>
       this.request<UserUser, ApierrResponse>({
         path: `/api/v1/users/${id}`,
+        method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Права и сроки — как у правки (§6.5); удаление чужой записи — в журнал аудита (§3.8). spent_minutes задачи пересчитывается. Событие worklog.deleted.
+     *
+     * @tags worklogs
+     * @name V1WorklogsDelete
+     * @summary Удалить запись времени
+     * @request DELETE:/api/v1/worklogs/{id}
+     * @secure
+     */
+    v1WorklogsDelete: (id: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/worklogs/${id}`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Автор — в течение 7 календарных дней после work_date, менеджер проекта — любую без срока (§6.5). Правка чужой записи пишется в журнал аудита (§3.8). Ограничения полей и дневной лимит — как при создании; день и лимит — по поясу владельца записи. Задача закрытого спринта — 409 INVALID_TRANSITION. Событие worklog.updated.
+     *
+     * @tags worklogs
+     * @name V1WorklogsPartialUpdate
+     * @summary Изменить запись времени
+     * @request PATCH:/api/v1/worklogs/{id}
+     * @secure
+     */
+    v1WorklogsPartialUpdate: (
+      id: string,
+      body: TaskWorklogPatchRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskWorklogView, ApierrResponse>({
+        path: `/api/v1/worklogs/${id}`,
         method: "PATCH",
         body: body,
         secure: true,
