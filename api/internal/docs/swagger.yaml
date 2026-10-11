@@ -100,6 +100,107 @@ definitions:
     - password
     - token
     type: object
+  me.MyProject:
+    properties:
+      id:
+        type: string
+      is_archived:
+        type: boolean
+      key:
+        type: string
+      name:
+        type: string
+      role:
+        enum:
+        - manager
+        - member
+        type: string
+    type: object
+  me.Profile:
+    properties:
+      created_at:
+        type: string
+      display_name:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      is_system_admin:
+        type: boolean
+      notification_settings:
+        additionalProperties:
+          type: boolean
+        type: object
+      projects:
+        items:
+          $ref: '#/definitions/me.MyProject'
+        type: array
+      telegram_user_id:
+        type: integer
+      telegram_username:
+        type: string
+      timer:
+        type: object
+      timezone:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  me.Update:
+    properties:
+      display_name:
+        maxLength: 200
+        type: string
+      notification_settings:
+        additionalProperties:
+          type: boolean
+        type: object
+      timezone:
+        example: Europe/Moscow
+        maxLength: 64
+        type: string
+    type: object
+  me.readRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        type: array
+    type: object
+  me.readResponse:
+    properties:
+      marked:
+        type: integer
+    type: object
+  notification.Notification:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      payload:
+        type: object
+      read_at:
+        type: string
+      task_id:
+        type: string
+      type:
+        type: string
+    type: object
+  notification.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/notification.Notification'
+        type: array
+      next_cursor:
+        type: string
+      unread_count:
+        type: integer
+    type: object
   project.MemberView:
     properties:
       display_name:
@@ -410,6 +511,130 @@ paths:
       summary: Обновить access-токен
       tags:
       - auth
+  /api/v1/me:
+    get:
+      description: Текущий пользователь, его личные уведомления §8.7 (все ключи, с
+        умолчаниями), проекты и роли, запущенный таймер (пока всегда null — появится
+        вместе с таймером).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/me.Profile'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Профиль
+      tags:
+      - me
+    patch:
+      consumes:
+      - application/json
+      description: 'Меняются только переданные поля. notification_settings — частичный
+        объект личных уведомлений §8.7: assigned, rework, accepted_cancelled, comment,
+        review_requested, due, timer_auto_stopped, worklog_trimmed, task_deleted,
+        membership.'
+      parameters:
+      - description: поля профиля
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/me.Update'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/me.Profile'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Изменить профиль
+      tags:
+      - me
+  /api/v1/me/notifications:
+    get:
+      description: Уведомления колокольчика за 30 дней, новые первыми. unread_count
+        — только на первой странице (без cursor). Следующая страница — cursor из next_cursor.
+      parameters:
+      - description: только непрочитанные
+        in: query
+        name: unread
+        type: boolean
+      - description: до 200, по умолчанию 50
+        in: query
+        name: limit
+        type: integer
+      - description: курсор следующей страницы
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/notification.Page'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Уведомления
+      tags:
+      - me
+  /api/v1/me/notifications/read:
+    post:
+      consumes:
+      - application/json
+      description: ids — какие отметить (до 200); без ids или пустой список — все.
+        Чужие id игнорируются.
+      parameters:
+      - description: id уведомлений
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/me.readRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/me.readResponse'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отметить уведомления прочитанными
+      tags:
+      - me
   /api/v1/ping:
     get:
       produces:

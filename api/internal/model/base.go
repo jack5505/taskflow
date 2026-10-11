@@ -75,3 +75,12 @@ func (t *TimeOfDay) parse(s string) error {
 	}
 	return fmt.Errorf("TimeOfDay: не разобрать %q", s)
 }
+
+// ValidTimezone — пояс IANA, который можно загрузить (tzdata в образе). "Local" и пустой — нет.
+func ValidTimezone(tz string) bool {
+	if tz == "" || tz == "Local" {
+		return false
+	}
+	_, err := time.LoadLocation(tz)
+	return err == nil
+}

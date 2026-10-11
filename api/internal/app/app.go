@@ -10,6 +10,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
+	"github.com/jack5505/taskflow/api/internal/me"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/users"
 )
@@ -22,5 +23,6 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 	return httpserver.New(cfg, g, rdb).
 		Mount(authH.Register).
 		Mount(users.NewHandlers(users.NewService(g, authSvc), requireAuth).Register).
-		Mount(project.NewHandlers(project.NewService(g), requireAuth).Register)
+		Mount(project.NewHandlers(project.NewService(g), requireAuth).Register).
+		Mount(me.NewHandlers(me.NewService(g), requireAuth).Register)
 }
