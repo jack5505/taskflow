@@ -2,6 +2,8 @@ package loadgen_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +55,15 @@ func TestGenerateSmall(t *testing.T) {
 		today.Format(time.DateOnly), today.Format(time.DateOnly)))
 	require.EqualValues(t, 0, q(`SELECT count(*) FROM tasks t WHERE spent_minutes <>
 		(SELECT COALESCE(SUM(minutes), 0) FROM worklogs w WHERE w.task_id = t.id)`))
+	// Время списывают и задачи получают только участники проекта задачи; за день у пользователя не
+	// больше 24h (§6.3).
+	require.EqualValues(t, 0, q(`SELECT count(*) FROM worklogs w JOIN tasks t ON t.id = w.task_id
+		WHERE NOT EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = t.project_id AND m.user_id = w.user_id)`))
+	require.EqualValues(t, 0, q(`SELECT count(*) FROM tasks t WHERE assignee_id IS NOT NULL
+		AND NOT EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = t.project_id AND m.user_id = t.assignee_id)`))
+	require.EqualValues(t, 803, q(`SELECT count(*) FROM tasks WHERE assignee_id IS NOT NULL`), "без исполнителя — каждая пятая")
+	require.EqualValues(t, 0, q(`SELECT count(*) FROM (SELECT 1 FROM worklogs GROUP BY user_id, work_date HAVING sum(minutes) > 1440) d`))
+	require.Greater(t, q(`SELECT count(DISTINCT user_id) FROM worklogs`), int64(20), "записи по многим пользователям")
 	// Счётчик проекта — последний номер, ключи вида LAA-1; новая задача получит следующий номер.
 	require.EqualValues(t, 0, q(`SELECT count(*) FROM projects p WHERE task_counter <>
 		(SELECT max(number) FROM tasks t WHERE t.project_id = p.id)`))
@@ -90,6 +101,32 @@ func TestGenerateSmall(t *testing.T) {
 	// Повторный запуск не смешивает данные.
 	require.ErrorIs(t, loadgen.Generate(ctx, g, p, func(string, ...any) {}), loadgen.ErrNotEmpty)
 	require.EqualValues(t, 30, q(`SELECT count(*) FROM users`))
+}
+
+// Прерванная генерация (Ctrl+C) не оставляет на соединении пула режим replica и временные таблицы.
+func TestGenerateCancelledLeavesConnectionClean(t *testing.T) {
+	g, _ := testutil.TempDB(t)
+	sqlDB, err := g.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1) // дальше — то же соединение, на котором шла генерация
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := loadgen.Params{Users: 10, Projects: 2, Tasks: 1000, Worklogs: 20_000_000, PasswordHash: "x", Today: today}
+	err = loadgen.Generate(ctx, g, p, func(_ string, args ...any) {
+		// Сразу после t_map: следующий шаг — запись миллионов строк, её и прерываем.
+		if len(args) > 0 && strings.HasPrefix(fmt.Sprint(args[0]), "CREATE TEMP TABLE t_map") {
+			go func() { time.Sleep(200 * time.Millisecond); cancel() }()
+		}
+	})
+	require.ErrorIs(t, err, context.Canceled)
+
+	var role string
+	require.NoError(t, g.Raw(`SHOW session_replication_role`).Scan(&role).Error)
+	require.Equal(t, "origin", role)
+	var temps int64
+	require.NoError(t, g.Raw(`SELECT count(*) FROM pg_class WHERE relname IN ('u_map', 't_map', 'pm_map') AND relnamespace = pg_my_temp_schema()`).Scan(&temps).Error)
+	require.Zero(t, temps)
 }
 
 func TestGenerateValidatesParams(t *testing.T) {

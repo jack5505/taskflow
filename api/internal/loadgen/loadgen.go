@@ -67,7 +67,7 @@ func (p Params) validate() error {
 }
 
 // Generate заполняет пустую базу с применёнными миграциями. Все шаги идут в одном соединении
-// (временные таблицы u_map и t_map), logf получает время каждого шага.
+// (временные таблицы u_map, pm_map и t_map), logf получает время каждого шага.
 func Generate(ctx context.Context, g *gorm.DB, p Params, logf func(format string, args ...any)) error {
 	if err := p.validate(); err != nil {
 		return err
@@ -99,14 +99,15 @@ func Generate(ctx context.Context, g *gorm.DB, p Params, logf func(format string
 		for _, ix := range indexes {
 			steps = append(steps, ix.Def)
 		}
-		steps = append(steps, `SET session_replication_role = DEFAULT`, `DROP TABLE u_map, t_map`, `VACUUM ANALYZE`)
+		steps = append(steps, `SET session_replication_role = DEFAULT`, `DROP TABLE u_map, t_map, pm_map`, `VACUUM ANALYZE`)
 
 		started := time.Now()
 		for _, q := range steps {
 			step := time.Now()
 			if err := c.Exec(q).Error; err != nil {
-				// Соединение вернётся в пул: роль репликации не должна остаться на нём.
-				_ = c.Exec(`SET session_replication_role = DEFAULT`).Error
+				// Соединение вернётся в пул: роль репликации и временные таблицы не должны остаться на
+				// нём. Контекст мог быть отменён (Ctrl+C) — сброс идёт без отмены.
+				_ = c.WithContext(context.WithoutCancel(ctx)).Exec(`DISCARD ALL`).Error
 				return fmt.Errorf("%s: %w (база осталась наполовину заполненной — создайте её заново)", firstLine(q), err)
 			}
 			logf("%s… %s", firstLine(q), time.Since(step).Round(time.Millisecond))
@@ -116,8 +117,8 @@ func Generate(ctx context.Context, g *gorm.DB, p Params, logf func(format string
 	})
 }
 
-// insertSteps — вставки по порядку зависимостей. Числа подставляются в текст: это константы
-// генератора, а не ввод пользователя, и так PostgreSQL видит их при планировании generate_series.
+// insertSteps — вставки по порядку зависимостей. Числа и хеш пароля подставляются в текст: это
+// параметры генератора, а не ввод пользователя, и так PostgreSQL видит числа при планировании.
 func (p Params) insertSteps() []string {
 	r := strings.NewReplacer(
 		"{users}", fmt.Sprint(p.Users),
@@ -127,6 +128,7 @@ func (p Params) insertSteps() []string {
 		"{worklogs}", fmt.Sprint(p.Worklogs),
 		"{sprint}", fmt.Sprint(SprintTasks),
 		"{today}", p.Today.Format(time.DateOnly),
+		"{password_hash}", quote(p.PasswordHash),
 	)
 	steps := []string{
 		// Чистая сгенерированная база: внешние ключи при загрузке не проверяем (триггеры FK
@@ -134,7 +136,7 @@ func (p Params) insertSteps() []string {
 		`SET session_replication_role = replica`,
 		`CREATE TEMP TABLE u_map AS SELECT n, gen_random_uuid() AS id FROM generate_series(1, {users}) n`,
 		`INSERT INTO users (id, email, password_hash, display_name, is_system_admin)
-			SELECT id, 'load' || n || '@example.com', ?, 'Пользователь ' || n, n = 1 FROM u_map`,
+			SELECT id, 'load' || n || '@example.com', {password_hash}, 'Пользователь ' || n, n = 1 FROM u_map`,
 		// p — номер проекта с 0; task_counter — сколько задач у проекта получится ниже.
 		`INSERT INTO projects (key, name, task_counter)
 			SELECT 'L' || chr(65 + p / 26) || chr(65 + p % 26), 'Проект ' || (p + 1),
@@ -148,17 +150,31 @@ func (p Params) insertSteps() []string {
 			FROM (SELECT id, row_number() OVER (ORDER BY key) - 1 AS i FROM projects) p
 			JOIN u_map u ON u.n IN (2, 3, 4)
 				OR (u.n >= 5 AND (p.i - u.n % {projects} + {projects}) % {projects} < LEAST(3, {projects}))`,
+		// Участники проекта i по порядку (j с 0) — из них выбираются исполнители и авторы записей времени.
+		`CREATE TEMP TABLE pm_map AS
+			SELECT p.i, pm.user_id AS id, row_number() OVER (PARTITION BY p.i ORDER BY pm.user_id) - 1 AS j,
+				count(*) OVER (PARTITION BY p.i) AS cnt
+			FROM project_members pm JOIN (SELECT id, row_number() OVER (ORDER BY key) - 1 AS i FROM projects) p ON p.id = pm.project_id`,
 		// Активный спринт каждого проекта: вторая неделя из двух.
 		`INSERT INTO sprints (project_id, name, start_date, end_date, state)
 			SELECT id, 'Спринт 1', DATE '{today}' - 7, DATE '{today}' + 7, 'active' FROM projects`,
-		`CREATE TEMP TABLE t_map AS SELECT n, gen_random_uuid() AS id FROM generate_series(0, {tasks} - 1) n`,
-		// Сначала записи, потом задачи: spent_minutes (сумма записей) — сразу при вставке.
+		// Задача n: проект pi = n % projects и число его участников cnt — для равенств в соединениях ниже.
+		`CREATE TEMP TABLE t_map AS SELECT n, gen_random_uuid() AS id, c.i AS pi, c.cnt
+			FROM generate_series(0, {tasks} - 1) n JOIN (SELECT DISTINCT i, cnt FROM pm_map) c ON c.i = n % {projects}`,
+		// Сначала записи, потом задачи: spent_minutes (сумма записей) — сразу при вставке. Время списывает
+		// участник проекта задачи. k-я запись пользователя — на k-й день назад по кругу, так что в день у
+		// него не больше ceil(cnt/365) записей, а длительность ограничена, чтобы сумма за день не
+		// превысила 24h (§6.3); в среднем выходит около рабочего дня.
 		`INSERT INTO worklogs (task_id, user_id, minutes, work_date, source)
-			SELECT t.id, u.id, 1 + g % 120, DATE '{today}' - (g % 365), 'manual'
-			FROM generate_series(1, {worklogs}) g
-			JOIN t_map t ON t.n = (g::bigint * 7919) % {tasks}
-			JOIN u_map u ON u.n = 1 + g % {users}`,
-		// Задача n — в проекте n % projects с номером n / projects + 1. Последние SprintTasks номеров
+			SELECT task_id, user_id, 1 + g % LEAST(120, 1440 / ((cnt + 364) / 365)), DATE '{today}' - ((k - 1) % 365)::int, 'manual'
+			FROM (
+				SELECT g, t.id AS task_id, m.id AS user_id,
+					row_number() OVER (PARTITION BY m.id ORDER BY g) AS k, count(*) OVER (PARTITION BY m.id) AS cnt
+				FROM generate_series(1, {worklogs}) g
+				JOIN t_map t ON t.n = (g::bigint * 7919) % {tasks}
+				JOIN pm_map m ON m.i = t.pi AND m.j = (g / 7) % t.cnt
+			) x`,
+		// Задача n — в проекте n % projects с номером n / projects + 1, исполнитель — участник проекта. Последние SprintTasks номеров
 		// проекта — в активном спринте, остальные в бэклоге. Статус, тип и приоритет — по номеру,
 		// каждая сотая задача удалена (корзина, отчёт по удалённым).
 		`INSERT INTO tasks (id, project_id, number, key, title, type, status, priority, reporter_id, assignee_id,
@@ -167,7 +183,7 @@ func (p Params) insertSteps() []string {
 				(ARRAY['task', 'bug', 'feature'])[1 + x.num % 3],
 				(ARRAY['todo', 'in_progress', 'review', 'done', 'todo'])[1 + x.num % 5],
 				(ARRAY['low', 'medium', 'high', 'critical'])[1 + x.num % 4],
-				r.id, CASE WHEN x.num % 5 = 0 THEN NULL ELSE u.id END,
+				r.id, CASE WHEN x.num % 5 = 0 THEN NULL ELSE a.id END,
 				CASE WHEN x.num > p.task_counter - {sprint} THEN s.id END,
 				60 * (1 + x.num % 16), COALESCE(w.m, 0), x.num,
 				CASE WHEN x.num % 5 IN (1, 2, 3) THEN now() END,
@@ -177,15 +193,13 @@ func (p Params) insertSteps() []string {
 			CROSS JOIN LATERAL (SELECT (m.n / {projects} + 1)::int AS num) x
 			JOIN (SELECT id, key, task_counter, row_number() OVER (ORDER BY key) - 1 AS i FROM projects) p ON p.i = m.n % {projects}
 			JOIN sprints s ON s.project_id = p.id
-			JOIN u_map u ON u.n = 1 + m.n % {users}
+			JOIN pm_map a ON a.i = m.pi AND a.j = x.num % m.cnt
 			JOIN u_map r ON r.n = 2
 			LEFT JOIN (SELECT task_id, SUM(minutes) AS m FROM worklogs GROUP BY task_id) w ON w.task_id = m.id`,
 	}
 	for i, s := range steps {
 		steps[i] = r.Replace(s)
 	}
-	// Хеш пароля — единственный параметр: в нём бывают символы, которые нельзя вставлять в текст.
-	steps[2] = strings.Replace(steps[2], "?", quote(p.PasswordHash), 1)
 	return steps
 }
 

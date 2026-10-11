@@ -65,6 +65,14 @@ func TempDB(t *testing.T) (*gorm.DB, string) {
 	if err := shared.Exec(`CREATE DATABASE ` + name).Error; err != nil {
 		t.Fatalf("create database: %v", err)
 	}
+	// Удаление — сразу после создания: база не должна остаться, даже если миграции упадут.
+	var g *gorm.DB
+	t.Cleanup(func() {
+		if g != nil {
+			_ = db.Close(g)
+		}
+		_ = shared.Exec(`DROP DATABASE ` + name + ` WITH (FORCE)`).Error
+	})
 	u, err := url.Parse(SharedDSN(t))
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
@@ -76,14 +84,9 @@ func TempDB(t *testing.T) (*gorm.DB, string) {
 	if err := db.Migrate(ctx, dsn, migrations.FS); err != nil {
 		t.Fatalf("migrate %s: %v", name, err)
 	}
-	g, err := openDB(dsn)
-	if err != nil {
+	if g, err = openDB(dsn); err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}
-	t.Cleanup(func() {
-		_ = db.Close(g)
-		_ = shared.Exec(`DROP DATABASE ` + name + ` WITH (FORCE)`).Error
-	})
 	return g, dsn
 }
 

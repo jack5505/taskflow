@@ -3,13 +3,14 @@
 // времени за месяц быстрее 3 с. Запуск со стендом — loadtest/run.sh.
 //
 // Переменные: BASE_URL (по умолчанию http://api:8080), PASSWORD (пароль load<N>@example.com),
-// VUS (50), DURATION (3m — длительность ровной нагрузки), REPORT_EVERY (5 — отчёт в каждой N-й итерации).
+// VUS (50), USERS (200 — как у генератора), DURATION (3m — длительность ровной нагрузки), REPORT_EVERY (5 — отчёт в каждой N-й итерации).
 import http from "k6/http";
 import { check, fail, group, sleep } from "k6";
 
 const BASE = __ENV.BASE_URL || "http://api:8080";
 const PASSWORD = __ENV.PASSWORD || "loadtest-password";
 const VUS = Number(__ENV.VUS || 50);
+const USERS = Number(__ENV.USERS || 200); // сколько пользователей создал генератор (-users)
 const REPORT_EVERY = Number(__ENV.REPORT_EVERY || 5);
 const BOARD_STATUSES = "todo,in_progress,review,done";
 
@@ -47,10 +48,12 @@ export const options = {
 
 // Пользователи генератора: load2 — менеджер всех проектов, load3 — исполнитель во всех, load4 —
 // смешанная роль, load5… — участники трёх проектов. Вход один раз на пользователя (bcrypt дорогой и
-// в сценарий §10.4 не входит); run.sh ставит JWT_ACCESS_TTL=30m — токена хватает на весь прогон.
+// в сценарий §10.4 не входит); run.sh ставит JWT_ACCESS_TTL=24h — токена хватает на любой прогон.
 export function setup() {
   const users = [];
-  for (let n = 2; n < 2 + VUS; n++) {
+  // load1 — администратор системы без членства в проектах, в сценарий не входит; если VUS больше
+  // числа пользователей, виртуальные пользователи делят входы по кругу.
+  for (let n = 2; n < 2 + Math.min(VUS, USERS - 1); n++) {
     const res = http.post(`${BASE}/api/v1/auth/login`, JSON.stringify({ email: `load${n}@example.com`, password: PASSWORD }), {
       headers: { "Content-Type": "application/json" },
       tags: { kind: "setup" },
