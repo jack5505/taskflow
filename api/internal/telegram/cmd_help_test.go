@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
@@ -44,7 +45,7 @@ func TestHelpCommand(t *testing.T) {
 		"Команды в группе:",
 		"/take <ключ> — Взять задачу в работу",
 		"/help — Список команд",
-		"Если к группе подключён один проект, ключ проекта можно не писать: /take 42.",
+		"Если к группе подключён один проект, ключ проекта можно не писать: TM-42 или 42.",
 	}, "\n")}, b.sayIn(t, b.member, -100700, models.ChatTypeSupergroup, "/help@TaskBot"))
 }
 
@@ -54,6 +55,9 @@ func TestUnknownCommand(t *testing.T) {
 	b, _ := newHelpBot(t)
 	require.Equal(t, []string{"Неизвестная команда. /help"}, b.say(t, b.member, "/foo TM-1"))
 	require.Empty(t, b.sayIn(t, b.member, -100700, models.ChatTypeSupergroup, "/foo"))
+
+	require.Empty(t, b.sayIn(t, b.member, -100700, models.ChatTypeSupergroup, "/*"), "служебное имя — не команда")
+	require.Empty(t, b.sayIn(t, b.member, -100700, models.ChatTypeSupergroup, "/*@TaskBot"))
 
 	stranger := newUser(t, b.g, "Без привязки")
 	b.tg[stranger.ID] = tgID()
@@ -85,9 +89,34 @@ func TestSetMyCommands(t *testing.T) {
 		require.NotContains(t, group, `"command":"`+name+`"`, "личные команды не в меню группы")
 	}
 
-	// Ошибка Telegram возвращается вызывающему (воркер пишет её в лог).
+	// Сбой Telegram при старте — повтор; отказ (400) не повторяется и возвращается вызывающему
+	// (воркер пишет его в лог); после всех попыток — тоже ошибка.
+	defer telegram.SetCommandsPause(time.Millisecond)()
+	const failure = `{"ok":false,"error_code":502,"description":"Bad Gateway"}`
+	b.env.tg.Respond("setMyCommands", failure)
+	require.NoError(t, telegram.SetMyCommands(context.Background(), b.api, rt))
+	require.Len(t, b.env.tg.Calls("setMyCommands"), 2+3)
+
 	b.env.tg.Respond("setMyCommands", `{"ok":false,"error_code":400,"description":"Bad Request: bad commands"}`)
 	require.Error(t, telegram.SetMyCommands(context.Background(), b.api, rt))
+	require.Len(t, b.env.tg.Calls("setMyCommands"), 5+1)
+
+	for range 5 {
+		b.env.tg.Respond("setMyCommands", failure)
+	}
+	require.Error(t, telegram.SetMyCommands(context.Background(), b.api, rt))
+	require.Len(t, b.env.tg.Calls("setMyCommands"), 6+5)
+}
+
+// Меню без команд для типа чата — пустой список, а не null.
+func TestSetMyCommandsEmptyScope(t *testing.T) {
+	e := newEnv(t)
+	rt := telegram.NewRouter("TaskBot")
+	rt.Command("timer", func(context.Context, *telegram.Request) error { return nil })
+	require.NoError(t, telegram.SetMyCommands(context.Background(), e.api, rt))
+	calls := e.tg.Calls("setMyCommands")
+	require.Len(t, calls, 2)
+	require.Equal(t, "[]", calls[1].Params["commands"])
 }
 
 // §8.5, §3.2: команда, меняющая задачу архивного проекта, — «Проект TM в архиве, изменения
@@ -101,4 +130,11 @@ func TestArchivedProjectReply(t *testing.T) {
 	var timers int
 	require.NoError(t, b.g.Raw(`SELECT count(*) FROM active_timers WHERE user_id = ?`, b.member.ID).Scan(&timers).Error)
 	require.Zero(t, timers)
+}
+
+// /help без команд с ключом задачи — без подсказки про формат ключа.
+func TestHelpWithoutKeyedCommands(t *testing.T) {
+	b := newCmdBot(t, telegram.RegisterHelp)
+	require.Equal(t, []string{"Команды в группе:\n/help — Список команд"},
+		b.sayIn(t, b.member, -100700, models.ChatTypeGroup, "/help"))
 }

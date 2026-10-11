@@ -18,3 +18,10 @@ func (rt *Router) ParseCommand(text string) (string, string, bool) { return rt.p
 
 // SetClock подменяет часы привязки (истёкший код).
 func (a *Accounts) SetClock(now func() time.Time) { a.now = now }
+
+// SetCommandsPause подменяет паузу между попытками setMyCommands; возвращает откат.
+func SetCommandsPause(d time.Duration) func() {
+	old := setCommandsPause
+	setCommandsPause = func(int) time.Duration { return d }
+	return func() { setCommandsPause = old }
+}

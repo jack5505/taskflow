@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -68,7 +69,14 @@ func helpCommand(rt *Router) HandlerFunc {
 		if r.Private() {
 			name = "cmd_help_private"
 		}
-		return r.Reply(ctx, Text(name, rt.menuFor(r.Private())))
+		data := struct {
+			Commands []helpLine
+			Keyed    bool // есть команды с ключом задачи — подсказка про формат ключа
+		}{Commands: rt.menuFor(r.Private())}
+		for _, c := range data.Commands {
+			data.Keyed = data.Keyed || strings.HasPrefix(c.Args, "<ключ>")
+		}
+		return r.Reply(ctx, Text(name, data))
 	}
 }
 
@@ -83,12 +91,36 @@ type CommandsAPI interface {
 	SetMyCommands(ctx context.Context, params *bot.SetMyCommandsParams) (bool, error)
 }
 
-// setCommandsTimeout — предел регистрации меню при старте воркера.
-const setCommandsTimeout = 30 * time.Second
+// Регистрация меню при старте воркера: предел одной попытки и число попыток. Telegram может
+// быть недоступен в момент старта — повторяем с паузой 1, 2, 4, 8 секунд.
+const (
+	setCommandsTimeout  = 30 * time.Second
+	setCommandsAttempts = 5
+)
+
+// setCommandsPause — пауза перед повтором (в тесте короче).
+var setCommandsPause = backoff
 
 // SetMyCommands регистрирует меню бота отдельно для личных чатов и для групп (§8.5). Вызывается
-// при старте воркера после регистрации команд; ошибка только в лог — бот работает и без меню.
+// при старте воркера после регистрации команд; сбой сети или Telegram повторяет до setCommandsAttempts раз,
+// отказ Telegram (400, 403) не повторяет.
+// Ошибка после всех попыток — только в лог: бот работает и без меню.
 func SetMyCommands(ctx context.Context, api CommandsAPI, rt *Router) error {
+	var err error
+	for attempt := 1; ; attempt++ {
+		err = setMyCommands(ctx, api, rt)
+		if err == nil || permanent(err) || attempt == setCommandsAttempts {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(setCommandsPause(attempt)):
+		}
+	}
+}
+
+func setMyCommands(ctx context.Context, api CommandsAPI, rt *Router) error {
 	ctx, cancel := context.WithTimeout(ctx, setCommandsTimeout)
 	defer cancel()
 	scopes := []struct {
@@ -99,7 +131,7 @@ func SetMyCommands(ctx context.Context, api CommandsAPI, rt *Router) error {
 		{false, &models.BotCommandScopeAllGroupChats{}},
 	}
 	for _, s := range scopes {
-		var cmds []models.BotCommand
+		cmds := []models.BotCommand{} // пустой список, а не null: его Telegram принимает
 		for _, l := range rt.menuFor(s.private) {
 			cmds = append(cmds, models.BotCommand{Command: l.Name, Description: l.Description})
 		}

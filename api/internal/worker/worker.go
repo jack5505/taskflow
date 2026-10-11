@@ -90,7 +90,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		telegram.RegisterHelp(rt)
 		telegram.Mount(mux, b, rt, rdb, client)
 		go func() { // меню отдельно для личных чатов и групп (§8.5); недоступный Telegram не держит старт
-			if err := telegram.SetMyCommands(ctx, b, rt); err != nil {
+			if err := telegram.SetMyCommands(ctx, b, rt); err != nil && ctx.Err() == nil {
 				slog.Error("telegram: commands menu", "err", err)
 			}
 		}()

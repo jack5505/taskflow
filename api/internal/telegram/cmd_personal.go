@@ -132,9 +132,11 @@ func replyServiceError(ctx context.Context, r *Request, key string, err error) e
 	name := "cmd_error"
 	switch {
 	case e.Code == apierr.CodeProjectArchived:
-		// «Проект TM в архиве» (§8.5): ключ проекта — часть ключа задачи до дефиса.
+		// «Проект TM в архиве» (§8.5): ключ проекта — часть полного ключа задачи до дефиса.
 		name = "cmd_project_archived"
-		data["Project"], _, _ = strings.Cut(key, "-")
+		if task.ValidKey(key) {
+			data["Project"], _, _ = strings.Cut(key, "-")
+		}
 	case e.Status == http.StatusNotFound && key != "":
 		name = "cmd_task_not_found"
 	case e.Status == http.StatusForbidden && r.Command == "timer":

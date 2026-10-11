@@ -46,12 +46,14 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "cmd_status_cancelled"}}Отменена{{end}}
 
 {{- /* /help, меню бота, неизвестные команды, архивный проект, §8.5 */}}
-{{define "cmd_help_private"}}Команды в личном чате:{{range .}}
+{{define "cmd_help_private"}}Команды в личном чате:{{range .Commands}}
 /{{.Name}}{{if .Args}} {{.Args}}{{end}} — {{.Description}}{{end}}
-Ключ задачи пишется вместе с ключом проекта: TM-42.{{end}}
-{{define "cmd_help_group"}}Команды в группе:{{range .}}
+{{- if .Keyed}}
+Ключ задачи пишется вместе с ключом проекта: TM-42.{{end}}{{end}}
+{{define "cmd_help_group"}}Команды в группе:{{range .Commands}}
 /{{.Name}}{{if .Args}} {{.Args}}{{end}} — {{.Description}}{{end}}
-Если к группе подключён один проект, ключ проекта можно не писать: /take 42.{{end}}
+{{- if .Keyed}}
+Если к группе подключён один проект, ключ проекта можно не писать: TM-42 или 42.{{end}}{{end}}
 {{define "cmd_unknown"}}Неизвестная команда. /help{{end}}
 {{define "cmd_project_archived"}}Проект {{with .Project}}{{.}} {{end}}в архиве, изменения недоступны{{end}}
 {{define "cmd_menu_start"}}Привязать аккаунт по коду из профиля{{end}}
