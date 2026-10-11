@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck -x -s bash deploy/*.sh && shellcheck -s sh api/scripts/*.sh
+      - run: shellcheck -x -s bash deploy/*.sh web/e2e/*.sh && shellcheck -s sh api/scripts/*.sh
 
   image:
     name: Docker image
@@ -72,3 +72,40 @@ jobs:
           file: api/Dockerfile
           push: false
           tags: taskflow:ci
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Браузер Chromium той же версии, что @playwright/test
+        run: npx playwright install --with-deps chromium
+      - name: Стенд из исходников и администраторы (e2e/stack.sh)
+        run: e2e/stack.sh up >> "$GITHUB_ENV"
+      - name: Сценарии приёмки ТЗ §10.4
+        run: npm run e2e
+      - name: Логи стенда при падении
+        if: failure()
+        run: docker compose -f e2e/docker-compose.yml logs --no-color api worker
+      - name: Отчёт и трейсы Playwright
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 14
+      - name: Убрать стенд
+        if: always()
+        run: e2e/stack.sh down
