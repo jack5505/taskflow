@@ -30,7 +30,9 @@ export function AppLayout() {
         </div>
         <div className="topbar-user">
           <CreateTask />
-          <span>{me.data?.display_name || me.data?.email || ""}</span>
+          <Link to="/profile" title="Профиль">
+            {me.data?.display_name || me.data?.email || "Профиль"}
+          </Link>
           <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>
             Выйти
           </button>
