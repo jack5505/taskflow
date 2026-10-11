@@ -97,7 +97,8 @@ func (s *Service) StartTimer(ctx context.Context, u *user.User, key string) (*Ti
 		}
 		res = &TimerStart{}
 		if cur != nil {
-			if cur.TaskID == t.ID {
+			// Таймер старше 12 часов воркер ещё не погасил — гасим здесь и запускаем заново.
+			if cur.TaskID == t.ID && now.Before(cur.StartedAt.Add(TimerLimit)) {
 				return apierr.Conflict(apierr.CodeTimerAlreadyRunning, fmt.Sprintf("Таймер уже запущен на %s", t.Key)).
 					With("timer", timerView(cur, curTask, now))
 			}
@@ -163,39 +164,58 @@ func CurrentTimer(ctx context.Context, db *gorm.DB, userID uuid.UUID, now time.T
 
 // StopStaleTimers — воркер (§6.4): останавливает таймеры старше 12 часов на отметке 12 часов
 // и таймеры, которые больше не могут идти: задача удалена или не в работе, пользователь не
-// исполнитель или деактивирован, проект в архиве или удалён (архивация останавливает таймеры
-// своим событием project.archived — через этот же обход). Возвращает число остановленных.
+// исполнитель или деактивирован, проект в архиве или удалён (страховка для изменений мимо
+// change(), например исключения из проекта). Ошибка одного пользователя не мешает остальным:
+// обход идёт дальше, ошибки возвращаются вместе. Возвращает число остановленных.
 func (s *Service) StopStaleTimers(ctx context.Context) (int64, error) {
 	now := s.now()
+	return s.stopTimersWhere(ctx, now, `a.started_at <= ? OR t.deleted_at IS NOT NULL OR t.status <> 'in_progress'
+		   OR t.assignee_id IS DISTINCT FROM a.user_id OR NOT u.is_active OR p.is_archived OR p.deleted_at IS NOT NULL`,
+		now.Add(-TimerLimit))
+}
+
+// StopProjectTimers — таймеры проекта при его архивации и удалении (§3.2): воркер по событию
+// project.archived / project.deleted, время записи — до момента at из события, а не до обработки.
+// Остановка в самой транзакции архивации невозможна без deadlock: она держит проект FOR UPDATE
+// раньше задач, а операции над задачами берут задачу раньше проекта.
+func (s *Service) StopProjectTimers(ctx context.Context, projectID uuid.UUID, at time.Time) (int64, error) {
+	return s.stopTimersWhere(ctx, at, `t.project_id = ?`, projectID)
+}
+
+// stopTimersWhere — остановка таймеров, подходящих под where (по a — таймер, t — задача,
+// p — проект, u — пользователь), в отдельной транзакции на пользователя; под блокировкой
+// условие «таймер больше не может идти» проверяется заново (timerStale).
+func (s *Service) stopTimersWhere(ctx context.Context, at time.Time, where string, args ...any) (int64, error) {
 	var users []uuid.UUID
 	if err := s.db.WithContext(ctx).Raw(`SELECT a.user_id FROM active_timers a
 		JOIN tasks t ON t.id = a.task_id JOIN projects p ON p.id = t.project_id JOIN users u ON u.id = a.user_id
-		WHERE a.started_at <= ? OR t.deleted_at IS NOT NULL OR t.status <> 'in_progress'
-		   OR t.assignee_id IS DISTINCT FROM a.user_id OR NOT u.is_active OR p.is_archived OR p.deleted_at IS NOT NULL
-		ORDER BY a.user_id`, now.Add(-TimerLimit)).Scan(&users).Error; err != nil {
+		WHERE `+where+` ORDER BY a.user_id`, args...).Scan(&users).Error; err != nil {
 		return 0, fmt.Errorf("task: stale timers: %w", err)
 	}
 	var n int64
+	var errs []error
 	for _, id := range users {
+		stopped := false
 		err := s.timerTx(ctx, func(tx *gorm.DB) error {
+			stopped = false
 			cur, t, err := lockUserTimer(tx, id)
 			if err != nil || cur == nil {
 				return err
 			}
-			// Под блокировкой условие проверяется заново: таймер могли перезапустить.
-			if stale, err := timerStale(tx, cur, t, now); err != nil || !stale {
+			if stale, err := timerStale(tx, cur, t, at); err != nil || !stale {
 				return err
 			}
-			if _, err = stopTimer(tx, cur, t, now); err == nil {
-				n++
-			}
+			_, err = stopTimer(tx, cur, t, at)
+			stopped = err == nil
 			return err
 		})
 		if err != nil {
-			return n, err
+			errs = append(errs, fmt.Errorf("пользователь %s: %w", id, err))
+		} else if stopped {
+			n++
 		}
 	}
-	return n, nil
+	return n, errors.Join(errs...)
 }
 
 // timerStale — таймер старше 12 часов или больше не может идти (см. StopStaleTimers).
@@ -363,13 +383,9 @@ func splitByDay(from, to time.Time, loc *time.Location) []dayPart {
 // timerWorklog — запись части таймера с обрезкой по дневному лимиту; nil — остатка лимита нет.
 // Обрезка публикует timer.trimmed (уведомление пользователю, §6.4, §7.7).
 func timerWorklog(tx *gorm.DB, t *Task, userID uuid.UUID, p dayPart, now time.Time) (*WorklogView, error) {
-	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('worklog-day:' || ?))`, userID.String()).Error; err != nil {
-		return nil, fmt.Errorf("task: worklog lock: %w", err)
-	}
-	var used int
-	if err := tx.Raw(`SELECT COALESCE(sum(minutes), 0) FROM worklogs WHERE user_id = ? AND work_date = ?`,
-		userID, p.date.Format(time.DateOnly)).Scan(&used).Error; err != nil {
-		return nil, fmt.Errorf("task: worklog day sum: %w", err)
+	used, err := dayUsed(tx, userID, p.date, uuid.Nil)
+	if err != nil {
+		return nil, err
 	}
 	minutes := min(p.minutes, max(dailyLimitMinutes-used, 0))
 	if minutes < p.minutes {

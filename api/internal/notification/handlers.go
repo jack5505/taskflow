@@ -147,18 +147,16 @@ func notifyTaskPeople(ctx context.Context, db *gorm.DB, projectID, taskID, repor
 // таймера, весь payload события — в уведомление (ключ, минуты, дата).
 func timerEvent(db *gorm.DB, typ string) events.Handler {
 	return func(ctx context.Context, env events.Envelope) error {
-		var p struct {
-			UserID uuid.UUID `json:"user_id"`
-			TaskID uuid.UUID `json:"task_id"`
-		}
-		eventID, err := decode(env, &p)
+		var data map[string]any
+		eventID, err := decode(env, &data)
 		if err != nil {
 			return err
 		}
-		var data map[string]any
-		if err := json.Unmarshal(env.Payload, &data); err != nil {
-			return fmt.Errorf("notification: %s payload: %w", env.Type, err)
+		userID, err1 := uuid.Parse(fmt.Sprint(data["user_id"]))
+		taskID, err2 := uuid.Parse(fmt.Sprint(data["task_id"]))
+		if err1 != nil || err2 != nil {
+			return fmt.Errorf("notification: %s: нет user_id или task_id", env.Type)
 		}
-		return Create(ctx, db, New{UserID: p.UserID, TaskID: &p.TaskID, Type: typ, Payload: data, EventID: &eventID})
+		return Create(ctx, db, New{UserID: userID, TaskID: &taskID, Type: typ, Payload: data, EventID: &eventID})
 	}
 }

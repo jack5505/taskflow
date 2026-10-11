@@ -4,11 +4,13 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/auth"
@@ -47,10 +49,20 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	notification.Register(d, g)
 	tasks := task.NewService(g, project.NewService(g))
 	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }
-	// Архивация и удаление проекта останавливают его таймеры (§3.2) — тем же обходом, что и автостоп.
+	// Архивация и удаление проекта останавливают его таймеры (§3.2) на момент события.
 	for _, typ := range []string{events.ProjectArchived, events.ProjectDeleted} {
-		d.On(typ, "timers", func(ctx context.Context, _ events.Envelope) error {
-			_, err := stopTimers(ctx)
+		d.On(typ, "timers", func(ctx context.Context, env events.Envelope) error {
+			var p struct {
+				ProjectID uuid.UUID `json:"project_id"`
+				At        time.Time `json:"at"`
+			}
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				return fmt.Errorf("worker: %s payload: %w", env.Type, err)
+			}
+			if p.At.IsZero() {
+				p.At = time.Now() // событие до появления поля at
+			}
+			_, err := tasks.StopProjectTimers(ctx, p.ProjectID, p.At)
 			return err
 		})
 	}

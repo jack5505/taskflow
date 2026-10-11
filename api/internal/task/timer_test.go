@@ -284,12 +284,43 @@ func TestTimerStoppedInArchivedProject(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, n)
 
-	require.NoError(t, f.db.Model(&project.Project{}).Where("id = ?", f.p.ID).Update("is_archived", true).Error)
-	n, err = svc.StopStaleTimers(context.Background())
+	rec, _ := f.do(t, "PATCH", "/api/v1/projects/"+f.p.Key, f.admin, `{"is_archived":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var at time.Time
+	require.NoError(t, f.db.Raw(`SELECT (payload->>'at')::timestamptz FROM outbox_events WHERE type = ? AND payload->>'project_id' = ?`,
+		events.ProjectArchived, f.p.ID.String()).Scan(&at).Error)
+	require.False(t, at.IsZero(), "момент архивации — в событии")
+
+	// Воркер обработал событие позже — время пишется до момента архивации.
+	n, err = svc.StopProjectTimers(context.Background(), f.p.ID, at)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, n)
-	require.Len(t, f.timerLogs(t, key), 1)
+	logs := f.timerLogs(t, key)
+	require.Len(t, logs, 1)
+	require.Equal(t, 5, logs[0].Minutes)
 	require.Empty(t, f.events(t, events.TimerAutoStopped, key), "не автостоп по 12 часам")
+	n, err = svc.StopStaleTimers(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, n)
+}
+
+// Старт на той же задаче, когда таймер уже старше 12 часов, а воркер его ещё не погасил:
+// старый останавливается на отметке 12 часов, запускается новый — не 409.
+func TestTimerRestartAfterLimit(t *testing.T) {
+	f := newFixture(t)
+	key := f.working(t)
+	msk := time.FixedZone("MSK", 3*3600)
+	started := time.Date(2026, 10, 11, 6, 0, 0, 0, msk)
+	now := started.Add(12*time.Hour + 30*time.Minute)
+	svc := f.clocked(t, key, started, &now)
+
+	res, err := svc.StartTimer(context.Background(), f.memberU, key)
+	require.NoError(t, err)
+	require.NotNil(t, res.Stopped)
+	require.True(t, res.Stopped.AutoStopped)
+	require.Equal(t, 720, res.Stopped.Minutes)
+	require.Equal(t, now, res.Timer.StartedAt.In(msk))
+	require.Equal(t, 1, f.timerCount(t))
 }
 
 // §6.4, §4: уход из in_progress, смена исполнителя и удаление задачи останавливают таймер с записью.

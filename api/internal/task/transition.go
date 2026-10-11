@@ -229,8 +229,10 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		if err := fn(tx, &t, a); err != nil {
 			return err
 		}
-		if err := stopStaleTaskTimers(tx, &t, s.now()); err != nil {
-			return err
+		if t.Status != before.Status || !samePtr(t.AssigneeID, before.AssigneeID) || (t.DeletedAt == nil) != (before.DeletedAt == nil) {
+			if err := stopStaleTaskTimers(tx, &t, s.now()); err != nil {
+				return err
+			}
 		}
 		t.Version = before.Version + 1
 		return tx.Model(&t).Select("*").Omit("CreatedAt").Updates(&t).Error

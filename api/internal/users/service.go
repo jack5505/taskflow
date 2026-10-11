@@ -36,10 +36,11 @@ func fieldError(field, reason string) error {
 type Service struct {
 	db   *gorm.DB
 	auth *auth.Service
+	now  func() time.Time
 }
 
 func NewService(db *gorm.DB, authSvc *auth.Service) *Service {
-	return &Service{db: db, auth: authSvc}
+	return &Service{db: db, auth: authSvc, now: time.Now}
 }
 
 // CanList — §9.2: список видят администратор системы и менеджеры (для добавления в проект).
@@ -220,7 +221,7 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 		return err
 	}
 	// Таймер идёт только на его задаче в работе — она уже заблокирована освобождением выше.
-	if err := task.StopUserTimer(tx, u.ID, time.Now()); err != nil {
+	if err := task.StopUserTimer(tx, u.ID, s.now()); err != nil {
 		return err
 	}
 	// Блокируем проекты, где он менеджер: параллельная деактивация второго менеджера того же
