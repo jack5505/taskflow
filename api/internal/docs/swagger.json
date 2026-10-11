@@ -1943,6 +1943,58 @@
                 }
             }
         },
+        "/api/v1/sprints/{id}/report": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Участник проекта (§5.6, §9.2); только active и closed, у planned — 409 INVALID_TRANSITION (details.reason = planned). Объём на старте (без оценки: without_estimate) и сейчас (у завершённого — на момент закрытия), задачи, добавленные и убранные после старта, списанное время по исполнителям, берндаун: точка на каждый день спринта из ежедневных снимков (remaining_hours = null — снимка за день нет) и идеальная прямая от объёма на старте до нуля.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sprints"
+                ],
+                "summary": "Отчёт по спринту",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id спринта",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sprint.Report"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "INVALID_TRANSITION",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sprints/{id}/start": {
             "post": {
                 "security": [
@@ -3695,6 +3747,112 @@
                 }
             }
         },
+        "sprint.Change": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "by": {
+                    "description": "null — система",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "key": {
+                    "type": "string"
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "sprint.Point": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "example": "2026-10-13"
+                },
+                "done_tasks": {
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "ideal_hours": {
+                    "type": "number",
+                    "example": 36
+                },
+                "open_estimate_minutes": {
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "open_tasks": {
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "remaining_hours": {
+                    "type": "number",
+                    "x-nullable": true,
+                    "example": 30.5
+                }
+            }
+        },
+        "sprint.Report": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "description": "Added, Removed — задачи, добавленные и убранные после старта (журнал спринта §5.3).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Change"
+                    }
+                },
+                "burndown": {
+                    "description": "Burndown — по точке на каждый день спринта, от start_date до end_date включительно.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Point"
+                    }
+                },
+                "current": {
+                    "description": "Current — задачи и сумма оценок сейчас; у завершённого — на момент закрытия.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/sprint.Totals"
+                        }
+                    ]
+                },
+                "removed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Change"
+                    }
+                },
+                "spent": {
+                    "description": "Spent — списанное время по задачам спринта с разбивкой по исполнителям, SpentMinutes — итог.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Spent"
+                    }
+                },
+                "spent_minutes": {
+                    "type": "integer"
+                },
+                "sprint": {
+                    "$ref": "#/definitions/sprint.View"
+                },
+                "start": {
+                    "description": "Start — объём на старте (§5.2), не меняется.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/sprint.Scope"
+                        }
+                    ]
+                }
+            }
+        },
         "sprint.Scope": {
             "type": "object",
             "properties": {
@@ -3706,6 +3864,24 @@
                 },
                 "without_estimate": {
                     "type": "integer"
+                }
+            }
+        },
+        "sprint.Spent": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "hours": {
+                    "type": "number",
+                    "example": 2.5
+                },
+                "minutes": {
+                    "type": "integer"
+                },
+                "user_id": {
+                    "type": "string"
                 }
             }
         },
@@ -3731,6 +3907,17 @@
                     "type": "integer"
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "sprint.Totals": {
+            "type": "object",
+            "properties": {
+                "estimate_minutes": {
+                    "type": "integer"
+                },
+                "tasks": {
                     "type": "integer"
                 }
             }

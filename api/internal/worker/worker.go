@@ -18,6 +18,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/outbox"
 	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/sprint"
 )
 
 // Run запускает релей и сервер asynq и ждёт отмены контекста.
@@ -75,6 +76,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 			return notification.Cleanup(ctx, g, time.Now())
 		})
 	}()
+	wg.Go(func() { sprint.RunSnapshots(ctx, g) }) // снимки спринтов в 00:00 по поясу проекта (§3.8)
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 
 	<-ctx.Done()
