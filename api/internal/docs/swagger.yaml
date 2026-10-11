@@ -772,16 +772,19 @@ definitions:
       comment:
         description: до 500 символов
         example: Разбор логов
+        maxLength: 2000
         type: string
         x-nullable: true
       duration:
         description: '§6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h'
         example: 2h 30m
+        maxLength: 100
         type: string
       work_date:
         description: по умолчанию сегодня по поясу пользователя
         example: "2026-10-11"
         format: date
+        maxLength: 40
         type: string
     type: object
   user.User:

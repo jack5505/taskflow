@@ -39,3 +39,12 @@ func TestLabelsAndDateColumns(t *testing.T) {
 	require.Equal(t, 2, d.Day())
 	require.Error(t, d.Scan(3.14))
 }
+
+func TestDateUnmarshalJSON(t *testing.T) {
+	var d task.Date
+	require.NoError(t, json.Unmarshal([]byte(`"2026-10-10"`), &d))
+	require.Equal(t, "2026-10-10", d.Format(time.DateOnly))
+	require.NoError(t, json.Unmarshal([]byte(`null`), &d))
+	require.Error(t, json.Unmarshal([]byte(`"10.10.2026"`), &d))
+	require.Error(t, json.Unmarshal([]byte(`1`), &d))
+}

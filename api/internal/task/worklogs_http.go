@@ -17,12 +17,13 @@ func (h *Handlers) registerWorklogs(api *gin.RouterGroup) {
 	api.DELETE("/worklogs/:id", h.requireAuth, h.deleteWorklog)
 }
 
-// worklogRequest — новая запись. Значения проверяет сервис после прав (404 → 403 → 400):
+// worklogRequest — новая запись. Binding-теги — только грубые пределы размера; точные правила
+// (§6.1, §3.5: комментарий до 500 после обрезки) проверяет сервис после прав (404 → 403 → 400),
 // бот вызывает его напрямую.
 type worklogRequest struct {
-	Duration string  `json:"duration" example:"2h 30m"`                              // §6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h
-	WorkDate *string `json:"work_date" example:"2026-10-11" format:"date"`           // по умолчанию сегодня по поясу пользователя
-	Comment  *string `json:"comment" example:"Разбор логов" extensions:"x-nullable"` // до 500 символов
+	Duration string  `json:"duration" binding:"max=100" example:"2h 30m"`                                         // §6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h
+	WorkDate *string `json:"work_date" binding:"omitempty,max=40" example:"2026-10-11" format:"date"`             // по умолчанию сегодня по поясу пользователя
+	Comment  *string `json:"comment" binding:"omitempty,max=2000" example:"Разбор логов" extensions:"x-nullable"` // до 500 символов
 }
 
 // worklogPatchRequest — изменение записи: только переданные поля; comment: null очищает.

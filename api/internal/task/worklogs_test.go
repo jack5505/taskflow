@@ -313,6 +313,8 @@ func TestWorklogFrozen(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	m = f.logTime(t, other, f.manager, `{"duration":"1h"}`, http.StatusConflict)
 	require.Equal(t, apierr.CodeInvalidTransition, errCode(m))
+	_, m = f.do(t, "PATCH", "/api/v1/worklogs/"+oid, f.manager, `{"duration":"24h"}`)
+	require.Equal(t, apierr.CodeInvalidTransition, errCode(m), "правкой на отменённую задачу тоже не списывают")
 	_, m = f.do(t, "POST", "/api/v1/tasks/"+other+"/worklogs", f.outsider, `{"duration":"1h"}`)
 	require.Equal(t, apierr.CodeNotFound, errCode(m))
 

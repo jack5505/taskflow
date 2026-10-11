@@ -113,7 +113,7 @@ func (s *Service) AddWorklog(ctx context.Context, u *user.User, key string, in W
 		return nil, ErrNotFound
 	}
 	var view *WorklogView
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.worklogTx(ctx, func(tx *gorm.DB) error {
 		o, err := openForWorklog(tx, u, key)
 		if err != nil {
 			return err
@@ -122,24 +122,21 @@ func (s *Service) AddWorklog(ctx context.Context, u *user.User, key string, in W
 		if !o.actor.manager && (t.AssigneeID == nil || *t.AssigneeID != u.ID) {
 			return errWorklogForbidden
 		}
-		if err := worklogWritable(tx, o); err != nil {
+		if err := worklogWritable(tx, o, worklogAdd); err != nil {
 			return err
-		}
-		if t.Status == StatusCancelled {
-			return errTaskCancelled
 		}
 		minutes, err := parseWorklogMinutes(in.Duration)
 		if err != nil {
 			return err
 		}
-		tz, err := userTimezone(tx, u.ID)
+		loc, err := userLocation(tx, u.ID)
 		if err != nil {
 			return err
 		}
-		today := s.today(tz)
+		today := s.today(loc)
 		date := today
 		if in.WorkDate != nil {
-			if date, err = workDate(*in.WorkDate, today, t, tz); err != nil {
+			if date, err = workDate(*in.WorkDate, today, t, loc); err != nil {
 				return err
 			}
 		}
@@ -149,7 +146,7 @@ func (s *Service) AddWorklog(ctx context.Context, u *user.User, key string, in W
 		}
 		w := Worklog{TaskID: t.ID, UserID: u.ID, Minutes: minutes, WorkDate: Date{date}, Comment: comment,
 			Source: worklogSource(o.actor.source)}
-		view, err = insertWorklog(tx, t, &w, u.ID)
+		view, err = insertWorklog(tx, t, &w, u.ID, s.now())
 		return err
 	})
 	if err != nil {
@@ -160,7 +157,8 @@ func (s *Service) AddWorklog(ctx context.Context, u *user.User, key string, in W
 
 // insertWorklog — запись с проверкой дневного лимита, spent_minutes задачи и worklog.created в
 // одной транзакции. Задачу вызывающий держит FOR UPDATE. Через неё же пойдут записи таймера (§6.4).
-func insertWorklog(tx *gorm.DB, t *Task, w *Worklog, by uuid.UUID) (*WorklogView, error) {
+func insertWorklog(tx *gorm.DB, t *Task, w *Worklog, by uuid.UUID, now time.Time) (*WorklogView, error) {
+	w.CreatedAt, w.UpdatedAt = now, now
 	if err := checkDailyLimit(tx, w.UserID, w.WorkDate.Time, w.Minutes, uuid.Nil); err != nil {
 		return nil, err
 	}
@@ -184,7 +182,7 @@ func insertWorklog(tx *gorm.DB, t *Task, w *Worklog, by uuid.UUID) (*WorklogView
 // Правка чужой записи пишется в журнал аудита (§3.8).
 func (s *Service) UpdateWorklog(ctx context.Context, u *user.User, id uuid.UUID, in WorklogPatch) (*WorklogView, error) {
 	var view *WorklogView
-	err := s.onWorklog(ctx, u, id, func(tx *gorm.DB, o *opened, w *Worklog, today time.Time, tz string) error {
+	err := s.onWorklog(ctx, u, id, worklogEdit, func(tx *gorm.DB, o *opened, w *Worklog, today time.Time, loc *time.Location) error {
 		before := *w
 		if in.Duration.Set {
 			if in.Duration.Value == nil {
@@ -200,7 +198,7 @@ func (s *Service) UpdateWorklog(ctx context.Context, u *user.User, id uuid.UUID,
 			if in.WorkDate.Value == nil {
 				return fieldError("work_date", "дата ГГГГ-ММ-ДД")
 			}
-			date, err := workDate(*in.WorkDate.Value, today, &o.task, tz)
+			date, err := workDate(*in.WorkDate.Value, today, &o.task, loc)
 			if err != nil {
 				return err
 			}
@@ -259,7 +257,7 @@ func (s *Service) saveWorklog(tx *gorm.DB, o *opened, before, w *Worklog, by uui
 
 // DeleteWorklog — удаление записи по тем же правилам, что и правка (§6.5); чужой — в аудит (§3.8).
 func (s *Service) DeleteWorklog(ctx context.Context, u *user.User, id uuid.UUID) error {
-	return s.onWorklog(ctx, u, id, func(tx *gorm.DB, o *opened, w *Worklog, _ time.Time, _ string) error {
+	return s.onWorklog(ctx, u, id, worklogDelete, func(tx *gorm.DB, o *opened, w *Worklog, _ time.Time, _ *time.Location) error {
 		if err := tx.Delete(w).Error; err != nil {
 			return fmt.Errorf("task: worklog delete: %w", err)
 		}
@@ -283,11 +281,11 @@ func (s *Service) DeleteWorklog(ctx context.Context, u *user.User, id uuid.UUID)
 
 // onWorklog — в одной транзакции: задача записи (openForWorklog, FOR UPDATE), запись FOR UPDATE,
 // права (§6.5: своя — 7 дней после work_date, чужая и старая — менеджер; 403), затем архив и
-// закрытый спринт (409). fn получает «сегодня» и пояс владельца записи: к его календарю
+// закрытый спринт, отменённая задача для правки (409). fn получает «сегодня» и пояс владельца записи: к его календарю
 // относятся work_date и дневной лимит, даже когда правит менеджер.
-func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID,
-	fn func(tx *gorm.DB, o *opened, w *Worklog, today time.Time, tz string) error) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID, op worklogOp,
+	fn func(tx *gorm.DB, o *opened, w *Worklog, today time.Time, loc *time.Location) error) error {
+	err := s.worklogTx(ctx, func(tx *gorm.DB) error {
 		var key string
 		if err := tx.Raw(`SELECT t.key FROM worklogs w JOIN tasks t ON t.id = w.task_id WHERE w.id = ?`, id).Scan(&key).Error; err != nil {
 			return fmt.Errorf("task: worklog: %w", err)
@@ -307,21 +305,21 @@ func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID,
 		if res.RowsAffected == 0 {
 			return ErrWorklogNotFound
 		}
-		tz, err := userTimezone(tx, w.UserID)
+		loc, err := userLocation(tx, w.UserID)
 		if err != nil {
 			return err
 		}
-		today := s.today(tz)
+		today := s.today(loc)
 		if w.UserID != u.ID && !o.actor.manager {
 			return errWorklogEditForbidden
 		}
 		if !o.actor.manager && today.After(w.WorkDate.AddDate(0, 0, editWindowDays)) {
 			return errWorklogExpired
 		}
-		if err := worklogWritable(tx, o); err != nil {
+		if err := worklogWritable(tx, o, op); err != nil {
 			return err
 		}
-		return fn(tx, o, &w, today, tz)
+		return fn(tx, o, &w, today, loc)
 	})
 	if errors.Is(err, ErrNotFound) {
 		return ErrWorklogNotFound
@@ -332,26 +330,72 @@ func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID,
 // openForWorklog — openTask с FOR UPDATE строки задачи (spent_minutes меняется в этой же
 // транзакции). Строку спринта задачи берём FOR SHARE до строки задачи — порядок блокировок
 // закрытия спринта (спринт → задачи), иначе закрытие могло бы пройти между проверкой и записью.
+// Если задачу успели перенести в другой спринт между чтением sprint_id и блокировкой задачи,
+// транзакция откатывается и повторяется (worklogTx): брать новый спринт после задачи — deadlock.
 func openForWorklog(tx *gorm.DB, u *user.User, key string) (*opened, error) {
 	var sprints []uuid.UUID
 	if err := tx.Raw(`SELECT sprint_id FROM tasks WHERE key = ? AND sprint_id IS NOT NULL`, key).Scan(&sprints).Error; err != nil {
 		return nil, fmt.Errorf("task: worklog sprint: %w", err)
 	}
-	return openTask(tx, u, key, preLock{sprints: sprints}, "FOR UPDATE")
+	o, err := openTask(tx, u, key, preLock{sprints: sprints}, "FOR UPDATE")
+	if err != nil {
+		return nil, err
+	}
+	var locked *uuid.UUID
+	if len(sprints) > 0 {
+		locked = &sprints[0]
+	}
+	if !samePtr(o.task.SprintID, locked) {
+		return nil, errSprintMoved
+	}
+	return o, nil
 }
 
-// worklogWritable — архив проекта (409 PROJECT_ARCHIVED) и закрытый спринт задачи (§6.5).
-// Строка спринта уже под FOR SHARE (openForWorklog); если задачу успели перенести между чтением
-// sprint_id и блокировкой, новый спринт блокируется здесь же.
-func worklogWritable(tx *gorm.DB, o *opened) error {
+// errSprintMoved — задачу перенесли в другой спринт, пока брались блокировки; worklogTx повторит.
+var errSprintMoved = errors.New("task: worklog: sprint moved")
+
+// worklogTx — транзакция записи времени с повтором при errSprintMoved (не больше трёх попыток).
+func (s *Service) worklogTx(ctx context.Context, fn func(*gorm.DB) error) error {
+	var err error
+	for range 3 {
+		if err = s.db.WithContext(ctx).Transaction(fn); !errors.Is(err, errSprintMoved) {
+			return err
+		}
+	}
+	return fmt.Errorf("task: worklog: задача всё время меняет спринт: %w", err)
+}
+
+// worklogOp — операция с записью: от неё зависит, что запрещает отменённая задача.
+type worklogOp int
+
+const (
+	worklogAdd worklogOp = iota
+	worklogEdit
+	worklogDelete
+)
+
+// worklogWritable — одна проверка состояния для добавления, правки и удаления (и таймера):
+// архив проекта (409 PROJECT_ARCHIVED), закрытый спринт задачи — никаких изменений (§6.5),
+// отменённая задача — нельзя списывать (§4): ни новой записью, ни правкой; удалить можно.
+// Строка спринта уже под FOR SHARE (openForWorklog).
+func worklogWritable(tx *gorm.DB, o *opened, op worklogOp) error {
 	if err := project.EnsureWritable(&o.project); err != nil {
 		return err
 	}
-	if o.task.SprintID == nil {
-		return nil
+	if o.task.SprintID != nil {
+		if err := sprintNotClosed(tx, *o.task.SprintID); err != nil {
+			return err
+		}
 	}
+	if o.task.Status == StatusCancelled && op != worklogDelete {
+		return errTaskCancelled
+	}
+	return nil
+}
+
+func sprintNotClosed(tx *gorm.DB, id uuid.UUID) error {
 	var states []string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? FOR SHARE`, *o.task.SprintID).Scan(&states).Error; err != nil {
+	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, id).Scan(&states).Error; err != nil {
 		return fmt.Errorf("task: worklog sprint state: %w", err)
 	}
 	if len(states) > 0 && states[0] == "closed" {
@@ -419,7 +463,7 @@ func parseWorklogMinutes(s string) (int, error) {
 
 // workDate — дата работы (§3.5): не позже сегодняшней и не раньше даты создания задачи, обе — по
 // поясу пользователя, к чьему дню относится запись.
-func workDate(s string, today time.Time, t *Task, tz string) (time.Time, error) {
+func workDate(s string, today time.Time, t *Task, loc *time.Location) (time.Time, error) {
 	d, err := time.Parse(time.DateOnly, s)
 	if err != nil {
 		return time.Time{}, fieldError("work_date", "дата ГГГГ-ММ-ДД")
@@ -427,7 +471,7 @@ func workDate(s string, today time.Time, t *Task, tz string) (time.Time, error) 
 	if d.After(today) {
 		return time.Time{}, fieldError("work_date", "не позже сегодняшней даты")
 	}
-	if d.Before(dayIn(t.CreatedAt, tz)) {
+	if d.Before(dayIn(t.CreatedAt, loc)) {
 		return time.Time{}, fieldError("work_date", "не раньше даты создания задачи")
 	}
 	return d, nil
@@ -456,25 +500,26 @@ func worklogSource(s string) string {
 	return WorklogManual
 }
 
-func userTimezone(tx *gorm.DB, id uuid.UUID) (string, error) {
+// userLocation — часовой пояс пользователя (§3.1) из базы, один раз на запрос; неизвестный — UTC.
+func userLocation(tx *gorm.DB, id uuid.UUID) (*time.Location, error) {
 	var tz string
 	if err := tx.Raw(`SELECT timezone FROM users WHERE id = ?`, id).Scan(&tz).Error; err != nil {
-		return "", fmt.Errorf("task: timezone: %w", err)
+		return nil, fmt.Errorf("task: timezone: %w", err)
 	}
-	return tz, nil
-}
-
-// today — сегодняшняя дата по поясу tz (полночь UTC с этой датой — как work_date из базы).
-func (s *Service) today(tz string) time.Time {
-	return dayIn(s.now(), tz)
-}
-
-// dayIn — календарная дата момента at в поясе tz; неизвестный пояс — UTC.
-func dayIn(at time.Time, tz string) time.Time {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		loc = time.UTC
+		return time.UTC, nil
 	}
+	return loc, nil
+}
+
+// today — сегодняшняя дата в поясе loc (полночь UTC с этой датой — как work_date из базы).
+func (s *Service) today(loc *time.Location) time.Time {
+	return dayIn(s.now(), loc)
+}
+
+// dayIn — календарная дата момента at в поясе loc.
+func dayIn(at time.Time, loc *time.Location) time.Time {
 	l := at.In(loc)
 	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.UTC)
 }

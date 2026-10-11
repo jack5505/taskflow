@@ -3866,18 +3866,21 @@
                 "comment": {
                     "description": "до 500 символов",
                     "type": "string",
+                    "maxLength": 2000,
                     "x-nullable": true,
                     "example": "Разбор логов"
                 },
                 "duration": {
                     "description": "§6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h",
                     "type": "string",
+                    "maxLength": 100,
                     "example": "2h 30m"
                 },
                 "work_date": {
                     "description": "по умолчанию сегодня по поясу пользователя",
                     "type": "string",
                     "format": "date",
+                    "maxLength": 40,
                     "example": "2026-10-11"
                 }
             }

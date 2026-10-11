@@ -430,17 +430,20 @@ export interface TaskWorklogPatchRequest {
 export interface TaskWorklogRequest {
   /**
    * до 500 символов
+   * @maxLength 2000
    * @example "Разбор логов"
    */
   comment?: string | null;
   /**
    * §6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h
+   * @maxLength 100
    * @example "2h 30m"
    */
   duration?: string;
   /**
    * по умолчанию сегодня по поясу пользователя
    * @format date
+   * @maxLength 40
    * @example "2026-10-11"
    */
   work_date?: string;
