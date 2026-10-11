@@ -15,11 +15,13 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import type { TaskListItem } from "../api/client";
 import { errorText } from "../api/errors";
-import { useMe } from "../auth/hooks";
+import { meQueryKey, useMe } from "../auth/hooks";
 import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
 import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
+import { TimerButton } from "../timer/TimerButton";
+import { canStartTimer, projectKeyOf } from "../timer/timer";
 import { BoardCard, CardBody } from "./BoardCard";
 import { applyMove, boardQueryKey, groupByStatus } from "./cards";
 import { BoardFilters } from "./BoardFilters";
@@ -136,6 +138,7 @@ export function BoardPage() {
   const memberById = useMemo(() => new Map((members.data ?? []).map((m) => [m.user_id, m])), [members.data]);
   const archived = project.data?.is_archived === true;
   const actor = actorFor(me.data, project.data);
+  const timerKey = me.data?.timer?.task_key;
 
   const [actionError, setActionError] = useState("");
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -149,6 +152,8 @@ export function BoardPage() {
     void queryClient.invalidateQueries({ queryKey: boardQueryKey(key) });
     void queryClient.invalidateQueries({ queryKey: projectsQueryKey, refetchType: "none" });
     void queryClient.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });
+    // Переход из «В работе» останавливает таймер на задаче (§6.4) — шапка должна это увидеть.
+    if (timerKey && projectKeyOf(timerKey) === key) void queryClient.invalidateQueries({ queryKey: meQueryKey });
   };
 
   // Карточка сразу встаёт в новую колонку; при ошибке возвращается только она — по своему
@@ -294,6 +299,8 @@ export function BoardPage() {
                   <Column key={status} status={status} count={list.length} state={columnState(status)}>
                     {list.map((t) => {
                       const free = status === "todo" && !t.assignee_id && !archived && !!actor?.member;
+                      const timerHere = !!timerKey && timerKey === t.key;
+                      const canStart = canStartTimer(t, meId, archived);
                       return (
                         <BoardCard
                           key={t.id}
@@ -309,6 +316,10 @@ export function BoardPage() {
                               : undefined
                           }
                           taking={take.isPending && take.variables?.id === t.id}
+                          timerRunning={timerHere}
+                          timer={
+                            timerHere || canStart ? <TimerButton taskKey={t.key!} canStart={canStart} className="card-timer" /> : undefined
+                          }
                         />
                       );
                     })}
@@ -322,6 +333,7 @@ export function BoardPage() {
                   <CardBody
                     task={dragging}
                     assignee={dragging.assignee_id ? memberById.get(dragging.assignee_id) : undefined}
+                    timerRunning={!!timerKey && timerKey === dragging.key}
                   />
                 </article>
               )}

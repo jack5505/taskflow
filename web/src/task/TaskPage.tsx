@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import type { TaskTask, TaskUpdateRequest } from "../api/client";
 import { errorText } from "../api/errors";
-import { useMe, useTimeZone } from "../auth/hooks";
+import { meQueryKey, useMe, useTimeZone } from "../auth/hooks";
 import { boardQueryKey } from "../board/cards";
 import { TransitionDialog } from "../board/TransitionDialog";
 import {
@@ -18,9 +18,11 @@ import {
 import { statusLabel } from "../lib/status";
 import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
+import { TimerButton } from "../timer/TimerButton";
+import { canStartTimer } from "../timer/timer";
 import { Attachments } from "./Attachments";
 import { Comments } from "./Comments";
-import { commentsQueryKey, historyQueryKey, taskQueryKey } from "./keys";
+import { commentsQueryKey, historyQueryKey, taskQueryKey, worklogsQueryKey } from "./keys";
 import { ConflictDialog, type Conflict } from "./ConflictDialog";
 import { describeHistory, type ValueContext } from "./history";
 import { MarkdownEditor, MarkdownView } from "./Markdown";
@@ -189,6 +191,12 @@ export function TaskPage() {
     void queryClient.invalidateQueries({ queryKey: boardQueryKey(projectKey), refetchType: "none" });
     void queryClient.invalidateQueries({ queryKey: projectsQueryKey, refetchType: "none" });
     void queryClient.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });
+    // Переход из «В работе» и удаление останавливают таймер на задаче с записью времени (§6.4).
+    // Задача в кэше уже из ответа сервера — обновляем шапку и журнал времени.
+    if (me.data?.timer?.task_key === key && next?.status !== "in_progress") {
+      void queryClient.invalidateQueries({ queryKey: meQueryKey });
+      void queryClient.invalidateQueries({ queryKey: worklogsQueryKey(key) });
+    }
   };
 
   // PATCH с If-Match версии, от которой шла правка. 409 VERSION_CONFLICT — в кэш актуальную
@@ -352,6 +360,7 @@ export function TaskPage() {
               {take.isPending ? "Берём…" : "Взять в работу"}
             </button>
           )}
+          <TimerButton taskKey={key} canStart={canStartTimer(t, me.data?.id, archived)} />
           {perms.remove && (
             <button
               type="button"
