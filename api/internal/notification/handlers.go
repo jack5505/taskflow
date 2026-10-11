@@ -75,6 +75,12 @@ type taskPayload struct {
 	ReporterID uuid.UUID  `json:"reporter_id"`
 }
 
+// base — общие поля уведомления о задаче: ключ, название, кто, проект.
+func (p taskPayload) base() map[string]any {
+	projectKey, _, _ := strings.Cut(p.Key, "-")
+	return map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "project_id": p.ProjectID, "project_key": projectKey}
+}
+
 // taskDeleted — §7.7 «удаление вашей задачи»: исполнителю и автору, кроме удалившего, и только
 // если они ещё активные участники проекта (иначе уведомление раскрыло бы чужой проект).
 func taskDeleted(db *gorm.DB) events.Handler {
@@ -84,9 +90,7 @@ func taskDeleted(db *gorm.DB) events.Handler {
 		if err != nil {
 			return err
 		}
-		projectKey, _, _ := strings.Cut(p.Key, "-")
-		return notifyTaskPeople(ctx, db, p.ProjectID, p.TaskID, p.ReporterID, p.AssigneeID, p.By, TypeTaskDeleted,
-			map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "project_id": p.ProjectID, "project_key": projectKey}, eventID)
+		return notifyTaskPeople(ctx, db, p.ProjectID, p.TaskID, p.ReporterID, p.AssigneeID, p.By, TypeTaskDeleted, p.base(), eventID)
 	}
 }
 
@@ -182,33 +186,40 @@ func taskAssigned(db *gorm.DB) events.Handler {
 		if err != nil {
 			return err
 		}
-		projectKey, _, _ := strings.Cut(p.Key, "-")
-		data := map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "project_id": p.ProjectID, "project_key": projectKey}
-		return notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{p.AssigneeID}, p.By, TypeAssigned, data, eventID)
+		return notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{p.AssigneeID}, p.By, TypeAssigned, p.base(), eventID)
 	}
 }
 
 // taskTransitioned — §7.7 «смена статуса» и «возврат на доработку»: review → in_progress — исполнителю
-// (rework, с причиной); → review — автору (review_requested); остальные переходы — исполнителю и
-// автору (status). Кроме того, кто перевёл; только активным участникам проекта.
+// (rework, с причиной); → review — автору (review_requested), исполнителю — смена статуса; остальные
+// переходы — исполнителю и автору (status). Если переход сменил исполнителя, прежний тоже узнаёт о
+// смене статуса, а новый — нет: ему пришло назначение (task.assigned). Кроме того, кто перевёл;
+// только активным участникам проекта.
 func taskTransitioned(db *gorm.DB) events.Handler {
 	return func(ctx context.Context, env events.Envelope) error {
 		var p struct {
 			taskPayload
-			From    string `json:"from"`
-			To      string `json:"to"`
-			Comment string `json:"comment"`
+			From         string     `json:"from"`
+			To           string     `json:"to"`
+			Comment      string     `json:"comment"`
+			PrevAssignee *uuid.UUID `json:"prev_assignee_id"`
 		}
 		eventID, err := decode(env, &p)
 		if err != nil {
 			return err
 		}
-		projectKey, _, _ := strings.Cut(p.Key, "-")
-		data := map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "from": p.From, "to": p.To,
-			"project_id": p.ProjectID, "project_key": projectKey}
+		data := p.base()
+		data["from"], data["to"] = p.From, p.To
 		if p.Comment != "" {
 			data["comment"] = p.Comment
 		}
+		// prev_assignee_id есть (в том числе null), только если переход сменил исполнителя.
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(env.Payload, &raw); err != nil {
+			return fmt.Errorf("notification: %s payload: %w", env.Type, err)
+		}
+		_, reassigned := raw["prev_assignee_id"]
+		var status []uuid.UUID // кому — смена статуса
 		switch {
 		case p.From == "review" && p.To == "in_progress":
 			if p.AssigneeID == nil {
@@ -216,47 +227,77 @@ func taskTransitioned(db *gorm.DB) events.Handler {
 			}
 			return notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{*p.AssigneeID}, p.By, TypeRework, data, eventID)
 		case p.To == "review":
-			return notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{p.ReporterID}, p.By, TypeReview, data, eventID)
+			if err := notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{p.ReporterID}, p.By, TypeReview, data, eventID); err != nil {
+				return err
+			}
+		default:
+			status = append(status, p.ReporterID)
 		}
-		return notifyTaskPeople(ctx, db, p.ProjectID, p.TaskID, p.ReporterID, p.AssigneeID, p.By, TypeStatus, data, eventID)
+		if p.AssigneeID != nil && *p.AssigneeID != p.ReporterID && !reassigned {
+			status = append(status, *p.AssigneeID)
+		}
+		if p.PrevAssignee != nil && *p.PrevAssignee != p.ReporterID {
+			status = append(status, *p.PrevAssignee)
+		}
+		return notifyUsers(ctx, db, p.ProjectID, p.TaskID, status, p.By, TypeStatus, data, eventID)
 	}
 }
 
-// userDeactivated — §3.1: менеджеры проектов деактивированного получают уведомление со списком
-// освобождённых задач этого проекта. Проекты — где он участник (строки участия остаются).
+// userDeactivated — §3.1: менеджеры проектов, где освобождены задачи деактивированного, получают
+// одно уведомление на менеджера (уникальность — событие и получатель) со списком задач по проектам.
+// Проект задачи — из строки задачи, а не из префикса ключа. Деактивировавший себя не уведомляет.
 func userDeactivated(db *gorm.DB) events.Handler {
 	return func(ctx context.Context, env events.Envelope) error {
 		var p struct {
-			UserID   uuid.UUID `json:"user_id"`
-			Released []string  `json:"released_tasks"`
+			UserID   uuid.UUID  `json:"user_id"`
+			Released []string   `json:"released_tasks"`
+			By       *uuid.UUID `json:"by"`
 		}
 		eventID, err := decode(env, &p)
-		if err != nil {
+		if err != nil || len(p.Released) == 0 {
 			return err
 		}
-		var rows []struct {
-			ProjectID uuid.UUID
-			Key       string
-			ManagerID uuid.UUID
-			Name      string
+		var name string
+		if err := db.WithContext(ctx).Raw(`SELECT display_name FROM users WHERE id = ?`, p.UserID).Scan(&name).Error; err != nil {
+			return fmt.Errorf("notification: deactivated name: %w", err)
 		}
-		if err := db.WithContext(ctx).Raw(`SELECT pr.id AS project_id, pr.key, mm.user_id AS manager_id, du.display_name AS name
-			FROM project_members dm JOIN projects pr ON pr.id = dm.project_id AND pr.deleted_at IS NULL
-			JOIN users du ON du.id = dm.user_id
-			JOIN project_members mm ON mm.project_id = pr.id AND mm.role = 'manager' AND mm.user_id <> dm.user_id
+		var rows []struct {
+			ManagerID  uuid.UUID
+			ProjectID  uuid.UUID
+			ProjectKey string
+			TaskKey    string
+		}
+		if err := db.WithContext(ctx).Raw(`SELECT mm.user_id AS manager_id, pr.id AS project_id, pr.key AS project_key, t.key AS task_key
+			FROM tasks t JOIN projects pr ON pr.id = t.project_id AND pr.deleted_at IS NULL
+			JOIN project_members mm ON mm.project_id = pr.id AND mm.role = 'manager' AND mm.user_id <> ?
 			JOIN users mu ON mu.id = mm.user_id AND mu.is_active
-			WHERE dm.user_id = ? ORDER BY pr.key, mm.user_id`, p.UserID).Scan(&rows).Error; err != nil {
+			WHERE t.key IN ? ORDER BY mm.user_id, pr.key, t.number`, p.UserID, p.Released).Scan(&rows).Error; err != nil {
 			return fmt.Errorf("notification: deactivated managers: %w", err)
 		}
+		type project struct {
+			ProjectID  uuid.UUID `json:"project_id"`
+			ProjectKey string    `json:"project_key"`
+			Tasks      []string  `json:"released_tasks"`
+		}
+		byManager := map[uuid.UUID][]project{}
+		var order []uuid.UUID
 		for _, r := range rows {
-			released := []string{}
-			for _, k := range p.Released {
-				if strings.HasPrefix(k, r.Key+"-") {
-					released = append(released, k)
-				}
+			list, seen := byManager[r.ManagerID]
+			if !seen {
+				order = append(order, r.ManagerID)
 			}
-			if err := Create(ctx, db, New{UserID: r.ManagerID, Type: TypeDeactivated, EventID: &eventID, Payload: map[string]any{
-				"user_id": p.UserID, "display_name": r.Name, "project_id": r.ProjectID, "project_key": r.Key, "released_tasks": released,
+			if n := len(list); n == 0 || list[n-1].ProjectID != r.ProjectID {
+				list = append(list, project{ProjectID: r.ProjectID, ProjectKey: r.ProjectKey})
+			}
+			list[len(list)-1].Tasks = append(list[len(list)-1].Tasks, r.TaskKey)
+			byManager[r.ManagerID] = list
+		}
+		for _, m := range order {
+			if p.By != nil && *p.By == m {
+				continue // о собственном действии не уведомляем
+			}
+			if err := Create(ctx, db, New{UserID: m, Type: TypeDeactivated, EventID: &eventID, Payload: map[string]any{
+				"user_id": p.UserID, "display_name": name, "by": p.By, "projects": byManager[m],
 			}}); err != nil {
 				return err
 			}

@@ -3,6 +3,7 @@ import type { InfiniteData } from "@tanstack/react-query";
 import type { NotificationNotification, NotificationPage } from "../api/client";
 import { formatDuration } from "../lib/duration";
 import { formatDate } from "../lib/format";
+import { statusLabel } from "../lib/status";
 
 /** Общий префикс: инвалидация по нему обновляет и счётчик, и список. */
 export const notificationsQueryKey = ["notifications"] as const;
@@ -48,6 +49,34 @@ export function describeNotification(n: NotificationNotification): NotificationT
   switch (n.type) {
     case "comment":
       return { text: `Новый комментарий к задаче ${taskRef(p)}`, detail: snippet(str(p, "body")) || undefined, link: taskLink };
+    case "assigned":
+      return { text: `Вас назначили исполнителем задачи ${taskRef(p)}`, link: taskLink };
+    case "status":
+      return {
+        text: `Задача ${taskRef(p)}: ${statusLabel(str(p, "from"))} → ${statusLabel(str(p, "to"))}`,
+        detail: snippet(str(p, "comment")) || undefined,
+        link: taskLink,
+      };
+    case "rework":
+      return {
+        text: `Задачу ${taskRef(p)} вернули на доработку`,
+        detail: snippet(str(p, "comment")) || undefined,
+        link: taskLink,
+      };
+    case "review_requested":
+      return { text: `Задача ${taskRef(p)} отправлена на проверку`, link: taskLink };
+    case "user_deactivated": {
+      const projects = Array.isArray(p.projects) ? (p.projects as Payload[]) : [];
+      const tasks = projects.flatMap((pr) =>
+        Array.isArray(pr.released_tasks) ? (pr.released_tasks as unknown[]).filter((k) => typeof k === "string") : [],
+      );
+      const first = projects[0] ? str(projects[0], "project_key") : "";
+      return {
+        text: `Пользователь ${str(p, "display_name")} деактивирован`,
+        detail: tasks.length ? `Освобождены задачи: ${tasks.join(", ")}` : undefined,
+        link: first ? `/projects/${first}` : undefined,
+      };
+    }
     case "task_deleted":
       // Удалённую задачу видит только администратор системы — ссылку не даём.
       return { text: `Задача ${taskRef(p)} удалена` };

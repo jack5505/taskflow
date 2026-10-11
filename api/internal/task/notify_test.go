@@ -12,6 +12,8 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/notification"
+	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/testutil"
 )
 
 // process прогоняет через обработчики уведомлений события typ, у которых payload->>field = value.
@@ -87,19 +89,75 @@ func TestTaskEventNotifications(t *testing.T) {
 	require.Empty(t, f.notes(t, f.memberU.ID, notification.TypeReview), "свой переход на проверку — без уведомления себе")
 }
 
-// §3.1: менеджеры проектов деактивированного получают список освобождённых задач своего проекта.
+// Переходы, меняющие исполнителя, и переходы менеджера: прежний исполнитель узнаёт, что задачу
+// сняли; исполнитель — о переводе на проверку; новый при переоткрытии — только назначение.
+func TestTransitionNotifiesAssignees(t *testing.T) {
+	f := newFixture(t)
+	other, _ := f.user(t, false)
+	f.join(t, other, "member")
+
+	released := f.working(t) // задача f.member в работе, автор — менеджер
+	f.transition(t, released, f.manager, `{"to":"todo"}`)
+	f.process(t, events.TaskTransitioned, "key", released)
+	notes := f.notes(t, f.memberU.ID, notification.TypeStatus)
+	require.Len(t, notes, 1, "прежнему исполнителю — задачу вернули в todo")
+	require.Equal(t, "todo", notes[0]["to"])
+
+	review := f.working(t)
+	f.transition(t, review, f.manager, `{"to":"review"}`)
+	f.process(t, events.TaskTransitioned, "key", review)
+	require.Len(t, f.notes(t, f.memberU.ID, notification.TypeStatus), 2, "исполнителю — его задачу отправил на проверку менеджер")
+
+	f.transition(t, review, f.manager, `{"to":"done"}`)
+	f.transition(t, review, f.manager, `{"to":"in_progress","assignee_id":"`+other.ID.String()+`"}`)
+	f.process(t, events.TaskTransitioned, "key", review)
+	f.process(t, events.TaskAssigned, "key", review)
+	require.Len(t, f.notes(t, other.ID, notification.TypeAssigned), 1)
+	require.Empty(t, f.notes(t, other.ID, notification.TypeStatus), "новому исполнителю хватает назначения")
+	require.Len(t, f.notes(t, f.memberU.ID, notification.TypeStatus), 4, "прежнему: принята и переоткрыта на другого")
+}
+
+// §3.1: менеджер получает одно уведомление со списком освобождённых задач по проектам; проекты без
+// освобождённых задач не упоминаются; деактивировавший администратор о своём действии не узнаёт.
 func TestDeactivationNotifiesManagers(t *testing.T) {
 	f := newFixture(t)
 	key := f.working(t)
 	free := f.assigned(t)
-	rec, _ := f.do(t, "PATCH", "/api/v1/users/"+f.memberU.ID.String(), f.admin, `{"is_active":false}`)
+
+	second := project.New(testutil.UniqueKey(t), "Второй")
+	require.NoError(t, f.db.Create(second).Error)
+	empty := project.New(testutil.UniqueKey(t), "Пустой")
+	require.NoError(t, f.db.Create(empty).Error)
+	adminU, adminToken := f.user(t, true)
+	for _, m := range []project.Member{
+		{ProjectID: second.ID, UserID: f.managerU.ID, Role: project.RoleManager},
+		{ProjectID: second.ID, UserID: f.memberU.ID, Role: project.RoleMember},
+		{ProjectID: empty.ID, UserID: f.managerU.ID, Role: project.RoleManager},
+		{ProjectID: empty.ID, UserID: f.memberU.ID, Role: project.RoleMember},
+		{ProjectID: f.p.ID, UserID: adminU.ID, Role: project.RoleManager},
+	} {
+		require.NoError(t, f.db.Create(&m).Error)
+	}
+	rec, m := f.do(t, "POST", "/api/v1/projects/"+second.Key+"/tasks", f.manager, `{"title":"Во втором","assignee_id":"`+f.memberU.ID.String()+`"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	inSecond := m["key"].(string)
+
+	rec, _ = f.do(t, "PATCH", "/api/v1/users/"+f.memberU.ID.String(), adminToken, `{"is_active":false}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	f.process(t, events.UserDeactivated, "user_id", f.memberU.ID.String())
 	notes := f.notes(t, f.managerU.ID, notification.TypeDeactivated)
-	require.Len(t, notes, 1)
-	require.Equal(t, f.p.Key, notes[0]["project_key"])
+	require.Len(t, notes, 1, "одно уведомление на менеджера")
 	require.Equal(t, "Пользователь", notes[0]["display_name"])
-	require.ElementsMatch(t, []any{key, free}, notes[0]["released_tasks"])
+	projects := notes[0]["projects"].([]any)
+	require.Len(t, projects, 2, "проект без освобождённых задач не упоминается")
+	got := map[string][]any{}
+	for _, p := range projects {
+		p := p.(map[string]any)
+		got[p["project_key"].(string)] = p["released_tasks"].([]any)
+	}
+	require.ElementsMatch(t, []any{key, free}, got[f.p.Key])
+	require.Equal(t, []any{inSecond}, got[second.Key])
+	require.Empty(t, f.notes(t, adminU.ID, notification.TypeDeactivated), "о собственном действии не уведомляем")
 	require.Empty(t, f.notes(t, f.memberU.ID, notification.TypeDeactivated))
 }

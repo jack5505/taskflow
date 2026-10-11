@@ -1,7 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { badgeText, describeNotification, markReadInCache, snippet, type NotificationsData } from "./notifications";
+import { statusLabel } from "../lib/status";
 
 describe("describeNotification", () => {
+  it("назначение, смена статуса, доработка, проверка, деактивация", () => {
+    expect(describeNotification({ type: "assigned", payload: { key: "TM-1", title: "Отчёт" } })).toEqual({
+      text: "Вас назначили исполнителем задачи TM-1 «Отчёт»",
+      link: "/tasks/TM-1",
+    });
+    const status = describeNotification({ type: "status", payload: { key: "TM-1", from: "review", to: "done" } });
+    expect(status.text).toBe(`Задача TM-1: ${statusLabel("review")} → ${statusLabel("done")}`);
+    expect(status.detail).toBeUndefined();
+    expect(
+      describeNotification({ type: "rework", payload: { key: "TM-1", comment: "Нет итогов" } }).detail,
+    ).toBe("Нет итогов");
+    expect(describeNotification({ type: "review_requested", payload: { key: "TM-1" } }).link).toBe("/tasks/TM-1");
+    expect(
+      describeNotification({
+        type: "user_deactivated",
+        payload: {
+          display_name: "Иван",
+          projects: [
+            { project_key: "TM", released_tasks: ["TM-1", "TM-2"] },
+            { project_key: "AB", released_tasks: ["AB-7"] },
+          ],
+        },
+      }),
+    ).toEqual({ text: "Пользователь Иван деактивирован", detail: "Освобождены задачи: TM-1, TM-2, AB-7", link: "/projects/TM" });
+  });
+
   it("комментарий: ключ, название, начало текста, ссылка на задачу", () => {
     expect(
       describeNotification({ type: "comment", payload: { key: "TM-42", title: "Отчёт", body: "Готово,\n\nсмотрите" } }),

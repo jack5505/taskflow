@@ -256,6 +256,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 		return ErrInvalidTransition(from, to)
 	}
 	uid := a.user.ID
+	prevAssignee := t.AssigneeID
 	isAssignee := t.AssigneeID != nil && *t.AssigneeID == uid
 	isReporter := t.ReporterID == uid
 	now := time.Now()
@@ -349,6 +350,11 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 		"task_id": t.ID, "key": t.Key, "title": t.Title, "project_id": t.ProjectID, "from": from, "to": to,
 		"by": uid, "assignee_id": t.AssigneeID, "reporter_id": t.ReporterID,
 	}
+	if !samePtr(prevAssignee, t.AssigneeID) {
+		// Переход сменил исполнителя (снят при возврате в todo, назначен при переоткрытии):
+		// прежнему — уведомление о смене статуса, новому хватает task.assigned.
+		payload["prev_assignee_id"] = prevAssignee
+	}
 	if comment != "" {
 		payload["comment"] = comment
 	}
@@ -410,12 +416,17 @@ func setAssignee(tx *gorm.DB, t *Task, id *uuid.UUID, by uuid.UUID) error {
 		return err
 	}
 	t.AssigneeID = id
-	if id != nil && *id != by {
-		return events.Publish(tx, events.TaskAssigned, map[string]any{
-			"task_id": t.ID, "key": t.Key, "title": t.Title, "project_id": t.ProjectID, "assignee_id": *id, "by": by,
-		})
+	return publishAssigned(tx, t, by)
+}
+
+// publishAssigned — task.assigned (§8.7, §7.7), когда исполнителем назначен не тот, кто действует.
+func publishAssigned(tx *gorm.DB, t *Task, by uuid.UUID) error {
+	if t.AssigneeID == nil || *t.AssigneeID == by {
+		return nil
 	}
-	return nil
+	return events.Publish(tx, events.TaskAssigned, map[string]any{
+		"task_id": t.ID, "key": t.Key, "title": t.Title, "project_id": t.ProjectID, "assignee_id": *t.AssigneeID, "by": by,
+	})
 }
 
 // moveTo — перенос в секцию (спринт или бэклог) в её конец, с записью в историю.
