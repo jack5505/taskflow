@@ -39,12 +39,18 @@ export function displayNameError(name: string): string {
   return n >= 1 && n <= 80 ? "" : "Имя — от 1 до 80 символов";
 }
 
-/** Пояс IANA, который знает браузер. Список подсказок неполон (нет ссылок вроде UTC) — проверяем так. */
-export function isKnownTimeZone(tz: string): boolean {
-  if (!tz.trim()) return false;
+/**
+ * Пояс IANA для PATCH /me. Сервер проверяет его через Go time.LoadLocation — с учётом регистра и
+ * без смещений вида «+03:00», а Intl мягче. Поэтому годится пояс из списка браузера или имя, которое
+ * Intl знает и возвращает ровно в том же написании (так проходят ссылки вроде UTC, которых нет в списке).
+ */
+export function isKnownTimeZone(tz: string, zones: readonly string[] = []): boolean {
+  const v = tz.trim();
+  if (!v) return false;
+  if (zones.includes(v)) return true;
+  if (!/^[A-Za-z]/.test(v)) return false;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz.trim() });
-    return true;
+    return new Intl.DateTimeFormat("en-US", { timeZone: v }).resolvedOptions().timeZone === v;
   } catch {
     return false;
   }

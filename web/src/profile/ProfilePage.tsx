@@ -42,10 +42,15 @@ export function ProfilePage() {
   );
 }
 
-/** Имя и часовой пояс: отправляются только изменённые поля. */
+/**
+ * Имя и часовой пояс: отправляются только поля, изменённые в форме. Сравниваем с тем, что было
+ * в форме при открытии (или после сохранения), а не с последним профилем: профиль могли изменить
+ * в другой вкладке, и нетронутое поле не должно молча вернуть прежнее значение.
+ */
 function AccountForm({ me }: { me: MeProfile }) {
-  const [name, setName] = useState(me.display_name ?? "");
-  const [timezone, setTimezone] = useState(me.timezone ?? "");
+  const [base, setBase] = useState({ display_name: me.display_name ?? "", timezone: me.timezone ?? "" });
+  const [name, setName] = useState(base.display_name);
+  const [timezone, setTimezone] = useState(base.timezone);
   const [saved, setSaved] = useState(false);
   const [touched, setTouched] = useState(false);
   const zones = useMemo(() => timeZones(), []);
@@ -54,7 +59,7 @@ function AccountForm({ me }: { me: MeProfile }) {
   const fields = fieldErrors(parseApiError(update.error));
   const reason = (f: string) => fields.find((e) => e.field === f)?.reason;
   const nameError = touched ? displayNameError(name) : "";
-  const tzError = touched && !isKnownTimeZone(timezone) ? "Выберите часовой пояс из списка" : "";
+  const tzError = touched && !isKnownTimeZone(timezone, zones) ? "Выберите часовой пояс из списка" : "";
   const generalError = update.isError && fields.length === 0 ? errorText(update.error) : "";
 
   const edit = (set: (v: string) => void, v: string) => {
@@ -66,10 +71,19 @@ function AccountForm({ me }: { me: MeProfile }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setTouched(true);
-    if (displayNameError(name) || !isKnownTimeZone(timezone)) return;
-    const body = profileChanges(me, name, timezone);
+    if (displayNameError(name) || !isKnownTimeZone(timezone, zones)) return;
+    const body = profileChanges(base, name, timezone);
     if (Object.keys(body).length === 0) return setSaved(true);
-    update.mutate(body, { onSuccess: () => setSaved(true) });
+    update.mutate(body, {
+      onSuccess: (fresh) => {
+        // Форма — с тем, что сохранил сервер (имя он обрезает).
+        const next = { display_name: fresh.display_name ?? "", timezone: fresh.timezone ?? "" };
+        setBase(next);
+        setName(next.display_name);
+        setTimezone(next.timezone);
+        setSaved(true);
+      },
+    });
   };
 
   return (
@@ -78,7 +92,6 @@ function AccountForm({ me }: { me: MeProfile }) {
       <label>
         Имя
         <input
-          maxLength={80}
           autoComplete="name"
           value={name}
           onChange={(e) => edit(setName, e.target.value)}
@@ -169,18 +182,31 @@ function SecurityBlock({ me }: { me: MeProfile }) {
   );
 }
 
-/** Личные уведомления §8.7: по умолчанию все включены, отправляются только изменённые. */
+/**
+ * Личные уведомления §8.7: по умолчанию все включены, отправляются только переключатели,
+ * изменённые в форме (база — как в AccountForm: состояние при открытии или после сохранения).
+ */
 function NotificationsForm({ me }: { me: MeProfile }) {
-  const initial = effectiveNotifications(me.notification_settings);
-  const [events, setEvents] = useState(initial);
+  const [base, setBase] = useState(() => effectiveNotifications(me.notification_settings));
+  const [events, setEvents] = useState(base);
   const [saved, setSaved] = useState(false);
   const update = useUpdateMe();
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const changes = changedNotifications(initial, events);
+    const changes = changedNotifications(base, events);
     if (Object.keys(changes).length === 0) return setSaved(true);
-    update.mutate({ notification_settings: changes }, { onSuccess: () => setSaved(true) });
+    update.mutate(
+      { notification_settings: changes },
+      {
+        onSuccess: (fresh) => {
+          const next = effectiveNotifications(fresh.notification_settings);
+          setBase(next);
+          setEvents(next);
+          setSaved(true);
+        },
+      },
+    );
   };
 
   return (

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { MeProfile } from "../api/client";
 import { errorText } from "../api/errors";
 import { useNow } from "../timer/hooks";
@@ -12,6 +13,10 @@ import { formatCountdown, secondsLeft, telegramAccount, type TelegramLinkCode } 
 export function TelegramBlock({ me }: { me: MeProfile }) {
   const account = telegramAccount(me);
   const link = useLinkCode();
+  // Последний выданный код держим сами: у мутации data сбрасывается на время нового запроса,
+  // а при ошибке «Обновить» прежний код должен остаться на экране.
+  const [code, setCode] = useState<TelegramLinkCode | null>(null);
+  const request = () => link.mutate(undefined, { onSuccess: setCode });
 
   return (
     <section className="panel">
@@ -29,11 +34,11 @@ export function TelegramBlock({ me }: { me: MeProfile }) {
         <>
           <p className="muted">Telegram не привязан: личные уведомления не приходят, команды бота недоступны.</p>
           {requestLinkCode ? (
-            link.data ? (
-              <LinkCode code={link.data} refreshing={link.isPending} onRefresh={() => link.mutate()} />
+            code ? (
+              <LinkCode code={code} refreshing={link.isPending} onRefresh={request} />
             ) : (
               <div className="actions">
-                <button type="button" className="primary" disabled={link.isPending} onClick={() => link.mutate()}>
+                <button type="button" className="primary" disabled={link.isPending} onClick={request}>
                   Привязать Telegram
                 </button>
               </div>

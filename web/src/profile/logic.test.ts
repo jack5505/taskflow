@@ -69,8 +69,15 @@ describe("имя и часовой пояс (§3.1, §7.8)", () => {
   it("часовой пояс — только известный IANA", () => {
     expect(isKnownTimeZone("Europe/Moscow")).toBe(true);
     expect(isKnownTimeZone("UTC")).toBe(true);
+    expect(isKnownTimeZone("Asia/Tashkent", ["Asia/Tashkent"])).toBe(true);
     expect(isKnownTimeZone("Moscow")).toBe(false);
     expect(isKnownTimeZone("")).toBe(false);
+  });
+
+  it("часовой пояс — в написании, которое примет сервер (Go LoadLocation)", () => {
+    expect(isKnownTimeZone("europe/moscow")).toBe(false);
+    expect(isKnownTimeZone("+03:00")).toBe(false);
+    expect(isKnownTimeZone("-0500")).toBe(false);
   });
 });
 
