@@ -77,13 +77,13 @@ func boolQuery(c *gin.Context, name string) (bool, error) {
 // list — проекты пользователя.
 //
 // @Summary      Проекты
-// @Description  Проекты, где пользователь участник; администратору системы — все. По умолчанию — не архивные; archived=true — только архив; deleted=true — только удалённые (администратор).
+// @Description  Проекты, где пользователь участник; администратору системы — все. По умолчанию — не архивные; archived=true — только архив; deleted=true — только удалённые (администратор). В карточке — активный спринт (null, если нет), число открытых задач (todo, in_progress, review) и открытых задач на текущем пользователе (§7.2).
 // @Tags         projects
 // @Produce      json
 // @Security     BearerAuth
 // @Param        archived  query     bool  false  "только архивные"
 // @Param        deleted   query     bool  false  "только удалённые (администратор)"
-// @Success      200       {array}   View
+// @Success      200       {array}   ListItem
 // @Failure      400       {object}  apierr.Response  "VALIDATION_FAILED"
 // @Failure      401       {object}  apierr.Response
 // @Failure      403       {object}  apierr.Response  "FORBIDDEN: deleted=true не администратору"

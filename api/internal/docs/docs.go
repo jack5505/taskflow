@@ -479,7 +479,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Проекты, где пользователь участник; администратору системы — все. По умолчанию — не архивные; archived=true — только архив; deleted=true — только удалённые (администратор).",
+                "description": "Проекты, где пользователь участник; администратору системы — все. По умолчанию — не архивные; archived=true — только архив; deleted=true — только удалённые (администратор). В карточке — активный спринт (null, если нет), число открытых задач (todo, in_progress, review) и открытых задач на текущем пользователе (§7.2).",
                 "produces": [
                     "application/json"
                 ],
@@ -507,7 +507,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/project.View"
+                                "$ref": "#/definitions/project.ListItem"
                             }
                         }
                     },
@@ -2284,6 +2284,82 @@ const docTemplate = `{
                 },
                 "unread_count": {
                     "type": "integer"
+                }
+            }
+        },
+        "project.ActiveSprint": {
+            "type": "object",
+            "properties": {
+                "end_date": {
+                    "type": "string",
+                    "example": "2026-10-14"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "start_date": {
+                    "type": "string",
+                    "example": "2026-10-01"
+                }
+            }
+        },
+        "project.ListItem": {
+            "type": "object",
+            "properties": {
+                "active_sprint": {
+                    "$ref": "#/definitions/project.ActiveSprint"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "daily_summary_time": {
+                    "type": "string"
+                },
+                "deleted_at": {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_archived": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "my_open_tasks": {
+                    "type": "integer"
+                },
+                "my_role": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notification_settings": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "open_tasks": {
+                    "type": "integer"
+                },
+                "telegram_chat_id": {
+                    "type": "integer"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },

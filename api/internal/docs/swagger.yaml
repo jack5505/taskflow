@@ -201,6 +201,57 @@ definitions:
       unread_count:
         type: integer
     type: object
+  project.ActiveSprint:
+    properties:
+      end_date:
+        example: "2026-10-14"
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      start_date:
+        example: "2026-10-01"
+        type: string
+    type: object
+  project.ListItem:
+    properties:
+      active_sprint:
+        $ref: '#/definitions/project.ActiveSprint'
+      created_at:
+        type: string
+      daily_summary_time:
+        type: string
+      deleted_at:
+        format: date-time
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_archived:
+        type: boolean
+      key:
+        type: string
+      my_open_tasks:
+        type: integer
+      my_role:
+        type: string
+      name:
+        type: string
+      notification_settings:
+        additionalProperties:
+          type: boolean
+        type: object
+      open_tasks:
+        type: integer
+      telegram_chat_id:
+        type: integer
+      timezone:
+        type: string
+      updated_at:
+        type: string
+    type: object
   project.MemberView:
     properties:
       display_name:
@@ -981,7 +1032,9 @@ paths:
     get:
       description: Проекты, где пользователь участник; администратору системы — все.
         По умолчанию — не архивные; archived=true — только архив; deleted=true — только
-        удалённые (администратор).
+        удалённые (администратор). В карточке — активный спринт (null, если нет),
+        число открытых задач (todo, in_progress, review) и открытых задач на текущем
+        пользователе (§7.2).
       parameters:
       - description: только архивные
         in: query
@@ -998,7 +1051,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/project.View'
+              $ref: '#/definitions/project.ListItem'
             type: array
         "400":
           description: VALIDATION_FAILED

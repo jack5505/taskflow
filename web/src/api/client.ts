@@ -129,6 +129,35 @@ export interface NotificationPage {
   unread_count?: number;
 }
 
+export interface ProjectActiveSprint {
+  /** @example "2026-10-14" */
+  end_date?: string;
+  id?: string;
+  name?: string;
+  /** @example "2026-10-01" */
+  start_date?: string;
+}
+
+export interface ProjectListItem {
+  active_sprint?: ProjectActiveSprint;
+  created_at?: string;
+  daily_summary_time?: string;
+  /** @format date-time */
+  deleted_at?: string;
+  description?: string;
+  id?: string;
+  is_archived?: boolean;
+  key?: string;
+  my_open_tasks?: number;
+  my_role?: string;
+  name?: string;
+  notification_settings?: Record<string, boolean>;
+  open_tasks?: number;
+  telegram_chat_id?: number;
+  timezone?: string;
+  updated_at?: string;
+}
+
 export interface ProjectMemberView {
   display_name?: string;
   email?: string;
@@ -870,7 +899,7 @@ export class Api<
       }),
 
     /**
-     * @description Проекты, где пользователь участник; администратору системы — все. По умолчанию — не архивные; archived=true — только архив; deleted=true — только удалённые (администратор).
+     * @description Проекты, где пользователь участник; администратору системы — все. По умолчанию — не архивные; archived=true — только архив; deleted=true — только удалённые (администратор). В карточке — активный спринт (null, если нет), число открытых задач (todo, in_progress, review) и открытых задач на текущем пользователе (§7.2).
      *
      * @tags projects
      * @name V1ProjectsList
@@ -887,7 +916,7 @@ export class Api<
       },
       params: RequestParams = {},
     ) =>
-      this.request<ProjectView[], ApierrResponse>({
+      this.request<ProjectListItem[], ApierrResponse>({
         path: `/api/v1/projects`,
         method: "GET",
         query: query,
