@@ -20,6 +20,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -44,15 +45,24 @@ type Profile struct {
 	NotificationSettings map[string]bool `json:"notification_settings"`
 	Projects             []MyProject     `json:"projects"`
 	Timer                *task.TimerView `json:"timer" extensions:"x-nullable"`
+	// TelegramBotEnabled — бот подключён (задан TELEGRAM_BOT_TOKEN): можно получить код привязки.
+	TelegramBotEnabled bool `json:"telegram_bot_enabled"`
 }
 
 // Service — профиль и уведомления текущего пользователя.
 type Service struct {
-	db  *gorm.DB
-	now func() time.Time
+	db          *gorm.DB
+	now         func() time.Time
+	telegramBot bool
 }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db, now: time.Now} }
+
+// WithTelegramBot — бот включён: в профиле можно получить код привязки (§8.1).
+func (s *Service) WithTelegramBot(enabled bool) *Service {
+	s.telegramBot = enabled
+	return s
+}
 
 // Profile — данные для GET /me.
 func (s *Service) Profile(ctx context.Context, u *user.User) (*Profile, error) {
@@ -67,7 +77,8 @@ func (s *Service) Profile(ctx context.Context, u *user.User) (*Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Profile{User: u, NotificationSettings: user.EffectiveNotifications(u.NotificationSettings), Projects: projects, Timer: timer}, nil
+	return &Profile{User: u, NotificationSettings: user.EffectiveNotifications(u.NotificationSettings), Projects: projects, Timer: timer,
+		TelegramBotEnabled: s.telegramBot}, nil
 }
 
 // Update — PATCH /me: имя, часовой пояс, личные уведомления §8.7 (частичный объект).
@@ -145,11 +156,12 @@ func (s *Service) MarkRead(ctx context.Context, u *user.User, ids []uuid.UUID) (
 // Handlers — /api/v1/me.
 type Handlers struct {
 	svc         *Service
+	accounts    *telegram.Accounts
 	requireAuth gin.HandlerFunc
 }
 
-func NewHandlers(svc *Service, requireAuth gin.HandlerFunc) *Handlers {
-	return &Handlers{svc: svc, requireAuth: requireAuth}
+func NewHandlers(svc *Service, accounts *telegram.Accounts, requireAuth gin.HandlerFunc) *Handlers {
+	return &Handlers{svc: svc, accounts: accounts, requireAuth: requireAuth}
 }
 
 func (h *Handlers) Register(api *gin.RouterGroup) {
@@ -158,6 +170,48 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.PATCH("", h.patch)
 	g.GET("/notifications", h.notifications)
 	g.POST("/notifications/read", h.read)
+	// Без бота код привязать некуда: маршрута нет (404). Отвязка работает всегда.
+	if h.svc.telegramBot {
+		g.POST("/telegram-link-code", h.linkCode)
+	}
+	g.DELETE("/telegram", h.unlink)
+}
+
+// linkCode — код привязки Telegram.
+//
+// @Summary      Код привязки Telegram
+// @Description  Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный. Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me), иначе 404.
+// @Tags         me
+// @Produce      json
+// @Security     BearerAuth
+// @Success      201  {object}  telegram.LinkCode
+// @Failure      401  {object}  apierr.Response
+// @Failure      404  {object}  apierr.Response  "бот не подключён"
+// @Router       /api/v1/me/telegram-link-code [post]
+func (h *Handlers) linkCode(c *gin.Context) {
+	code, err := h.accounts.IssueLinkCode(c.Request.Context(), auth.CurrentUser(c).ID)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, code)
+}
+
+// unlink — отвязать Telegram.
+//
+// @Summary      Отвязать Telegram
+// @Description  Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start. Без привязки — тоже 204.
+// @Tags         me
+// @Security     BearerAuth
+// @Success      204
+// @Failure      401  {object}  apierr.Response
+// @Router       /api/v1/me/telegram [delete]
+func (h *Handlers) unlink(c *gin.Context) {
+	if err := h.accounts.Unlink(c.Request.Context(), auth.CurrentUser(c).ID); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // get — текущий пользователь.

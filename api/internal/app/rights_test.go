@@ -43,7 +43,9 @@ type world struct {
 	key                              string
 }
 
-func newWorld(t *testing.T) *world {
+// newWorld — сервер со всеми маршрутами и пользователями ролей; opts меняют настройки
+// (например, включают бота).
+func newWorld(t *testing.T, opts ...func(*config.Config)) *world {
 	t.Helper()
 	g := testutil.SharedDB(t)
 	addr := testutil.SharedRedisAddr(t)
@@ -52,6 +54,9 @@ func newWorld(t *testing.T) *world {
 	t.Cleanup(func() { _ = rdb.Close(); _ = jobs.Close() })
 	cfg := &config.Config{Env: "test", BaseURL: "http://localhost", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: time.Hour,
 		AttachmentsDir: t.TempDir(), AttachmentMaxBytes: 50 << 20}
+	for _, o := range opts {
+		o(cfg)
+	}
 	authSvc := auth.NewService(cfg, g, rdb)
 	w := &world{db: g, r: app.NewServer(cfg, g, rdb, jobs).Router()}
 

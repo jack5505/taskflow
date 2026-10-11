@@ -138,6 +138,10 @@ definitions:
         items:
           $ref: '#/definitions/me.MyProject'
         type: array
+      telegram_bot_enabled:
+        description: 'TelegramBotEnabled — бот подключён (задан TELEGRAM_BOT_TOKEN):
+          можно получить код привязки.'
+        type: boolean
       telegram_user_id:
         type: integer
       telegram_username:
@@ -1213,6 +1217,19 @@ definitions:
         maxLength: 40
         type: string
     type: object
+  telegram.LinkCode:
+    properties:
+      code:
+        example: K7M2X9QD
+        type: string
+      expires_at:
+        type: string
+      url:
+        description: URL — https://t.me/<бот>?start=<код>; пусто, если имя бота не
+          задано (TELEGRAM_BOT_USERNAME).
+        example: https://t.me/taskflow_bot?start=K7M2X9QD
+        type: string
+    type: object
   user.User:
     properties:
       created_at:
@@ -1753,6 +1770,48 @@ paths:
       summary: Мои задачи
       tags:
       - tasks
+  /api/v1/me/telegram:
+    delete:
+      description: Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю
+        только на /start. Без привязки — тоже 204.
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отвязать Telegram
+      tags:
+      - me
+  /api/v1/me/telegram-link-code:
+    post:
+      description: Одноразовый код из 8 символов (латиница и цифры) на 10 минут и
+        ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный.
+        Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me),
+        иначе 404.
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/telegram.LinkCode'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: бот не подключён
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Код привязки Telegram
+      tags:
+      - me
   /api/v1/me/timer/stop:
     post:
       description: |-
@@ -3416,6 +3475,50 @@ paths:
       summary: Списать время
       tags:
       - worklogs
+  /api/v1/telegram/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Приём обновлений бота (§8.8). Секрет в X-Telegram-Bot-Api-Secret-Token
+        проверяется на каждом запросе. Ответ 200 отдаётся сразу, обработка идёт в
+        очереди; повторно доставленный update_id (24 часа) не обрабатывается. Маршрут
+        есть, только если задан TELEGRAM_BOT_TOKEN и бот работает в режиме webhook.
+      parameters:
+      - description: секрет webhook
+        in: header
+        name: X-Telegram-Bot-Api-Secret-Token
+        required: true
+        type: string
+      - description: Update из Bot API
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 'ok: true'
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: INVALID_JSON
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: неверный секрет
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "413":
+          description: PAYLOAD_TOO_LARGE
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Webhook Telegram
+      tags:
+      - telegram
   /api/v1/users:
     get:
       description: Администратору — все пользователи целиком (user.User). Менеджеру
