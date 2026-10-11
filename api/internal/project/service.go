@@ -426,6 +426,12 @@ func lockProject(tx *gorm.DB, where string, arg any, p *Project) error {
 	return nil
 }
 
+// RoleIn — роль пользователя в проекте внутри транзакции, "" — не участник
+// (для перепроверки прав под блокировкой в других доменах).
+func RoleIn(tx *gorm.DB, projectID, userID uuid.UUID) (string, error) {
+	return memberRole(tx, projectID, userID)
+}
+
 // memberRole — роль пользователя в проекте, "" — не участник.
 func memberRole(tx *gorm.DB, projectID, userID uuid.UUID) (string, error) {
 	var roles []string

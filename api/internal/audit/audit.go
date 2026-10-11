@@ -78,6 +78,22 @@ func WithSource(ctx context.Context, source string) context.Context {
 	return context.WithValue(ctx, sourceKey, source)
 }
 
+// From — кто и откуда действует по контексту запроса: актор (nil — система) и источник.
+func From(ctx context.Context) (*uuid.UUID, string) {
+	if ctx == nil {
+		return nil, SourceSystem
+	}
+	var actor *uuid.UUID
+	source := SourceSystem
+	if id, ok := ctx.Value(actorKey).(uuid.UUID); ok {
+		actor, source = &id, SourceWeb
+	}
+	if s, ok := ctx.Value(sourceKey).(string); ok {
+		source = s
+	}
+	return actor, source
+}
+
 // Record — что записать. ProjectID nil — действие вне проекта.
 type Record struct {
 	ProjectID  *uuid.UUID
@@ -89,19 +105,10 @@ type Record struct {
 
 // Write пишет запись в транзакции tx; контекст берётся из tx (db.WithContext(ctx).Transaction).
 func Write(tx *gorm.DB, r Record) error {
-	ctx := tx.Statement.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	actor, source := From(tx.Statement.Context)
 	e := Entry{
-		ID: uuid.New(), ProjectID: r.ProjectID, Action: r.Action,
-		EntityType: r.EntityType, EntityID: r.EntityID, Source: SourceSystem,
-	}
-	if id, ok := ctx.Value(actorKey).(uuid.UUID); ok {
-		e.ActorID, e.Source = &id, SourceWeb
-	}
-	if s, ok := ctx.Value(sourceKey).(string); ok {
-		e.Source = s
+		ID: uuid.New(), ActorID: actor, ProjectID: r.ProjectID, Action: r.Action,
+		EntityType: r.EntityType, EntityID: r.EntityID, Source: source,
 	}
 	var err error
 	if e.OldValue, err = toJSON(r.Old); err != nil {

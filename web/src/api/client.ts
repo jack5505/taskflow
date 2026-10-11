@@ -192,6 +192,67 @@ export interface ProjectUpdateRequest {
   timezone?: string;
 }
 
+export interface TaskHistoryView {
+  created_at?: string;
+  field?: string;
+  id?: string;
+  new_value?: any;
+  old_value?: any;
+  source?: "web" | "telegram" | "api";
+  user_id?: string;
+}
+
+export interface TaskTask {
+  assignee_id?: string;
+  completed_at?: string;
+  created_at?: string;
+  deleted_at?: string;
+  description?: string;
+  /** @example "2026-10-31" */
+  due_date?: string;
+  estimate_minutes?: number;
+  id?: string;
+  /** @example "TM-42" */
+  key?: string;
+  labels?: string[];
+  number?: number;
+  position?: number;
+  priority?: "low" | "medium" | "high" | "critical";
+  project_id?: string;
+  reporter_id?: string;
+  spent_minutes?: number;
+  sprint_id?: string;
+  started_at?: string;
+  status?: "todo" | "in_progress" | "review" | "done" | "cancelled";
+  title?: string;
+  type?: "task" | "bug" | "feature";
+  updated_at?: string;
+  version?: number;
+}
+
+export interface TaskCreateRequest {
+  assignee_id?: string;
+  /** @maxLength 20000 */
+  description?: string;
+  /** @example "2026-10-31" */
+  due_date?: string;
+  /**
+   * @min 1
+   * @max 60000
+   */
+  estimate_minutes?: number;
+  /**
+   * ≤10 по ≤30 после обрезки и без повторов — проверяет сервис
+   * @maxItems 50
+   */
+  labels?: string[];
+  priority?: "low" | "medium" | "high" | "critical";
+  sprint_id?: string;
+  /** @maxLength 200 */
+  title: string;
+  type?: "task" | "bug" | "feature";
+}
+
 export interface UserUser {
   created_at?: string;
   display_name?: string;
@@ -932,6 +993,66 @@ export class Api<
       this.request<ProjectView, ApierrResponse>({
         path: `/api/v1/projects/${key}/restore`,
         method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Любой участник проекта (§2). Номер — следующий в проекте, ключ вида TM-42, статус todo, автор — текущий пользователь. Исполнителя (активный участник) и спринт (не завершённый) при создании задаёт только менеджер или администратор. Поля и ограничения — §3.3. В архивном проекте — 409 PROJECT_ARCHIVED.
+     *
+     * @tags tasks
+     * @name V1ProjectsTasksCreate
+     * @summary Создать задачу
+     * @request POST:/api/v1/projects/{key}/tasks
+     * @secure
+     */
+    v1ProjectsTasksCreate: (
+      key: string,
+      body: TaskCreateRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskTask, ApierrResponse>({
+        path: `/api/v1/projects/${key}/tasks`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags tasks
+     * @name V1TasksDetail
+     * @summary Задача
+     * @request GET:/api/v1/tasks/{task_key}
+     * @secure
+     */
+    v1TasksDetail: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskTask, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags tasks
+     * @name V1TasksHistoryList
+     * @summary История задачи
+     * @request GET:/api/v1/tasks/{task_key}/history
+     * @secure
+     */
+    v1TasksHistoryList: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskHistoryView[], ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/history`,
+        method: "GET",
         secure: true,
         format: "json",
         ...params,
