@@ -91,7 +91,8 @@ func TestDeliverGivesUpAfterFiveAttempts(t *testing.T) {
 		var in time.Duration
 		m, in = e.pendingMessage(t)
 		require.Equal(t, attempt+1, m.Attempt)
-		require.InDelta(t, want, in.Seconds(), 0.9)
+		// Срок отложенного задания asynq хранит с точностью до секунды (отбрасывая дробную часть).
+		require.InDelta(t, want-0.5, in.Seconds(), 0.6)
 	}
 	e.tg.Respond("sendMessage", `{"ok":false,"error_code":502,"description":"Bad Gateway"}`)
 	require.NoError(t, e.deliver(t, d, m))
