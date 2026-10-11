@@ -128,7 +128,7 @@ func TestCommentReviewFixes(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code)
 	id := b["id"].(string)
 
-	rec, b = f.do(t, "PATCH", "/api/v1/comments/"+id, f.member, `{"body":"Правка"}`)
+	rec, _ = f.do(t, "PATCH", "/api/v1/comments/"+id, f.member, `{"body":"Правка"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	rec, b = f.do(t, "PATCH", "/api/v1/comments/"+id, f.member, `{"body":"Правка"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
