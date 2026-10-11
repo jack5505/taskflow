@@ -1,9 +1,9 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router";
 import type { ProjectMemberView, SprintView } from "../api/client";
 import { errorText } from "../api/errors";
 import { useTimeZone } from "../auth/hooks";
-import { boardQueryKey } from "../board/cards";
 import { PAGE_LIMIT } from "../board/filters";
 import { formatDuration } from "../lib/duration";
 import { formatDate } from "../lib/format";
@@ -19,7 +19,8 @@ import { useSprints } from "./useSprints";
 function ClosedSprint({ projectKey, sprint, members }: { projectKey: string; sprint: SprintView; members: Map<string | undefined, ProjectMemberView> }) {
   const tz = useTimeZone();
   const tasks = useQuery({
-    queryKey: [...boardQueryKey(projectKey), "archive", sprint.id],
+    // Не под ключом доски: состав закрытого спринта не меняется, правки задач его не трогают.
+    queryKey: ["sprint-archive", projectKey, sprint.id],
     queryFn: ({ signal }) => fetchAllTasks(projectKey, { sprint_id: [sprint.id!], limit: PAGE_LIMIT }, signal),
   });
   const s = archiveSummary(tasks.data ?? []);
@@ -83,9 +84,9 @@ export function SprintArchivePage() {
   const project = useProject(key);
   const members = useProjectMembers(key);
   const sprints = useSprints(key);
-  const closed = (sprints.data ?? []).filter((s) => s.state === "closed");
+  const closed = useMemo(() => (sprints.data ?? []).filter((s) => s.state === "closed"), [sprints.data]);
   const selected = closed.find((s) => s.id === params.get("sprint"));
-  const memberById = new Map((members.data ?? []).map((m) => [m.user_id, m]));
+  const memberById = useMemo(() => new Map((members.data ?? []).map((m) => [m.user_id, m])), [members.data]);
   const loadError = project.error ?? sprints.error;
 
   return (

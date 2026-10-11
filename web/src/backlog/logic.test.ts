@@ -7,10 +7,12 @@ import {
   BACKLOG,
   buildSections,
   closeSummary,
+  currentPlace,
   daysBetween,
   dropTarget,
   sprintDatesError,
   sprintErrorText,
+  startPatch,
   totals,
   type Section,
 } from "./logic";
@@ -47,6 +49,8 @@ describe("totals", () => {
       estimate: 120,
       withoutEstimate: 1,
     });
+    // Оценка 0 — оценка есть (сервер считает «без оценки» только пустые).
+    expect(totals([task("1", undefined, { estimate_minutes: 0 })])).toEqual({ count: 1, estimate: 0, withoutEstimate: 0 });
     expect(totals([])).toEqual({ count: 0, estimate: 0, withoutEstimate: 0 });
   });
 });
@@ -78,6 +82,24 @@ describe("dropTarget", () => {
     ["неизвестная задача", "X", { kind: "row", taskId: "A" }],
   ] as const)("без изменений: %s", (_name, id, over) => {
     expect(dropTarget(sections, id, over)).toBeNull();
+  });
+});
+
+describe("currentPlace", () => {
+  const sections: Section[] = [
+    { id: "s", tasks: [task("A", "s"), task("B", "s")] },
+    { id: BACKLOG, tasks: [task("D")] },
+  ];
+  it("место для отката: секция и предыдущая задача", () => {
+    expect(currentPlace(sections, "B")).toEqual({ sectionId: "s", afterTaskId: "A", crossSection: false });
+    expect(currentPlace(sections, "D")).toEqual({ sectionId: BACKLOG, afterTaskId: null, crossSection: false });
+    expect(currentPlace(sections, "X")).toBeNull();
+  });
+  it("перенос и откат возвращают список к исходному", () => {
+    const list = [task("A", "s"), task("B", "s"), task("D")];
+    const undo = currentPlace(sections, "A")!;
+    const moved = applyMove(list, "A", { sectionId: BACKLOG, afterTaskId: "D", crossSection: true });
+    expect(applyMove(moved, "A", undo)).toEqual(list);
   });
 });
 
@@ -138,6 +160,20 @@ describe("даты спринта (§5.2)", () => {
   it("addDays: спринт на 2 недели", () => {
     expect(addDays("2026-10-12", 14)).toBe("2026-10-26");
     expect(addDays("2026-12-25", 14)).toBe("2027-01-08");
+  });
+});
+
+describe("startPatch", () => {
+  const sprint: SprintView = { id: "s", goal: "Релиз", start_date: "2026-10-12", end_date: "2026-10-26" };
+  it("ничего не изменилось — без PATCH", () => {
+    expect(startPatch(sprint, { goal: " Релиз ", start: "2026-10-12", end: "2026-10-26" })).toBeNull();
+  });
+  it("только изменённые поля; пустая цель — очистка", () => {
+    expect(startPatch(sprint, { goal: "", start: "2026-10-12", end: "2026-10-20" })).toEqual({ goal: null, end_date: "2026-10-20" });
+    expect(startPatch({ id: "s" }, { goal: "", start: "2026-10-12", end: "2026-10-26" })).toEqual({
+      start_date: "2026-10-12",
+      end_date: "2026-10-26",
+    });
   });
 });
 

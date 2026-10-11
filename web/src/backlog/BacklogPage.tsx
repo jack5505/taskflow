@@ -13,7 +13,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
 import type { SprintView, TaskListItem } from "../api/client";
@@ -33,21 +33,38 @@ import {
   backlogQueryKey,
   buildSections,
   closeSummary,
+  currentPlace,
   dropTarget,
   openSprints,
   sectionOf,
   sprintErrorText,
   sprintsQueryKey,
+  startPatch,
   today,
   totals,
+  type BacklogSnapshot,
   type DropOver,
   type MoveTarget,
   type Section,
 } from "./logic";
 import { CloseSprintDialog, CreateSprintDialog, StartSprintDialog, type SprintFields } from "./SprintDialogs";
-import { useSprints } from "./useSprints";
 
 const moveKey = ["backlog-move"];
+
+/** Цель и даты сохранены, а запуск отклонён. */
+class SavedButNotStarted extends Error {
+  readonly reason: unknown;
+  constructor(reason: unknown) {
+    super("saved");
+    this.reason = reason;
+  }
+}
+
+function startErrorText(e: unknown): string {
+  return e instanceof SavedButNotStarted
+    ? `Цель и даты сохранены, но спринт не запущен: ${sprintErrorText(e.reason)}`
+    : sprintErrorText(e);
+}
 
 /** Строки важнее секций: секция — цель, только когда указатель не над строкой (её конец, пустая). */
 const collision: CollisionDetection = (args) => {
@@ -75,6 +92,8 @@ const dndAccessibility = {
 interface Move {
   task: TaskListItem;
   target: MoveTarget;
+  /** Прежнее место — для отката при ошибке. */
+  undo: MoveTarget;
 }
 
 type Dialog = { kind: "create" } | { kind: "start"; sprint: SprintView } | { kind: "close"; sprint: SprintView };
@@ -121,19 +140,22 @@ export function BacklogPage() {
   const queryClient = useQueryClient();
   const project = useProject(key);
   const members = useProjectMembers(key);
-  const sprints = useSprints(key);
-
-  const open = useMemo(() => openSprints(sprints.data ?? []), [sprints.data]);
-  // Задачи всех секций одним запросом: незакрытые спринты и бэклог (null).
-  const sprintIds = [...open.map((s) => s.id!), "null"];
-  const tasksKey = [...backlogQueryKey(key), sprintIds];
-  const tasks = useQuery({
-    queryKey: tasksKey,
-    queryFn: ({ signal }) => fetchAllTasks(key, { sprint_id: sprintIds, limit: PAGE_LIMIT }, signal),
-    enabled: sprints.isSuccess,
-    placeholderData: keepPreviousData,
+  // Спринты и задачи всех секций — одним снимком: секции не собираются из списка спринтов одной
+  // версии и задач другой (после завершения спринта его задачи не пропадают на время запроса).
+  const snapshot = useQuery({
+    queryKey: backlogQueryKey(key),
+    queryFn: async ({ signal }): Promise<BacklogSnapshot> => {
+      const sprints = (await api.api.v1ProjectsSprintsList(key, { signal })).data ?? [];
+      const ids = [...openSprints(sprints).map((s) => s.id!), "null"];
+      return { sprints, tasks: await fetchAllTasks(key, { sprint_id: ids, limit: PAGE_LIMIT }, signal) };
+    },
+    enabled: key !== "",
   });
-  const sections = useMemo(() => buildSections(sprints.data ?? [], tasks.data ?? []), [sprints.data, tasks.data]);
+  const open = useMemo(() => openSprints(snapshot.data?.sprints ?? []), [snapshot.data]);
+  const sections = useMemo(
+    () => buildSections(snapshot.data?.sprints ?? [], snapshot.data?.tasks ?? []),
+    [snapshot.data],
+  );
 
   const memberById = useMemo(() => new Map((members.data ?? []).map((m) => [m.user_id, m])), [members.data]);
   const archived = project.data?.is_archived === true;
@@ -158,7 +180,13 @@ export function BacklogPage() {
     void queryClient.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });
   };
 
-  // Задача сразу встаёт на новое место; при ошибке список перечитывается с сервера.
+  const moveInCache = (taskId: string, target: MoveTarget) =>
+    queryClient.setQueryData<BacklogSnapshot>(backlogQueryKey(key), (old) =>
+      old && { ...old, tasks: applyMove(old.tasks, taskId, target) },
+    );
+
+  // Задача сразу встаёт на новое место; при ошибке возвращается на прежнее — только она, а не
+  // снимок всего списка (тот мог устареть из-за соседнего переноса).
   const move = useMutation({
     mutationKey: moveKey,
     mutationFn: ({ task, target }: Move) =>
@@ -168,10 +196,13 @@ export function BacklogPage() {
         after_task_id: target.afterTaskId,
       }),
     onMutate: async ({ task, target }: Move) => {
-      await queryClient.cancelQueries({ queryKey: tasksKey });
-      queryClient.setQueryData<TaskListItem[]>(tasksKey, (old) => old && applyMove(old, task.id!, target));
+      await queryClient.cancelQueries({ queryKey: backlogQueryKey(key) });
+      moveInCache(task.id!, target);
     },
-    onError: (e, m) => setActionError(`${m.task.key}: ${errorText(e)}`),
+    onError: (e, m) => {
+      moveInCache(m.task.id!, m.undo);
+      setActionError(`${m.task.key}: ${errorText(e)}`);
+    },
     onSettled: () => refresh(1),
   });
 
@@ -187,15 +218,17 @@ export function BacklogPage() {
     onSettled: () => refresh(),
   });
 
-  // Запуск: сначала цель и даты из окна, затем запуск — сервер проверяет условия §5.2.
+  // Запуск: сначала изменённые в окне цель и даты, затем запуск — сервер проверяет условия §5.2.
+  // Если правка прошла, а запуск нет, окно говорит, что цель и даты уже сохранены.
   const start = useMutation({
     mutationFn: async ({ sprint, f }: { sprint: SprintView; f: SprintFields }) => {
-      await api.api.v1SprintsPartialUpdate(sprint.id!, {
-        goal: f.goal.trim() || null,
-        start_date: f.start,
-        end_date: f.end,
-      });
-      return (await api.api.v1SprintsStartCreate(sprint.id!)).data;
+      const patch = startPatch(sprint, f);
+      if (patch) await api.api.v1SprintsPartialUpdate(sprint.id!, patch);
+      try {
+        return (await api.api.v1SprintsStartCreate(sprint.id!)).data;
+      } catch (e) {
+        throw patch ? new SavedButNotStarted(e) : e;
+      }
     },
     onSuccess: (r) => {
       setDialog(null);
@@ -256,7 +289,7 @@ export function BacklogPage() {
     if (!t || !over) return;
     const target = dropTarget(sections, t.id!, over);
     if (!target || (target.crossSection && !manager)) return;
-    move.mutate({ task: t, target });
+    move.mutate({ task: t, target, undo: currentPlace(sections, t.id!)! });
   };
 
   const sectionHead = (s: Section) => {
@@ -309,7 +342,7 @@ export function BacklogPage() {
   };
 
   const dialogTasks = dialog && dialog.kind !== "create" ? (sections.find((s) => s.id === dialog.sprint.id)?.tasks ?? []) : [];
-  const loadError = project.error ?? members.error ?? sprints.error ?? tasks.error;
+  const loadError = project.error ?? members.error ?? snapshot.error;
   const startDay = today(tz);
 
   return (
@@ -334,7 +367,7 @@ export function BacklogPage() {
       </div>
 
       {loadError && <p role="alert">{errorText(loadError)}</p>}
-      {(sprints.isPending || tasks.isPending) && !loadError && <p className="muted">Загрузка…</p>}
+      {snapshot.isPending && !loadError && <p className="muted">Загрузка…</p>}
       {notice && (
         <p className="notice">
           {notice}{" "}
@@ -352,7 +385,7 @@ export function BacklogPage() {
         </p>
       )}
 
-      {tasks.isSuccess && (
+      {snapshot.isSuccess && (
         <DndContext
           sensors={sensors}
           collisionDetection={collision}
@@ -411,7 +444,7 @@ export function BacklogPage() {
           scope={totals(dialogTasks)}
           defaults={{ start: startDay, end: addDays(startDay, 14) }}
           pending={start.isPending}
-          error={start.isError ? sprintErrorText(start.error) : ""}
+          error={start.isError ? startErrorText(start.error) : ""}
           onEdit={() => start.isError && start.reset()}
           onCancel={() => setDialog(null)}
           onSubmit={(f) => start.mutate({ sprint: dialog.sprint, f })}

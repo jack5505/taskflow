@@ -12,6 +12,12 @@ export const sprintsQueryKey = (key: string) => ["sprints", key] as const;
  */
 export const backlogQueryKey = (key: string) => [...boardQueryKey(key), "backlog"] as const;
 
+/** Снимок страницы: спринты проекта и задачи незакрытых спринтов и бэклога. */
+export interface BacklogSnapshot {
+  sprints: SprintView[];
+  tasks: TaskListItem[];
+}
+
 /** Секция бэклога: id спринта или BACKLOG. */
 export const BACKLOG = "backlog";
 
@@ -47,8 +53,8 @@ export function totals(tasks: TaskListItem[]): { count: number; estimate: number
   let estimate = 0;
   let withoutEstimate = 0;
   for (const t of tasks) {
-    if (t.estimate_minutes) estimate += t.estimate_minutes;
-    else withoutEstimate++;
+    if (t.estimate_minutes == null) withoutEstimate++;
+    else estimate += t.estimate_minutes;
   }
   return { count: tasks.length, estimate, withoutEstimate };
 }
@@ -91,6 +97,15 @@ export function dropTarget(sections: Section[], taskId: string, over: DropOver):
     if (prev === after) return null;
   }
   return { sectionId: to.id, afterTaskId: after, crossSection: from !== to };
+}
+
+/** Где задача стоит сейчас — в виде места для applyMove (откат неудачного переноса). */
+export function currentPlace(sections: Section[], taskId: string): MoveTarget | null {
+  for (const s of sections) {
+    const i = s.tasks.findIndex((t) => t.id === taskId);
+    if (i >= 0) return { sectionId: s.id, afterTaskId: s.tasks[i - 1]?.id ?? null, crossSection: false };
+  }
+  return null;
 }
 
 /**
@@ -174,6 +189,19 @@ export function today(timeZone?: string): string {
     f = new Intl.DateTimeFormat("en-CA", opts);
   }
   return f.format(new Date());
+}
+
+/** PATCH перед запуском: только изменённые в окне цель и даты; ничего не изменилось — null. */
+export function startPatch(
+  sprint: SprintView,
+  f: { goal: string; start: string; end: string },
+): { goal?: string | null; start_date?: string; end_date?: string } | null {
+  const patch: { goal?: string | null; start_date?: string; end_date?: string } = {};
+  const goal = f.goal.trim();
+  if (goal !== (sprint.goal ?? "").trim()) patch.goal = goal || null;
+  if (f.start !== (sprint.start_date ?? "")) patch.start_date = f.start;
+  if (f.end !== (sprint.end_date ?? "")) patch.end_date = f.end;
+  return Object.keys(patch).length ? patch : null;
 }
 
 const fieldLabels: Record<string, string> = {
