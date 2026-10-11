@@ -57,7 +57,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck -x -s bash deploy/*.sh && shellcheck -s sh api/scripts/*.sh
+      - run: shellcheck -x -s bash deploy/*.sh loadtest/*.sh && shellcheck -s sh api/scripts/*.sh
+      # Сам нагрузочный тест в CI не гоняется: генерация данных и прогон k6 — минуты на стенде
+      # (loadtest/run.sh). Здесь только разбор сценария и опций — ошибка синтаксиса видна сразу.
+      - name: Сценарий k6 разбирается (loadtest/k6.js)
+        run: docker run --rm -v "$PWD/loadtest:/scripts:ro" grafana/k6:2.3.0 inspect /scripts/k6.js > /dev/null
 
   image:
     name: Docker image
