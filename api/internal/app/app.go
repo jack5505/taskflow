@@ -12,6 +12,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/me"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/report"
 	"github.com/jack5505/taskflow/api/internal/sprint"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/users"
@@ -30,5 +31,6 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 		Mount(project.NewHandlers(projects, requireAuth).Register).
 		Mount(task.NewHandlers(tasks, projects, requireAuth).Register).
 		Mount(sprint.NewHandlers(sprint.NewService(g, projects), projects, requireAuth).Register).
+		Mount(report.NewHandlers(report.NewService(g, projects), requireAuth).Register).
 		Mount(me.NewHandlers(me.NewService(g), requireAuth).Register)
 }

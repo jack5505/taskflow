@@ -142,6 +142,7 @@ func TestRightsTable(t *testing.T) {
 			{"Назначать исполнителя (при создании задачи)", "POST", proj + "/tasks", `{"title":"X","assignee_id":"` + member + `"}`},
 			{"Создавать спринты", "POST", proj + "/sprints", `{}`},
 			{"Смотреть корзину (удалённые задачи)", "GET", proj + "/tasks?include_deleted=true", ""},
+			{"Смотреть отчёты по времени всего проекта", "GET", "/api/v1/reports/time?project=" + w.key + "&user_id=" + w.managerU.ID.String(), ""},
 		},
 	}
 	tokens := map[string]string{"manager": w.manager, "member": w.member}

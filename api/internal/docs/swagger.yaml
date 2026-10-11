@@ -355,6 +355,106 @@ definitions:
         maxLength: 64
         type: string
     type: object
+  report.Day:
+    properties:
+      date:
+        example: "2026-10-05"
+        type: string
+      weekend:
+        type: boolean
+    type: object
+  report.Report:
+    properties:
+      day_totals:
+        items:
+          type: integer
+        type: array
+      days:
+        items:
+          $ref: '#/definitions/report.Day'
+        type: array
+      from:
+        example: "2026-10-05"
+        type: string
+      group_by:
+        enum:
+        - user
+        - task
+        type: string
+      hours:
+        example: "2.50"
+        type: string
+      tasks:
+        items:
+          $ref: '#/definitions/report.TaskRow'
+        type: array
+      to:
+        example: "2026-10-11"
+        type: string
+      total:
+        example: 2h 30m
+        type: string
+      total_minutes:
+        type: integer
+      users:
+        items:
+          $ref: '#/definitions/report.UserRow'
+        type: array
+    type: object
+  report.TaskRow:
+    properties:
+      assignee_id:
+        type: string
+      assignee_name:
+        type: string
+      deleted:
+        description: '§4: «удалённая задача»'
+        type: boolean
+      estimate_minutes:
+        type: integer
+      key:
+        example: TM-42
+        type: string
+      period_hours:
+        example: "2.50"
+        type: string
+      period_minutes:
+        type: integer
+      status:
+        enum:
+        - todo
+        - in_progress
+        - review
+        - done
+        - cancelled
+        type: string
+      task_id:
+        type: string
+      title:
+        type: string
+      total_hours:
+        example: "10.00"
+        type: string
+      total_minutes:
+        type: integer
+    type: object
+  report.UserRow:
+    properties:
+      hours:
+        example: "2.50"
+        type: string
+      minutes:
+        items:
+          type: integer
+        type: array
+      total_minutes:
+        example: 150
+        type: integer
+      user_id:
+        type: string
+      user_name:
+        type: string
+    type: object
   sprint.Change:
     properties:
       at:
@@ -2248,6 +2348,77 @@ paths:
       summary: Создать задачу
       tags:
       - tasks
+  /api/v1/reports/time:
+    get:
+      description: |-
+        ТЗ §6.6. Период from–to включительно (ГГГГ-ММ-ДД), по умолчанию текущая неделя пн–вс по поясу пользователя; задана одна граница — вторая на 6 дней от неё. Не длиннее 366 дней. Фильтры: project (ключ), sprint_id (задачи, которые сейчас в спринте), user_id.
+        group_by=user — строка на пользователя, столбец на день (days, weekend — выходные), итоги по строке (total_minutes) и по столбцу (day_totals). group_by=task — строка на задачу: ключ, название, исполнитель, статус, оценка, списано за период и всего (всего — в пределах того же фильтра по пользователю и прав); deleted — удалённая задача (§4).
+        Права (§2): администратор системы — все проекты; менеджер — все записи своих проектов; исполнитель — только свои записи (user_id другого — 403). Чужой проект или спринт — 404. Удалённые проекты в отчёт не входят, архивные — входят.
+        format=csv — файл для русского Excel: UTF-8 с BOM, разделитель «;», часы с десятичной запятой (2,50), даты dd.mm.yyyy, итоговая строка «Итого».
+      parameters:
+      - description: с (ГГГГ-ММ-ДД)
+        in: query
+        name: from
+        type: string
+      - description: по (ГГГГ-ММ-ДД, включительно)
+        in: query
+        name: to
+        type: string
+      - description: ключ проекта
+        in: query
+        name: project
+        type: string
+      - description: id спринта
+        in: query
+        name: sprint_id
+        type: string
+      - description: id пользователя
+        in: query
+        name: user_id
+        type: string
+      - description: представление
+        enum:
+        - user
+        - task
+        in: query
+        name: group_by
+        type: string
+      - description: формат ответа
+        enum:
+        - json
+        - csv
+        in: query
+        name: format
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/report.Report'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: исполнитель запросил другого пользователя'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: проект или спринт'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отчёт по времени
+      tags:
+      - reports
   /api/v1/sprints/{id}:
     delete:
       description: Менеджер; только planned (§5.5), его задачи возвращаются в бэклог.
