@@ -3169,6 +3169,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/telegram/webhook": {
+            "post": {
+                "description": "Приём обновлений бота (§8.8). Секрет в X-Telegram-Bot-Api-Secret-Token проверяется на каждом запросе. Ответ 200 отдаётся сразу, обработка идёт в очереди; повторно доставленный update_id (24 часа) не обрабатывается. Маршрут есть, только если задан TELEGRAM_BOT_TOKEN и бот работает в режиме webhook.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "telegram"
+                ],
+                "summary": "Webhook Telegram",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "секрет webhook",
+                        "name": "X-Telegram-Bot-Api-Secret-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Update из Bot API",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ok: true",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_JSON",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "неверный секрет",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "413": {
+                        "description": "PAYLOAD_TOO_LARGE",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [

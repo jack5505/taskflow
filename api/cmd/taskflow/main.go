@@ -36,6 +36,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/db"
 	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/worker"
 	"github.com/jack5505/taskflow/api/migrations"
 )
@@ -109,7 +110,30 @@ func runAPI(ctx context.Context, cfg *config.Config) error {
 	mq := queue.NewClient(cfg.RedisAddr)
 	defer func() { _ = mq.Close() }()
 
+	startBot(ctx, cfg, telegram.NewIntake(rdb, mq))
 	return app.NewServer(cfg, g, rdb, mq).Run(ctx)
+}
+
+// startBot: в режиме webhook сообщает Telegram адрес и секрет, в разработке — запускает long
+// polling (§8.8). Ошибки не останавливают API: без бота веб работает.
+func startBot(ctx context.Context, cfg *config.Config, in *telegram.Intake) {
+	if !cfg.TelegramEnabled() {
+		slog.Info("telegram: bot disabled, TELEGRAM_BOT_TOKEN is empty")
+		return
+	}
+	go func() {
+		var err error
+		if cfg.TelegramPolling {
+			err = telegram.RunPolling(ctx, cfg, in)
+		} else {
+			setCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			err = telegram.SetWebhook(setCtx, cfg)
+		}
+		if err != nil && ctx.Err() == nil {
+			slog.Error("telegram: bot start", "err", err)
+		}
+	}()
 }
 
 func openDB(ctx context.Context, cfg *config.Config) (*gorm.DB, error) {
