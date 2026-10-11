@@ -373,6 +373,14 @@ func historySource(s string) string {
 	return "api"
 }
 
+// commentSource — источник комментария §3.6: telegram для бота, иначе web.
+func commentSource(s string) string {
+	if historySource(s) == "telegram" {
+		return "telegram"
+	}
+	return "web"
+}
+
 func jsonValue(v any) (*events.JSON, error) {
 	if isNil(v) {
 		return nil, nil // «пусто» — SQL NULL, а не JSON null

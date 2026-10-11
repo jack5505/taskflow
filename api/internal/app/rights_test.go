@@ -153,6 +153,14 @@ func TestRightsTable(t *testing.T) {
 	}
 	rec = w.do("DELETE", taskPath, w.member, "")
 	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: удалять задачи — нет")
+	rec = w.do("POST", taskPath+"/comments", w.manager, `{"body":"Комментарий менеджера"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var comment struct{ ID string }
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &comment))
+	rec = w.do("DELETE", "/api/v1/comments/"+comment.ID, w.member, "")
+	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: удалять чужие комментарии — нет")
+	rec = w.do("POST", taskPath+"/comments", w.outsider, `{"body":"X"}`)
+	require.Equal(t, http.StatusNotFound, rec.Code, "посторонний не видит задачу")
 
 	// Пользователь без роли в проекте не видит его ни через один маршрут проекта — 404.
 	for _, r := range []row{

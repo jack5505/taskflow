@@ -23,6 +23,7 @@ const (
 	TypeMemberAdded   = "member_added"
 	TypeMemberRemoved = "member_removed"
 	TypeTaskDeleted   = "task_deleted"
+	TypeComment       = "comment"
 )
 
 // Retention — §3.8: уведомления хранятся 30 дней.

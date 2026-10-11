@@ -53,6 +53,7 @@ func Register(d *events.Dispatcher, db *gorm.DB) {
 		}
 	}
 	d.On(events.TaskDeleted, "notification", taskDeleted(db))
+	d.On(events.CommentCreated, "notification", commentCreated(db))
 	d.On(events.MemberAdded, "notification", member(TypeMemberAdded))
 	d.On(events.MemberRemoved, "notification", member(TypeMemberRemoved))
 	// Смена роли в колокольчик не идёт: §7.7 называет только добавление и исключение
@@ -78,29 +79,64 @@ func taskDeleted(db *gorm.DB) events.Handler {
 		if err != nil {
 			return err
 		}
-		targets := []uuid.UUID{p.ReporterID}
-		if p.AssigneeID != nil && *p.AssigneeID != p.ReporterID {
-			targets = append(targets, *p.AssigneeID)
+		projectKey, _, _ := strings.Cut(p.Key, "-")
+		return notifyTaskPeople(ctx, db, p.ProjectID, p.TaskID, p.ReporterID, p.AssigneeID, p.By, TypeTaskDeleted,
+			map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "project_id": p.ProjectID, "project_key": projectKey}, eventID)
+	}
+}
+
+type commentPayload struct {
+	CommentID  uuid.UUID  `json:"comment_id"`
+	TaskID     uuid.UUID  `json:"task_id"`
+	Key        string     `json:"key"`
+	Title      string     `json:"title"`
+	ProjectID  uuid.UUID  `json:"project_id"`
+	AuthorID   uuid.UUID  `json:"author_id"`
+	Body       string     `json:"body"`
+	AssigneeID *uuid.UUID `json:"assignee_id"`
+	ReporterID uuid.UUID  `json:"reporter_id"`
+}
+
+// commentCreated — §7.7 «новый комментарий»: исполнителю и автору задачи, кроме автора комментария,
+// если они активные участники проекта.
+func commentCreated(db *gorm.DB) events.Handler {
+	return func(ctx context.Context, env events.Envelope) error {
+		var p commentPayload
+		eventID, err := decode(env, &p)
+		if err != nil {
+			return err
 		}
 		projectKey, _, _ := strings.Cut(p.Key, "-")
-		for _, uid := range targets {
-			if uid == p.By {
-				continue
-			}
-			var member bool
-			if err := db.WithContext(ctx).Raw(`SELECT EXISTS (SELECT 1 FROM users u JOIN project_members m ON m.user_id = u.id
-				WHERE u.id = ? AND u.is_active AND m.project_id = ?)`, uid, p.ProjectID).Scan(&member).Error; err != nil {
-				return fmt.Errorf("notification: member check: %w", err)
-			}
-			if !member {
-				continue
-			}
-			taskID := p.TaskID
-			if err := Create(ctx, db, New{UserID: uid, TaskID: &taskID, Type: TypeTaskDeleted, EventID: &eventID,
-				Payload: map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "project_id": p.ProjectID, "project_key": projectKey}}); err != nil {
-				return err
-			}
-		}
-		return nil
+		data := map[string]any{"key": p.Key, "title": p.Title, "by": p.AuthorID, "body": p.Body,
+			"comment_id": p.CommentID, "project_id": p.ProjectID, "project_key": projectKey}
+		return notifyTaskPeople(ctx, db, p.ProjectID, p.TaskID, p.ReporterID, p.AssigneeID, p.AuthorID, TypeComment, data, eventID)
 	}
+}
+
+// notifyTaskPeople — уведомление автору и исполнителю задачи, кроме действовавшего (by), только
+// активным участникам проекта.
+func notifyTaskPeople(ctx context.Context, db *gorm.DB, projectID, taskID, reporter uuid.UUID, assignee *uuid.UUID,
+	by uuid.UUID, typ string, data map[string]any, eventID uuid.UUID) error {
+	targets := []uuid.UUID{reporter}
+	if assignee != nil && *assignee != reporter {
+		targets = append(targets, *assignee)
+	}
+	for _, uid := range targets {
+		if uid == by {
+			continue
+		}
+		var member bool
+		if err := db.WithContext(ctx).Raw(`SELECT EXISTS (SELECT 1 FROM users u JOIN project_members m ON m.user_id = u.id
+			WHERE u.id = ? AND u.is_active AND m.project_id = ?)`, uid, projectID).Scan(&member).Error; err != nil {
+			return fmt.Errorf("notification: member check: %w", err)
+		}
+		if !member {
+			continue
+		}
+		id := taskID
+		if err := Create(ctx, db, New{UserID: uid, TaskID: &id, Type: typ, EventID: &eventID, Payload: data}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

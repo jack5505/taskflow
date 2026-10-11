@@ -221,6 +221,18 @@ export interface ProjectUpdateRequest {
   timezone?: string;
 }
 
+export interface TaskCommentView {
+  author_id?: string;
+  author_name?: string;
+  body?: string;
+  created_at?: string;
+  edited?: boolean;
+  id?: string;
+  source?: "web" | "telegram";
+  task_id?: string;
+  updated_at?: string;
+}
+
 export interface TaskHistoryView {
   created_at?: string;
   field?: string;
@@ -308,6 +320,14 @@ export interface TaskTask {
   type?: "task" | "bug" | "feature";
   updated_at?: string;
   version?: number;
+}
+
+export interface TaskCommentRequest {
+  /**
+   * 1–5000 после обрезки пробелов — сервис
+   * @maxLength 20000
+   */
+  body: string;
 }
 
 export interface TaskCreateRequest {
@@ -770,6 +790,47 @@ export class Api<
       this.request<AuthSessionResponse, ApierrResponse>({
         path: `/api/v1/auth/refresh`,
         method: "POST",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Автор комментария или менеджер проекта (§2: чужие — только менеджер).
+     *
+     * @tags comments
+     * @name V1CommentsDelete
+     * @summary Удалить комментарий
+     * @request DELETE:/api/v1/comments/{id}
+     * @secure
+     */
+    v1CommentsDelete: (id: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/comments/${id}`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Автор комментария или менеджер проекта (§3.6).
+     *
+     * @tags comments
+     * @name V1CommentsPartialUpdate
+     * @summary Изменить комментарий
+     * @request PATCH:/api/v1/comments/{id}
+     * @secure
+     */
+    v1CommentsPartialUpdate: (
+      id: string,
+      body: TaskCommentRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskCommentView, ApierrResponse>({
+        path: `/api/v1/comments/${id}`,
+        method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),
@@ -1245,6 +1306,48 @@ export class Api<
       this.request<TaskTask, ApierrResponse>({
         path: `/api/v1/tasks/${taskKey}`,
         method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @tags comments
+     * @name V1TasksCommentsList
+     * @summary Комментарии
+     * @request GET:/api/v1/tasks/{task_key}/comments
+     * @secure
+     */
+    v1TasksCommentsList: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskCommentView[], ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/comments`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Любой участник проекта (§2). Markdown, 1–5000 символов (§3.6). Событие comment.created.
+     *
+     * @tags comments
+     * @name V1TasksCommentsCreate
+     * @summary Добавить комментарий
+     * @request POST:/api/v1/tasks/{task_key}/comments
+     * @secure
+     */
+    v1TasksCommentsCreate: (
+      taskKey: string,
+      body: TaskCommentRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskCommentView, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/comments`,
+        method: "POST",
         body: body,
         secure: true,
         type: ContentType.Json,
