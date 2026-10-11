@@ -2,7 +2,7 @@ package task
 
 import (
 	"context"
-	"time"
+	"fmt"
 
 	"gorm.io/gorm"
 
@@ -22,7 +22,7 @@ func (s *Service) Delete(ctx context.Context, u *user.User, key string) error {
 		if !a.manager {
 			return errDeleteForbidden
 		}
-		now := time.Now()
+		now := s.now()
 		if err := writeHistory(tx, t.ID, "deleted_at", nil, now); err != nil {
 			return err
 		}
@@ -37,9 +37,6 @@ func (s *Service) Delete(ctx context.Context, u *user.User, key string) error {
 func (s *Service) Restore(ctx context.Context, u *user.User, key string) (*Task, error) {
 	return s.change(ctx, u, key, nil, preLock{withDeleted: true}, func(tx *gorm.DB, t *Task, a actor) error {
 		if !a.admin {
-			if t.DeletedAt != nil {
-				return ErrNotFound
-			}
 			return apierr.Forbidden("Восстанавливать задачи может администратор системы")
 		}
 		if t.DeletedAt == nil {
@@ -49,8 +46,40 @@ func (s *Service) Restore(ctx context.Context, u *user.User, key string) (*Task,
 			return err
 		}
 		t.DeletedAt = nil
+		if err := releaseStaleAssignee(tx, t); err != nil {
+			return err
+		}
 		return deletedOrRestored(tx, t, events.TaskRestored, audit.TaskRestored, a)
 	})
+}
+
+// releaseStaleAssignee — пока задача лежала в корзине, исполнителя могли деактивировать или
+// исключить из проекта (деактивация освобождает только не удалённые задачи). Такой исполнитель
+// снимается, задача в работе возвращается в todo — как при деактивации (§3.1).
+func releaseStaleAssignee(tx *gorm.DB, t *Task) error {
+	if t.AssigneeID == nil {
+		return nil
+	}
+	var ok bool
+	if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM users u JOIN project_members m ON m.user_id = u.id
+		WHERE u.id = ? AND u.is_active AND m.project_id = ?)`, *t.AssigneeID, t.ProjectID).Scan(&ok).Error; err != nil {
+		return fmt.Errorf("task: assignee check: %w", err)
+	}
+	if ok {
+		return nil
+	}
+	const note = "снят при восстановлении: исполнитель деактивирован или исключён из проекта"
+	if err := writeHistoryNote(tx, t.ID, "assignee_id", t.AssigneeID, nil, note); err != nil {
+		return err
+	}
+	t.AssigneeID = nil
+	if t.Status == StatusInProgress {
+		if err := writeHistoryNote(tx, t.ID, "status", t.Status, StatusTodo, note); err != nil {
+			return err
+		}
+		t.Status = StatusTodo
+	}
+	return nil
 }
 
 func deletedOrRestored(tx *gorm.DB, t *Task, eventType, action string, a actor) error {

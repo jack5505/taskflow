@@ -155,11 +155,11 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
 			return err
 		}
-		q := `SELECT * FROM tasks WHERE key = ? AND deleted_at IS NULL FOR UPDATE`
+		cond := " AND deleted_at IS NULL"
 		if pre.withDeleted {
-			q = `SELECT * FROM tasks WHERE key = ? FOR UPDATE`
+			cond = ""
 		}
-		res := tx.Raw(q, key).Scan(&t)
+		res := tx.Raw(`SELECT * FROM tasks WHERE key = ?`+cond+` FOR UPDATE`, key).Scan(&t)
 		if res.Error != nil {
 			return fmt.Errorf("task: lock: %w", res.Error)
 		}
@@ -181,6 +181,9 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		}
 		if role == "" && !me[0].IsSystemAdmin {
 			return ErrNotFound
+		}
+		if t.DeletedAt != nil && !me[0].IsSystemAdmin {
+			return ErrNotFound // корзину видит только администратор (§2) — раньше любых других ответов
 		}
 		if err := project.EnsureWritable(&p); err != nil {
 			return err

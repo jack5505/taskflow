@@ -96,6 +96,11 @@ func TestTaskDeletedNotifies(t *testing.T) {
 	var n int64
 	require.NoError(t, f.db.Model(&notification.Notification{}).Where("user_id = ? AND type = 'task_deleted'", other.ID).Count(&n).Error)
 	require.EqualValues(t, 1, n, "исполнителю")
+	var payload map[string]any
+	var raw []byte
+	require.NoError(t, f.db.Raw(`SELECT payload::text::bytea FROM notifications WHERE user_id = ? AND type = 'task_deleted'`, other.ID).Row().Scan(&raw))
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	require.Equal(t, f.p.Key, payload["project_key"])
 	require.NoError(t, f.db.Model(&notification.Notification{}).Where("user_id = ? AND type = 'task_deleted'", f.managerU.ID).Count(&n).Error)
 	require.Zero(t, n, "удалившему — нет")
 }
@@ -105,4 +110,56 @@ func envelopeTask(t *testing.T, eventID string, payload []byte) *asynq.Task {
 	b, err := json.Marshal(events.Envelope{EventID: eventID, Type: events.TaskDeleted, Payload: payload})
 	require.NoError(t, err)
 	return asynq.NewTask(events.TaskTypePrefix+events.TaskDeleted, b)
+}
+
+// Ревью #89: пока задача в корзине, исполнителя деактивировали — при восстановлении он снимается,
+// задача в работе возвращается в todo.
+func TestRestoreReleasesStaleAssignee(t *testing.T) {
+	f := newFixture(t)
+	gone, _ := f.user(t, false)
+	f.join(t, gone, project.RoleMember)
+	key := f.state(t, f.memberU, "in_progress", gone)
+	require.NoError(t, task.NewService(f.db, project.NewService(f.db)).Delete(context.Background(), f.managerU, key))
+	require.NoError(t, f.db.Model(gone).Update("is_active", false).Error)
+
+	rec, b := f.do(t, "POST", "/api/v1/tasks/"+key+"/restore", f.admin, "")
+	require.Equal(t, http.StatusOK, rec.Code, "%v", b)
+	require.Nil(t, b["assignee_id"])
+	require.Equal(t, "todo", b["status"])
+	var notes []string
+	require.NoError(t, f.db.Raw(`SELECT note FROM task_history WHERE task_id = ? AND note IS NOT NULL`, f.get(t, key).ID).Scan(&notes).Error)
+	require.Len(t, notes, 2)
+}
+
+// Ревью #89: удалённая задача в архивном проекте для не-администратора — 404, а не 409.
+func TestDeletedInArchivedIsNotFoundForNonAdmin(t *testing.T) {
+	f := newFixture(t)
+	key := f.create(t, f.member, `{"title":"X"}`)["key"].(string)
+	require.NoError(t, task.NewService(f.db, project.NewService(f.db)).Delete(context.Background(), f.managerU, key))
+	require.NoError(t, f.db.Model(f.p).Update("is_archived", true).Error)
+	for _, tok := range []string{f.manager, f.member} {
+		rec, _ := f.do(t, "POST", "/api/v1/tasks/"+key+"/restore", tok, "")
+		require.Equal(t, http.StatusNotFound, rec.Code)
+	}
+	rec, _ := f.do(t, "POST", "/api/v1/tasks/"+key+"/restore", f.admin, "")
+	require.Equal(t, http.StatusConflict, rec.Code, "администратор видит корзину, но проект в архиве")
+}
+
+// Ревью #89: исключённому из проекта уведомление об удалении не уходит.
+func TestTaskDeletedSkipsFormerMembers(t *testing.T) {
+	f := newFixture(t)
+	left, _ := f.user(t, false)
+	f.join(t, left, project.RoleMember)
+	key := f.create(t, f.manager, `{"title":"X","assignee_id":"`+left.ID.String()+`"}`)["key"].(string)
+	require.NoError(t, f.db.Exec(`DELETE FROM project_members WHERE user_id = ?`, left.ID).Error)
+	require.NoError(t, task.NewService(f.db, project.NewService(f.db)).Delete(context.Background(), f.managerU, key))
+	var id string
+	var payload []byte
+	require.NoError(t, f.db.Raw(`SELECT id::text, payload::text::bytea FROM outbox_events WHERE type = 'task.deleted' AND payload->>'key' = ?`, key).Row().Scan(&id, &payload))
+	d := events.NewDispatcher(nil)
+	notification.Register(d, f.db)
+	require.NoError(t, d.ProcessTask(context.Background(), envelopeTask(t, id, payload)))
+	var n int64
+	require.NoError(t, f.db.Model(&notification.Notification{}).Where("user_id = ?", left.ID).Count(&n).Error)
+	require.Zero(t, n)
 }
