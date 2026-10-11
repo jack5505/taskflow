@@ -12,6 +12,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/queue"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/testutil"
@@ -30,7 +31,10 @@ func newListBot(t *testing.T) *listBot {
 		g := testutil.SharedDB(t)
 		groups, projects := telegram.NewGroups(g, "TaskBot"), project.NewService(g)
 		telegram.RegisterGroupLists(rt, g, groups)
-		telegram.RegisterTake(rt, telegram.NewTaskCommands(g, task.NewService(g, projects), projects, groups))
+		jobs := queue.NewClient(testutil.SharedRedisAddr(t))
+		t.Cleanup(func() { _ = jobs.Close() })
+		cards := telegram.NewCards(g, telegram.NewQueue(jobs), "https://tasks.example/")
+		telegram.RegisterTake(rt, telegram.NewTaskCommands(g, task.NewService(g, projects), projects, groups, cards))
 	})}
 	var err error
 	b.other, err = b.projects.Create(context.Background(), project.CreateInput{Key: testutil.UniqueKey(t), Name: "Второй"})
