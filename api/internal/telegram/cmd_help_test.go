@@ -138,3 +138,49 @@ func TestHelpWithoutKeyedCommands(t *testing.T) {
 	require.Equal(t, []string{"Команды в группе:\n/help — Список команд"},
 		b.sayIn(t, b.member, -100700, models.ChatTypeGroup, "/help"))
 }
+
+// §8.1: /help работает и без привязки — список команд и подсказка, как привязать аккаунт;
+// остальные команды непривязанного — прежний единый ответ.
+func TestHelpUnlinked(t *testing.T) {
+	b, _ := newHelpBot(t)
+	stranger := newUser(t, b.g, "Без привязки")
+	b.tg[stranger.ID] = tgID()
+	notLinked := "Сначала привяжите аккаунт: профиль → Привязать Telegram"
+	privateHelp := strings.Join([]string{
+		"Команды в личном чате:",
+		"/start [код] — Привязать аккаунт по коду из профиля",
+		"/unlink — Отвязать аккаунт",
+		"/take <ключ> — Взять задачу в работу",
+		"/timer <ключ> — Запустить таймер",
+		"/stop — Остановить таймер",
+		"/my — Мои открытые задачи",
+		"/help — Список команд",
+		"Ключ задачи пишется вместе с ключом проекта: TM-42.",
+		"Аккаунт не привязан: в профиле нажмите «Привязать Telegram» и откройте ссылку или отправьте сюда /start <код>.",
+	}, "\n")
+
+	require.Equal(t, []string{privateHelp}, b.say(t, stranger, "/help"))
+	require.Equal(t, []string{notLinked}, b.say(t, stranger, "/take TM-1"))
+	require.Equal(t, []string{notLinked}, b.say(t, stranger, "/my"))
+
+	// В группе /help — обычный ответ на сообщение, не удаляемый через 30 секунд.
+	upd := msgUpdate(-100700, models.ChatTypeSupergroup, "/help@TaskBot")
+	upd.Message.From.ID = b.tg[stranger.ID]
+	b.p.Handle(context.Background(), upd, time.Now())
+	msgs := b.messages(t)
+	require.Len(t, msgs, 1)
+	require.Equal(t, strings.Join([]string{
+		"Команды в группе:",
+		"/take <ключ> — Взять задачу в работу",
+		"/help — Список команд",
+		"Если к группе подключён один проект, ключ проекта можно не писать: TM-42 или 42.",
+		"Аккаунт не привязан: в профиле нажмите «Привязать Telegram» и отправьте боту в личный чат /start <код>.",
+	}, "\n"), msgs[0].Text)
+	require.Zero(t, msgs[0].DeleteAfter)
+	require.Equal(t, []string{notLinked}, b.sayIn(t, stranger, -100700, models.ChatTypeSupergroup, "/take TM-1"))
+
+	// §8.1 п. 6: после /unlink /help по-прежнему отвечает — уже с подсказкой о привязке.
+	require.Equal(t, []string{"Аккаунт отвязан"}, b.say(t, b.member, "/unlink"))
+	require.Equal(t, []string{privateHelp}, b.say(t, b.member, "/help"))
+	require.Equal(t, []string{notLinked}, b.say(t, b.member, "/my"))
+}

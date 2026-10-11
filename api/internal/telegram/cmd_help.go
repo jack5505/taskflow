@@ -62,7 +62,8 @@ func (rt *Router) menuFor(private bool) []helpLine {
 	return out
 }
 
-// helpCommand — /help: команды, доступные в этом типе чата (§8.5).
+// helpCommand — /help: команды, доступные в этом типе чата (§8.5). Работает и без привязки
+// (§8.1): тогда после списка — подсказка, как привязать аккаунт.
 func helpCommand(rt *Router) HandlerFunc {
 	return func(ctx context.Context, r *Request) error {
 		name := "cmd_help_group"
@@ -72,7 +73,8 @@ func helpCommand(rt *Router) HandlerFunc {
 		data := struct {
 			Commands []helpLine
 			Keyed    bool // есть команды с ключом задачи — подсказка про формат ключа
-		}{Commands: rt.menuFor(r.Private())}
+			Unlinked bool // аккаунт не привязан — подсказка про привязку
+		}{Commands: rt.menuFor(r.Private()), Unlinked: r.User == nil}
 		for _, c := range data.Commands {
 			data.Keyed = data.Keyed || strings.HasPrefix(c.Args, "<ключ>")
 		}

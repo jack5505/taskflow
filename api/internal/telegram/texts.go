@@ -64,11 +64,15 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "cmd_help_private"}}Команды в личном чате:{{range .Commands}}
 /{{.Name}}{{if .Args}} {{.Args}}{{end}} — {{.Description}}{{end}}
 {{- if .Keyed}}
-Ключ задачи пишется вместе с ключом проекта: TM-42.{{end}}{{end}}
+Ключ задачи пишется вместе с ключом проекта: TM-42.{{end}}
+{{- if .Unlinked}}
+Аккаунт не привязан: в профиле нажмите «Привязать Telegram» и откройте ссылку или отправьте сюда /start <код>.{{end}}{{end}}
 {{define "cmd_help_group"}}Команды в группе:{{range .Commands}}
 /{{.Name}}{{if .Args}} {{.Args}}{{end}} — {{.Description}}{{end}}
 {{- if .Keyed}}
-Если к группе подключён один проект, ключ проекта можно не писать: TM-42 или 42.{{end}}{{end}}
+Если к группе подключён один проект, ключ проекта можно не писать: TM-42 или 42.{{end}}
+{{- if .Unlinked}}
+Аккаунт не привязан: в профиле нажмите «Привязать Telegram» и отправьте боту в личный чат /start <код>.{{end}}{{end}}
 {{define "cmd_unknown"}}Неизвестная команда. /help{{end}}
 {{define "cmd_project_archived"}}Проект {{with .Project}}{{.}} {{end}}в архиве, изменения недоступны{{end}}
 {{define "cmd_menu_start"}}Привязать аккаунт по коду из профиля{{end}}
