@@ -346,7 +346,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 		return err
 	}
 	payload := map[string]any{
-		"task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "from": from, "to": to,
+		"task_id": t.ID, "key": t.Key, "title": t.Title, "project_id": t.ProjectID, "from": from, "to": to,
 		"by": uid, "assignee_id": t.AssigneeID, "reporter_id": t.ReporterID,
 	}
 	if comment != "" {
@@ -412,7 +412,7 @@ func setAssignee(tx *gorm.DB, t *Task, id *uuid.UUID, by uuid.UUID) error {
 	t.AssigneeID = id
 	if id != nil && *id != by {
 		return events.Publish(tx, events.TaskAssigned, map[string]any{
-			"task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "assignee_id": *id, "by": by,
+			"task_id": t.ID, "key": t.Key, "title": t.Title, "project_id": t.ProjectID, "assignee_id": *id, "by": by,
 		})
 	}
 	return nil

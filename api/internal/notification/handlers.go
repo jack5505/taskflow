@@ -56,6 +56,9 @@ func Register(d *events.Dispatcher, db *gorm.DB) {
 	d.On(events.CommentCreated, "notification", commentCreated(db))
 	d.On(events.MemberAdded, "notification", member(TypeMemberAdded))
 	d.On(events.MemberRemoved, "notification", member(TypeMemberRemoved))
+	d.On(events.TaskAssigned, "notification", taskAssigned(db))
+	d.On(events.TaskTransitioned, "notification", taskTransitioned(db))
+	d.On(events.UserDeactivated, "notification", userDeactivated(db))
 	d.On(events.TimerAutoStopped, "notification", timerEvent(db, TypeTimerStopped))
 	d.On(events.TimerTrimmed, "notification", timerEvent(db, TypeTimerTrimmed))
 	// Смена роли в колокольчик не идёт: §7.7 называет только добавление и исключение
@@ -123,6 +126,13 @@ func notifyTaskPeople(ctx context.Context, db *gorm.DB, projectID, taskID, repor
 	if assignee != nil && *assignee != reporter {
 		targets = append(targets, *assignee)
 	}
+	return notifyUsers(ctx, db, projectID, taskID, targets, by, typ, data, eventID)
+}
+
+// notifyUsers — уведомление по задаче каждому из targets, кроме by, если он активный участник
+// проекта (иначе уведомление раскрыло бы чужой проект).
+func notifyUsers(ctx context.Context, db *gorm.DB, projectID, taskID uuid.UUID, targets []uuid.UUID,
+	by uuid.UUID, typ string, data map[string]any, eventID uuid.UUID) error {
 	for _, uid := range targets {
 		if uid == by {
 			continue
@@ -158,5 +168,99 @@ func timerEvent(db *gorm.DB, typ string) events.Handler {
 			return fmt.Errorf("notification: %s: нет user_id или task_id", env.Type)
 		}
 		return Create(ctx, db, New{UserID: userID, TaskID: &taskID, Type: typ, Payload: data, EventID: &eventID})
+	}
+}
+
+// taskAssigned — §7.7 «назначение»: назначенному, если назначил не он сам и он активный участник.
+func taskAssigned(db *gorm.DB) events.Handler {
+	return func(ctx context.Context, env events.Envelope) error {
+		var p struct {
+			taskPayload
+			AssigneeID uuid.UUID `json:"assignee_id"`
+		}
+		eventID, err := decode(env, &p)
+		if err != nil {
+			return err
+		}
+		projectKey, _, _ := strings.Cut(p.Key, "-")
+		data := map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "project_id": p.ProjectID, "project_key": projectKey}
+		return notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{p.AssigneeID}, p.By, TypeAssigned, data, eventID)
+	}
+}
+
+// taskTransitioned — §7.7 «смена статуса» и «возврат на доработку»: review → in_progress — исполнителю
+// (rework, с причиной); → review — автору (review_requested); остальные переходы — исполнителю и
+// автору (status). Кроме того, кто перевёл; только активным участникам проекта.
+func taskTransitioned(db *gorm.DB) events.Handler {
+	return func(ctx context.Context, env events.Envelope) error {
+		var p struct {
+			taskPayload
+			From    string `json:"from"`
+			To      string `json:"to"`
+			Comment string `json:"comment"`
+		}
+		eventID, err := decode(env, &p)
+		if err != nil {
+			return err
+		}
+		projectKey, _, _ := strings.Cut(p.Key, "-")
+		data := map[string]any{"key": p.Key, "title": p.Title, "by": p.By, "from": p.From, "to": p.To,
+			"project_id": p.ProjectID, "project_key": projectKey}
+		if p.Comment != "" {
+			data["comment"] = p.Comment
+		}
+		switch {
+		case p.From == "review" && p.To == "in_progress":
+			if p.AssigneeID == nil {
+				return nil
+			}
+			return notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{*p.AssigneeID}, p.By, TypeRework, data, eventID)
+		case p.To == "review":
+			return notifyUsers(ctx, db, p.ProjectID, p.TaskID, []uuid.UUID{p.ReporterID}, p.By, TypeReview, data, eventID)
+		}
+		return notifyTaskPeople(ctx, db, p.ProjectID, p.TaskID, p.ReporterID, p.AssigneeID, p.By, TypeStatus, data, eventID)
+	}
+}
+
+// userDeactivated — §3.1: менеджеры проектов деактивированного получают уведомление со списком
+// освобождённых задач этого проекта. Проекты — где он участник (строки участия остаются).
+func userDeactivated(db *gorm.DB) events.Handler {
+	return func(ctx context.Context, env events.Envelope) error {
+		var p struct {
+			UserID   uuid.UUID `json:"user_id"`
+			Released []string  `json:"released_tasks"`
+		}
+		eventID, err := decode(env, &p)
+		if err != nil {
+			return err
+		}
+		var rows []struct {
+			ProjectID uuid.UUID
+			Key       string
+			ManagerID uuid.UUID
+			Name      string
+		}
+		if err := db.WithContext(ctx).Raw(`SELECT pr.id AS project_id, pr.key, mm.user_id AS manager_id, du.display_name AS name
+			FROM project_members dm JOIN projects pr ON pr.id = dm.project_id AND pr.deleted_at IS NULL
+			JOIN users du ON du.id = dm.user_id
+			JOIN project_members mm ON mm.project_id = pr.id AND mm.role = 'manager' AND mm.user_id <> dm.user_id
+			JOIN users mu ON mu.id = mm.user_id AND mu.is_active
+			WHERE dm.user_id = ? ORDER BY pr.key, mm.user_id`, p.UserID).Scan(&rows).Error; err != nil {
+			return fmt.Errorf("notification: deactivated managers: %w", err)
+		}
+		for _, r := range rows {
+			released := []string{}
+			for _, k := range p.Released {
+				if strings.HasPrefix(k, r.Key+"-") {
+					released = append(released, k)
+				}
+			}
+			if err := Create(ctx, db, New{UserID: r.ManagerID, Type: TypeDeactivated, EventID: &eventID, Payload: map[string]any{
+				"user_id": p.UserID, "display_name": r.Name, "project_id": r.ProjectID, "project_key": r.Key, "released_tasks": released,
+			}}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 }

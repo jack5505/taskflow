@@ -144,6 +144,14 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 		if err := sprintChanged(tx, t, nil, t.SprintID, u.ID); err != nil {
 			return err
 		}
+		if t.AssigneeID != nil && *t.AssigneeID != u.ID {
+			// Назначение при создании — такое же назначение (§7.7, §8.7): уведомление исполнителю.
+			if err := events.Publish(tx, events.TaskAssigned, map[string]any{
+				"task_id": t.ID, "key": t.Key, "title": t.Title, "project_id": p.ID, "assignee_id": *t.AssigneeID, "by": u.ID,
+			}); err != nil {
+				return err
+			}
+		}
 		return events.Publish(tx, events.TaskCreated, map[string]any{
 			"task_id": t.ID, "key": t.Key, "project_id": p.ID, "sprint_id": t.SprintID,
 			"assignee_id": t.AssigneeID, "by": u.ID,
