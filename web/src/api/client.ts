@@ -156,6 +156,8 @@ export interface ProjectListItem {
   notification_settings?: Record<string, boolean>;
   open_tasks?: number;
   telegram_chat_id?: number;
+  /** TelegramChatTitle — название подключённой группы на момент подключения или переименования (§7.9). */
+  telegram_chat_title?: string;
   timezone?: string;
   updated_at?: string;
 }
@@ -181,6 +183,8 @@ export interface ProjectView {
   name?: string;
   notification_settings?: Record<string, boolean>;
   telegram_chat_id?: number;
+  /** TelegramChatTitle — название подключённой группы на момент подключения или переименования (§7.9). */
+  telegram_chat_title?: string;
   timezone?: string;
   updated_at?: string;
 }
@@ -675,6 +679,22 @@ export interface TaskWorklogRequest {
    * @example "2026-10-11"
    */
   work_date?: string;
+}
+
+export interface TelegramBindCode {
+  /**
+   * BotUsername — имя бота без @, чтобы найти его при добавлении в группу; пусто, если не задано.
+   * @example "taskflow_bot"
+   */
+  bot_username?: string;
+  /** @example "K7M2X9QD" */
+  code?: string;
+  /**
+   * Command — что написать в группе: /bind <код>.
+   * @example "/bind K7M2X9QD"
+   */
+  command?: string;
+  expires_at?: string;
 }
 
 export interface TelegramLinkCode {
@@ -1711,6 +1731,44 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Кнопка «Отключить» в настройках проекта (§8.2, шаг 5): группа отвязывается от проекта, другие проекты этой группы не меняются. Группа не подключена — тоже 204. Менеджер проекта или администратор; в архивном проекте — 409.
+     *
+     * @tags projects
+     * @name V1ProjectsTelegramDelete
+     * @summary Отключить Telegram-группу
+     * @request DELETE:/api/v1/projects/{key}/telegram
+     * @secure
+     */
+    v1ProjectsTelegramDelete: (key: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/projects/${key}/telegram`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Одноразовый код из 8 символов на 15 минут (§8.2): менеджер добавляет бота в группу и пишет в ней /bind <код>. Новый код гасит прежний неиспользованный код проекта. Менеджер проекта или администратор; в архивном проекте — 409. Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me), иначе 404.
+     *
+     * @tags projects
+     * @name V1ProjectsTelegramBindCodeCreate
+     * @summary Код подключения Telegram-группы
+     * @request POST:/api/v1/projects/{key}/telegram-bind-code
+     * @secure
+     */
+    v1ProjectsTelegramBindCodeCreate: (
+      key: string,
+      params: RequestParams = {},
+    ) =>
+      this.request<TelegramBindCode, ApierrResponse>({
+        path: `/api/v1/projects/${key}/telegram-bind-code`,
+        method: "POST",
+        secure: true,
         format: "json",
         ...params,
       }),

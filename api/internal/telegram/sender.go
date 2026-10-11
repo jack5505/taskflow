@@ -116,6 +116,15 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		return nil
 	}
 
+	var migrated *bot.MigrateError
+	if errors.As(err, &migrated) && migrated.MigrateToChatID != 0 && m.Op == OpSend {
+		// Группа стала супергруппой (§8.2, п. 6): то же сообщение — в новый чат. Проекты группы
+		// переписывает обработчик служебного сообщения migrate_to_chat_id.
+		slog.Info("telegram: chat migrated, resending", "chat_id", m.ChatID, "to", migrated.MigrateToChatID)
+		// Номера сообщений старой группы в новой не действуют — без ответа на сообщение.
+		m.ChatID, m.ReplyTo = int64(migrated.MigrateToChatID), 0
+		return d.out.Send(ctx, m, 0)
+	}
 	m.Attempt++
 	log := slog.With("op", m.Op, "chat_id", m.ChatID, "message_id", m.MessageID, "attempt", m.Attempt, "err", err)
 	if permanent(err) {

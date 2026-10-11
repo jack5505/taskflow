@@ -23,11 +23,13 @@ export async function fetchAllTasks(key: string, query: TasksListQuery, signal: 
   return items;
 }
 
-export function useProject(key: string) {
+/** Проект по ключу; refetchInterval — перечитывать, пока ждём изменения извне (подключение группы в боте). */
+export function useProject(key: string, opts: { refetchInterval?: number } = {}) {
   return useQuery({
     queryKey: projectQueryKey(key),
     queryFn: async ({ signal }) => (await api.api.v1ProjectsDetail(key, { signal })).data,
     enabled: key !== "",
+    refetchInterval: opts.refetchInterval,
   });
 }
 

@@ -24,11 +24,13 @@ const DefaultDailySummaryTime model.TimeOfDay = "10:00"
 // не попадают в обычные запросы сами собой; корзина и восстановление идут через Unscoped().
 type Project struct {
 	model.Base
-	Key                  string          `gorm:"not null;uniqueIndex" json:"key"`
-	Name                 string          `gorm:"size:100;not null" json:"name"`
-	Description          *string         `json:"description,omitempty"`
-	TaskCounter          int             `gorm:"not null" json:"-"`
-	TelegramChatID       *int64          `json:"telegram_chat_id,omitempty"`
+	Key            string  `gorm:"not null;uniqueIndex" json:"key"`
+	Name           string  `gorm:"size:100;not null" json:"name"`
+	Description    *string `json:"description,omitempty"`
+	TaskCounter    int     `gorm:"not null" json:"-"`
+	TelegramChatID *int64  `json:"telegram_chat_id,omitempty"`
+	// TelegramChatTitle — название подключённой группы на момент подключения или переименования (§7.9).
+	TelegramChatTitle    *string         `json:"telegram_chat_title,omitempty"`
 	IsArchived           bool            `gorm:"not null" json:"is_archived"`
 	Timezone             string          `gorm:"not null" json:"timezone"`
 	NotificationSettings events.JSON     `gorm:"type:jsonb;not null" json:"notification_settings" swaggertype:"object"`

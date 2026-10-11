@@ -99,6 +99,8 @@ export const AUDIT_ACTIONS: { value: string; label: string }[] = [
   { value: "project.unarchived", label: "Проект возвращён из архива" },
   { value: "project.deleted", label: "Проект удалён" },
   { value: "project.restored", label: "Проект восстановлен" },
+  { value: "project.telegram_bound", label: "Telegram-группа подключена" },
+  { value: "project.telegram_unbound", label: "Telegram-группа отключена" },
   { value: "member.added", label: "Участник добавлен" },
   { value: "member.role_changed", label: "Роль изменена" },
   { value: "member.removed", label: "Участник исключён" },
@@ -176,4 +178,24 @@ export function auditQuery(f: { from: string; to: string; userId: string; action
 /** Корзина: кто удалил — имя из ответа GET /projects/{key}/trash; неизвестен — прочерк. */
 export function trashDeleter(t: Pick<TaskTrashItem, "deleted_by">): string {
   return t.deleted_by?.display_name || "—";
+}
+
+/** Код подключения группы (§8.2) с обязательными полями. */
+export interface GroupBindCode {
+  code: string;
+  expires_at: string;
+  command: string;
+  bot_username: string;
+}
+
+/** Ответ сервера → код подключения (в Swagger поля ответа необязательные). */
+export function bindCodeFrom(d: Partial<GroupBindCode>): GroupBindCode {
+  const code = d.code ?? "";
+  return { code, expires_at: d.expires_at ?? "", command: d.command || `/bind ${code}`, bot_username: d.bot_username ?? "" };
+}
+
+/** Подключённая группа для вкладки «Telegram»: название, а если его нет — id чата; null — не подключена. */
+export function groupLabel(p: { telegram_chat_id?: number; telegram_chat_title?: string }): string | null {
+  if (!p.telegram_chat_id) return null;
+  return p.telegram_chat_title ? `«${p.telegram_chat_title}»` : `id чата ${p.telegram_chat_id}`;
 }

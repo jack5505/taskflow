@@ -53,7 +53,7 @@ export function SettingsPage() {
         <div className="settings-body" role="tabpanel" key={key}>
           {tab === "general" && <GeneralTab project={p} admin={admin} />}
           {tab === "members" && <MembersTab projectKey={key} me={me.data} admin={admin} readOnly={readOnly} />}
-          {tab === "telegram" && <TelegramTab project={p} />}
+          {tab === "telegram" && <TelegramTab project={p} readOnly={readOnly} />}
           {tab === "notifications" && <NotificationsTab project={p} readOnly={readOnly} />}
           {tab === "audit" && <AuditTab projectKey={key} />}
           {tab === "trash" && <TrashTab projectKey={key} readOnly={readOnly} />}
