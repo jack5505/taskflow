@@ -127,12 +127,24 @@ export function formatHours(minutes: number | null | undefined): string {
 
 const weekdays = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
-/** Заголовок столбца дня: «пн 05.10». Дата календарная, пояс к ней не применяется. */
-export function dayLabel(date: string): { weekday: string; date: string } {
+/** День недели для заголовка столбца: «пн». Дата календарная, пояс к ней не применяется. */
+export function weekday(date: string): string {
   const m = DATE_RE.test(date) ? date.split("-").map(Number) : null;
-  if (!m) return { weekday: "", date };
-  const wd = new Date(Date.UTC(m[0]!, m[1]! - 1, m[2]!)).getUTCDay();
-  return { weekday: weekdays[wd]!, date: `${date.slice(8, 10)}.${date.slice(5, 7)}` };
+  if (!m) return "";
+  return weekdays[new Date(Date.UTC(m[0]!, m[1]! - 1, m[2]!)).getUTCDay()]!;
+}
+
+/**
+ * Новый период после правки одной границы. Вторая остаётся, а если оказалась по другую сторону —
+ * сдвигается к правленой (период в один день): иначе сервер отклонил бы «по» раньше «с».
+ * Даты ГГГГ-ММ-ДД сравниваются как строки.
+ */
+export function withPeriod(f: ReportFilter, from: string, to: string, changed: "from" | "to"): ReportFilter {
+  if (from && to && from > to) {
+    if (changed === "from") to = from;
+    else from = to;
+  }
+  return { ...f, from, to };
 }
 
 const fieldNames: Record<string, string> = {

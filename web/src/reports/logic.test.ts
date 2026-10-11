@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { MeProfile } from "../api/client";
 import {
   csvFileName,
-  dayLabel,
   filterFromParams,
   formatHours,
   paramsFromFilter,
@@ -11,6 +10,8 @@ import {
   reportQuery,
   unwrapBlobError,
   userLocked,
+  weekday,
+  withPeriod,
   withProject,
   type ReportFilter,
 } from "./logic";
@@ -49,6 +50,13 @@ describe("фильтры отчёта в адресе (§6.6)", () => {
     const f: ReportFilter = { from: "2026-10-01", to: "2026-10-31", project: "TM", sprint: S1, user: U2, view: "task" };
     expect(filterFromParams(paramsFromFilter(f))).toEqual(f);
     expect(paramsFromFilter(empty).toString()).toBe("");
+  });
+
+  it("правка одной границы периода не даёт «с» позже «по»", () => {
+    expect(withPeriod(empty, "2026-10-01", "2026-10-11", "from")).toEqual({ ...empty, from: "2026-10-01", to: "2026-10-11" });
+    expect(withPeriod(empty, "2026-10-20", "2026-10-11", "from")).toEqual({ ...empty, from: "2026-10-20", to: "2026-10-20" });
+    expect(withPeriod(empty, "2026-10-05", "2026-10-01", "to")).toEqual({ ...empty, from: "2026-10-01", to: "2026-10-01" });
+    expect(withPeriod(empty, "2026-10-05", "", "from")).toEqual({ ...empty, from: "2026-10-05", to: "" });
   });
 
   it("смена проекта сбрасывает спринт и пользователя", () => {
@@ -136,10 +144,10 @@ describe("отображение", () => {
     expect(formatHours(undefined)).toBe("0.00");
   });
 
-  it("заголовок дня: день недели и dd.mm", () => {
-    expect(dayLabel("2026-10-05")).toEqual({ weekday: "пн", date: "05.10" });
-    expect(dayLabel("2026-10-11")).toEqual({ weekday: "вс", date: "11.10" });
-    expect(dayLabel("мусор")).toEqual({ weekday: "", date: "мусор" });
+  it("день недели для заголовка столбца", () => {
+    expect(weekday("2026-10-05")).toBe("пн");
+    expect(weekday("2026-10-11")).toBe("вс");
+    expect(weekday("мусор")).toBe("");
   });
 });
 

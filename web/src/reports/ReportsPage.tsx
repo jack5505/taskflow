@@ -10,7 +10,6 @@ import { statusLabel } from "../lib/status";
 import { useProjectMembers, useProjectsList } from "../projects/hooks";
 import {
   csvFileName,
-  dayLabel,
   filterFromParams,
   formatHours,
   paramsFromFilter,
@@ -21,6 +20,8 @@ import {
   reportQueryKey,
   unwrapBlobError,
   userLocked,
+  weekday,
+  withPeriod,
   withProject,
   type ReportFilter,
 } from "./logic";
@@ -47,16 +48,13 @@ function ByUser({ r }: { r: ReportReport }) {
         <thead>
           <tr>
             <th>Пользователь</th>
-            {days.map((d) => {
-              const l = dayLabel(d.date ?? "");
-              return (
-                <th key={d.date} className={d.weekend ? "weekend" : undefined} title={formatDate(d.date)}>
-                  {l.weekday}
-                  <br />
-                  {l.date}
-                </th>
-              );
-            })}
+            {days.map((d) => (
+              <th key={d.date} className={d.weekend ? "weekend" : undefined}>
+                {weekday(d.date ?? "")}
+                <br />
+                {formatDate(d.date)}
+              </th>
+            ))}
             <th>Итого</th>
           </tr>
         </thead>
@@ -157,7 +155,8 @@ function saveFile(blob: Blob, name: string) {
   document.body.append(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  // Firefox и Safari читают файл уже после click(): ссылку освобождаем с запасом.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 /** Отчёты по времени (ТЗ §6.6): фильтры в адресе, два представления, выгрузка в CSV. */
@@ -185,6 +184,8 @@ export function ReportsPage() {
     placeholderData: keepPreviousData,
   });
   const r = report.data;
+  // Прежний отчёт (на экране, пока строится новый) не годится как источник границ периода и итогов.
+  const current = report.isPlaceholderData ? undefined : r;
 
   const csv = useMutation({
     mutationFn: async () => {
@@ -193,8 +194,8 @@ export function ReportsPage() {
         // клиентом, поэтому токен подставляется и обновляется по 401 как у остальных.
         const res = await api.api.v1ReportsTimeList({ ...query, format: "csv" }, { format: "blob" });
         const name = csvFileName(res.headers.get("Content-Disposition"), {
-          from: r?.from ?? f.from,
-          to: r?.to ?? f.to,
+          from: current?.from ?? f.from,
+          to: current?.to ?? f.to,
           view: f.view,
         });
         saveFile(res.data as unknown as Blob, name);
@@ -210,8 +211,8 @@ export function ReportsPage() {
   };
 
   // Период по умолчанию считает сервер (текущая неделя по поясу пользователя) — в полях его границы.
-  const from = f.from || r?.from || "";
-  const to = f.to || r?.to || "";
+  const from = f.from || current?.from || "";
+  const to = f.to || current?.to || "";
 
   // Пользователь из адреса, которого нет в списке (без проекта или вне участников), — по имени из отчёта.
   const userOptions: { id: string; name: string }[] = [];
@@ -240,7 +241,7 @@ export function ReportsPage() {
           type="button"
           className="primary"
           onClick={() => csv.mutate()}
-          disabled={csv.isPending || !r || report.isError}
+          disabled={csv.isPending || !current || report.isError}
         >
           {csv.isPending ? "Готовим файл…" : "Скачать CSV"}
         </button>
@@ -253,7 +254,7 @@ export function ReportsPage() {
             type="date"
             value={from}
             max={to || undefined}
-            onChange={(e) => e.target.value && update({ ...f, from: e.target.value, to })}
+            onChange={(e) => e.target.value && update(withPeriod(f, e.target.value, to, "from"))}
           />
         </label>
         <label>
@@ -262,7 +263,7 @@ export function ReportsPage() {
             type="date"
             value={to}
             min={from || undefined}
-            onChange={(e) => e.target.value && update({ ...f, from, to: e.target.value })}
+            onChange={(e) => e.target.value && update(withPeriod(f, from, e.target.value, "to"))}
           />
         </label>
         <button type="button" onClick={() => update({ ...f, from: "", to: "" })} disabled={!f.from && !f.to}>
@@ -288,6 +289,10 @@ export function ReportsPage() {
             onChange={(e) => update({ ...f, sprint: e.target.value })}
           >
             <option value="">Все спринты</option>
+            {/* Спринт из адреса, которого нет у проекта, — виден, а не молча подменён «Все спринты». */}
+            {f.sprint && sprints.data && !sprints.data.some((s) => s.id === f.sprint) && (
+              <option value={f.sprint}>Спринт не найден</option>
+            )}
             {(sprints.data ?? []).map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -332,9 +337,9 @@ export function ReportsPage() {
             {v.label}
           </button>
         ))}
-        {r && (
+        {current && (
           <span className="muted report-period">
-            {formatDate(r.from)} — {formatDate(r.to)} · всего {r.total} ({r.hours} ч)
+            {formatDate(current.from)} — {formatDate(current.to)} · всего {current.total} ({current.hours} ч)
           </span>
         )}
       </nav>
