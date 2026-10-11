@@ -724,6 +724,68 @@
                 }
             }
         },
+        "/api/v1/me/telegram": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start. Без привязки — тоже 204.",
+                "tags": [
+                    "me"
+                ],
+                "summary": "Отвязать Telegram",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/me/telegram-link-code": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/\u003cбот\u003e?start=\u003cкод\u003e (§8.1). Новый код гасит прежний неиспользованный. Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me), иначе 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Код привязки Telegram",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/telegram.LinkCode"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "бот не подключён",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/me/timer/stop": {
             "post": {
                 "security": [
@@ -3166,6 +3228,68 @@
                 }
             }
         },
+        "/api/v1/telegram/webhook": {
+            "post": {
+                "description": "Приём обновлений бота (§8.8). Секрет в X-Telegram-Bot-Api-Secret-Token проверяется на каждом запросе. Ответ 200 отдаётся сразу, обработка идёт в очереди; повторно доставленный update_id (24 часа) не обрабатывается. Маршрут есть, только если задан TELEGRAM_BOT_TOKEN и бот работает в режиме webhook.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "telegram"
+                ],
+                "summary": "Webhook Telegram",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "секрет webhook",
+                        "name": "X-Telegram-Bot-Api-Secret-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Update из Bot API",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ok: true",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_JSON",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "неверный секрет",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "413": {
+                        "description": "PAYLOAD_TOO_LARGE",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [
@@ -3695,6 +3819,10 @@
                     "items": {
                         "$ref": "#/definitions/me.MyProject"
                     }
+                },
+                "telegram_bot_enabled": {
+                    "description": "TelegramBotEnabled — бот подключён (задан TELEGRAM_BOT_TOKEN): можно получить код привязки.",
+                    "type": "boolean"
                 },
                 "telegram_user_id": {
                     "type": "integer"
@@ -5251,6 +5379,23 @@
                     "format": "date",
                     "maxLength": 40,
                     "example": "2026-10-11"
+                }
+            }
+        },
+        "telegram.LinkCode": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "K7M2X9QD"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "description": "URL — https://t.me/\u003cбот\u003e?start=\u003cкод\u003e; пусто, если имя бота не задано (TELEGRAM_BOT_USERNAME).",
+                    "type": "string",
+                    "example": "https://t.me/taskflow_bot?start=K7M2X9QD"
                 }
             }
         },

@@ -11,6 +11,8 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/testutil"
 	"github.com/jack5505/taskflow/api/internal/worker"
 )
@@ -73,5 +75,31 @@ func TestRunStopsCleanlyWhenCancelledDuringPing(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(15 * time.Second):
 		t.Fatal("Run не завершился после отмены контекста")
+	}
+}
+
+// С токеном бота воркер берёт задания бота: сообщение из очереди уходит в Bot API.
+func TestRunSendsTelegramMessages(t *testing.T) {
+	g := testutil.SharedDB(t)
+	tg := testutil.NewFakeTelegram(t)
+	cfg := &config.Config{RedisAddr: testutil.SharedRedisAddr(t), TelegramBotToken: "123:TEST", TelegramAPIURL: tg.URL}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx, cfg, g) }()
+
+	jobs := queue.NewClient(cfg.RedisAddr)
+	t.Cleanup(func() { _ = jobs.Close() })
+	require.NoError(t, telegram.NewQueue(jobs).Send(context.Background(), telegram.Message{Op: telegram.OpSend, ChatID: 42, Text: "привет"}, 0))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Len(c, tg.Calls("sendMessage"), 1)
+	}, 10*time.Second, 50*time.Millisecond)
+
+	cancel()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("worker.Run не завершился после отмены контекста")
 	}
 }

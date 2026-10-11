@@ -71,13 +71,18 @@ export function telegramAccount(me: Pick<MeProfile, "telegram_user_id" | "telegr
 }
 
 /**
- * Код привязки Telegram (§8.1): 8 символов, действует 10 минут, ссылка https://t.me/<бот>?start=<код>.
- * Ожидаемый ответ POST /me/telegram/link-code — эндпоинт появится в issue #49.
+ * Код привязки Telegram (§8.1): 8 символов, действует 10 минут, ссылка https://t.me/<бот>?start=<код>
+ * (пустая, если на сервере не задано имя бота). Ответ POST /me/telegram-link-code.
  */
 export interface TelegramLinkCode {
   code: string;
   expires_at: string;
   url: string;
+}
+
+/** Ответ сервера → код с обязательными полями (в Swagger поля ответа необязательные). */
+export function linkCodeFrom(d: Partial<TelegramLinkCode>): TelegramLinkCode {
+  return { code: d.code ?? "", expires_at: d.expires_at ?? "", url: d.url ?? "" };
 }
 
 /** Сколько секунд коду осталось жить; 0 — истёк (или срок не разобрать). */

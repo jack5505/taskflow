@@ -84,3 +84,49 @@ func TestLoadAttachmentMaxBytes(t *testing.T) {
 		require.ErrorContains(t, err, "ATTACHMENT_MAX_BYTES", bad)
 	}
 }
+
+// Бот выключен без токена: настройки бота не проверяются. С токеном webhook требует секрет
+// (§8.8), long polling запрещён в production.
+func TestLoadTelegram(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
+	t.Setenv("JWT_SECRET", testSecret)
+	for _, key := range []string{"TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_BOT_USERNAME", "TELEGRAM_POLLING", "TELEGRAM_API_URL", "APP_ENV"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "change-me")
+	cfg, err := config.Load()
+	require.NoError(t, err, "без токена бот выключен, заглушка секрета не мешает")
+	require.False(t, cfg.TelegramEnabled())
+	require.Equal(t, "https://api.telegram.org", cfg.TelegramAPIURL)
+
+	t.Setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "Abc_123-xyz")
+	_, err = config.Load()
+	require.ErrorContains(t, err, "TELEGRAM_BOT_USERNAME", "без имени бота не разобрать /cmd@бот")
+	t.Setenv("TELEGRAM_BOT_USERNAME", "taskflow_bot")
+	for _, s := range []string{"", "change-me", "с пробелом и кириллицей"} {
+		t.Setenv("TELEGRAM_WEBHOOK_SECRET", s)
+		_, err = config.Load()
+		require.ErrorContains(t, err, "TELEGRAM_WEBHOOK_SECRET", s)
+	}
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "Abc_123-xyz")
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	require.True(t, cfg.TelegramEnabled())
+	require.True(t, cfg.TelegramWebhook())
+
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "")
+	t.Setenv("TELEGRAM_POLLING", "true")
+	cfg, err = config.Load()
+	require.NoError(t, err, "в разработке long polling без секрета допустим")
+	require.True(t, cfg.TelegramPolling)
+	require.False(t, cfg.TelegramWebhook())
+
+	t.Setenv("APP_ENV", "production")
+	_, err = config.Load()
+	require.ErrorContains(t, err, "TELEGRAM_POLLING")
+
+	t.Setenv("TELEGRAM_POLLING", "иногда")
+	_, err = config.Load()
+	require.ErrorContains(t, err, "TELEGRAM_POLLING")
+}

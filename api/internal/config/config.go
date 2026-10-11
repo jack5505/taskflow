@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 )
@@ -21,9 +22,12 @@ type Config struct {
 	JWTAccessTTL  time.Duration
 	JWTRefreshTTL time.Duration
 
+	// Бот выключен, пока TELEGRAM_BOT_TOKEN пуст: API и воркер работают, webhook не регистрируется.
 	TelegramBotToken      string
 	TelegramWebhookSecret string
 	TelegramBotUsername   string
+	TelegramAPIURL        string // Bot API; в тестах — фейковый сервер
+	TelegramPolling       bool   // long polling вместо webhook, только не в production (§8.8)
 
 	SMTPHost     string
 	SMTPPort     string
@@ -46,6 +50,7 @@ func Load() (*Config, error) {
 		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramWebhookSecret: os.Getenv("TELEGRAM_WEBHOOK_SECRET"),
 		TelegramBotUsername:   os.Getenv("TELEGRAM_BOT_USERNAME"),
+		TelegramAPIURL:        getenv("TELEGRAM_API_URL", "https://api.telegram.org"),
 		SMTPHost:              os.Getenv("SMTP_HOST"),
 		SMTPPort:              getenv("SMTP_PORT", "587"),
 		SMTPUser:              os.Getenv("SMTP_USER"),
@@ -72,7 +77,45 @@ func Load() (*Config, error) {
 	if c.AttachmentMaxBytes, err = strconv.ParseInt(getenv("ATTACHMENT_MAX_BYTES", "52428800"), 10, 64); err != nil || c.AttachmentMaxBytes <= 0 {
 		return nil, errors.New("ATTACHMENT_MAX_BYTES: нужно положительное число байт")
 	}
+	if c.TelegramPolling, err = strconv.ParseBool(getenv("TELEGRAM_POLLING", "false")); err != nil {
+		return nil, errors.New("TELEGRAM_POLLING: ожидается true или false")
+	}
+	if err := c.checkTelegram(); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// TelegramEnabled — бот включён: задан токен.
+func (c *Config) TelegramEnabled() bool { return c.TelegramBotToken != "" }
+
+// TelegramWebhook — бот получает обновления через webhook (включён и не в long polling).
+func (c *Config) TelegramWebhook() bool { return c.TelegramEnabled() && !c.TelegramPolling }
+
+// webhookSecret — допустимый secret_token Telegram: 1–256 символов A-Z a-z 0-9 _ -.
+var webhookSecret = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+
+// checkTelegram: без токена настройки бота не проверяются (бот выключен). С токеном webhook
+// без секрета не запускаем (§8.8: секрет проверяется на каждом запросе), а long polling — только
+// в разработке.
+func (c *Config) checkTelegram() error {
+	if !c.TelegramEnabled() {
+		return nil
+	}
+	// Без имени бота не разобрать команды вида /take@бот в группе и не собрать ссылку t.me (§8.1).
+	if c.TelegramBotUsername == "" {
+		return errors.New("TELEGRAM_BOT_USERNAME: при заданном TELEGRAM_BOT_TOKEN нужно имя бота")
+	}
+	if c.TelegramPolling {
+		if c.Env == "production" {
+			return errors.New("TELEGRAM_POLLING: long polling только для локальной разработки, в production — webhook")
+		}
+		return nil
+	}
+	if !webhookSecret.MatchString(c.TelegramWebhookSecret) || c.TelegramWebhookSecret == "change-me" {
+		return errors.New("TELEGRAM_WEBHOOK_SECRET: при заданном TELEGRAM_BOT_TOKEN нужен секрет из 1–256 символов A-Z a-z 0-9 _ - (не change-me)")
+	}
+	return nil
 }
 
 func getenv(key, def string) string {
