@@ -9,6 +9,7 @@ import { PasswordSetPage } from "./pages/PasswordSetPage";
 import { BacklogPage } from "./backlog/BacklogPage";
 import { SprintArchivePage } from "./backlog/SprintArchivePage";
 import { BoardPage } from "./board/BoardPage";
+import { ReportsPage } from "./reports/ReportsPage";
 import { SettingsPage } from "./settings/SettingsPage";
 
 // Адреса страниц. /password-set — путь из письма (api/internal/auth: baseURL + /password-set?token=…).
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
           { path: "/projects/:key/backlog", element: <BacklogPage /> },
           { path: "/projects/:key/settings", element: <SettingsPage /> },
           { path: "/projects/:key/backlog/archive", element: <SprintArchivePage /> },
+          { path: "/reports", element: <ReportsPage /> },
           // Карточка с Markdown (marked + DOMPurify) — отдельным чанком: на остальных экранах не нужна.
           { path: "/tasks/:key", lazy: async () => ({ Component: (await import("./task/TaskPage")).TaskPage }) },
         ],

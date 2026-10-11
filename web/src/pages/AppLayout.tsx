@@ -21,6 +21,9 @@ export function AppLayout() {
         <Link to="/" className="brand">
           TaskFlow
         </Link>
+        <Link to="/reports" className="topbar-link">
+          Отчёты
+        </Link>
         <div className="topbar-tools">
           <HeaderTimer />
           <NotificationBell />
