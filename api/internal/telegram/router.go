@@ -26,8 +26,8 @@ type Request struct {
 	// MessageID — сообщение с командой; для кнопки — сообщение, под которым она нажата.
 	MessageID int
 
-	Command string // имя команды без «/» и «@бот», в нижнем регистре; пусто для кнопки
-	Args    string // текст после команды
+	Command string // имя команды без «/» и «@бот», в нижнем регистре; пусто для кнопки и текста
+	Args    string // текст после команды; для обычного текста (Router.Text) — весь текст
 
 	Action string // действие кнопки: часть callback_data до «:» (§8.8: take:<task_id>)
 	Data   string // часть callback_data после «:»
@@ -52,6 +52,9 @@ func (r *Request) Private() bool { return r.Chat.Type == models.ChatTypePrivate 
 
 // IsCallback — нажатие кнопки, а не команда.
 func (r *Request) IsCallback() bool { return r.callbackID != "" }
+
+// IsText — обычный текст в личном чате, а не команда и не кнопка (Router.Text).
+func (r *Request) IsText() bool { return r.callbackID == "" && r.Command == "" }
 
 // Reply отвечает в тот же чат; в группе — ответом на сообщение с командой.
 func (r *Request) Reply(ctx context.Context, text string) error {
@@ -110,6 +113,7 @@ type Router struct {
 	botUsername string
 	commands    map[string]HandlerFunc
 	callbacks   map[string]HandlerFunc
+	text        HandlerFunc
 	middlewares []Middleware
 }
 
@@ -125,6 +129,10 @@ func (rt *Router) Command(name string, h HandlerFunc) { rt.commands[strings.ToLo
 
 // Callback регистрирует действие кнопки: callback_data вида "<action>:<данные>".
 func (rt *Router) Callback(action string, h HandlerFunc) { rt.callbacks[action] = h }
+
+// Text регистрирует обработчик обычного текста (не команды) в личном чате: ответ на вопрос бота,
+// например причина возврата на доработку (§8.7). Текст в группах бот не читает (§8.2).
+func (rt *Router) Text(h HandlerFunc) { rt.text = h }
 
 // Use добавляет middleware ко всем обработчикам; первая добавленная — внешняя.
 func (rt *Router) Use(mw Middleware) { rt.middlewares = append(rt.middlewares, mw) }
@@ -166,7 +174,11 @@ func (rt *Router) route(upd *models.Update, out *Queue) (*Request, HandlerFunc) 
 		msg := upd.Message
 		name, args, ok := rt.parseCommand(msg.Text)
 		if !ok {
-			return nil, nil
+			if rt.text == nil || msg.Chat.Type != models.ChatTypePrivate || strings.TrimSpace(msg.Text) == "" {
+				return nil, nil
+			}
+			return &Request{Update: upd, Chat: msg.Chat, From: *msg.From, MessageID: msg.ID,
+				Args: strings.TrimSpace(msg.Text), out: out}, rt.wrap(rt.text)
 		}
 		h := rt.commands[name]
 		if h == nil {

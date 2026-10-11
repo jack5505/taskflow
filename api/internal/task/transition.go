@@ -26,6 +26,9 @@ var statusNames = map[string]string{
 	StatusDone: "Готово", StatusCancelled: "Отменена",
 }
 
+// StatusName — название статуса для сообщений бота: «В работе», «Готово».
+func StatusName(status string) string { return statusNames[status] }
+
 // transitions — допустимые переходы §4; всё остальное — 409 INVALID_TRANSITION.
 var transitions = map[string]map[string]bool{
 	StatusTodo:       {StatusInProgress: true, StatusCancelled: true},
