@@ -36,7 +36,7 @@ const maxFileNameRunes = 255
 
 var (
 	ErrAttachmentNotFound  = apierr.NotFound("Вложение не найдено")
-	ErrAttachmentTooLarge  = apierr.PayloadTooLarge("Вложение больше 50 МБ")
+	ErrAttachmentTooLarge  = apierr.PayloadTooLarge("Вложение больше допустимого размера (50 МБ)")
 	errAttachmentForbidden = apierr.Forbidden("Удалить вложение может его автор или менеджер проекта")
 	errBadDownloadLink     = apierr.Forbidden("Ссылка на скачивание недействительна или устарела")
 	errFileRequired        = fieldError("file", "нужен файл в поле file (multipart/form-data)")
@@ -86,6 +86,11 @@ func (s *Service) WithAttachments(dir string, maxBytes int64, secret string) *Se
 
 // MaxAttachmentBytes — лимит размера вложения (обработчику — для MaxBytesReader).
 func (s *Service) MaxAttachmentBytes() int64 { return s.files.maxBytes }
+
+// tooLarge — 413 с лимитом в details.
+func (st attachmentStore) tooLarge() error {
+	return ErrAttachmentTooLarge.With("max_bytes", st.maxBytes)
+}
 
 func (st attachmentStore) sign(id uuid.UUID, exp int64) string {
 	m := hmac.New(sha256.New, st.key)
@@ -187,11 +192,11 @@ func (st attachmentStore) save(id uuid.UUID, in UploadInput) (int64, string, err
 	var tooLarge *http.MaxBytesError
 	switch {
 	case errors.As(err, &tooLarge):
-		return 0, "", ErrAttachmentTooLarge
+		return 0, "", st.tooLarge()
 	case err != nil:
 		return 0, "", errFileRead
 	case n > st.maxBytes:
-		return 0, "", ErrAttachmentTooLarge
+		return 0, "", st.tooLarge()
 	}
 	if err := f.Sync(); err != nil {
 		return 0, "", fmt.Errorf("task: attachment sync: %w", err)
@@ -216,14 +221,18 @@ func (s *sniffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// detectMime — тип для показа (превью картинок). На отдачу не влияет: скачивание всегда
-// application/octet-stream с Content-Disposition: attachment.
+// detectMime — тип для показа (превью картинок), без параметров. На отдачу не влияет: скачивание
+// всегда application/octet-stream с Content-Disposition: attachment. По содержимому определяются
+// картинки, PDF, архивы; для текста и неизвестного содержимого точнее заявленный тип (text/csv).
 func detectMime(head []byte, declared string) string {
-	sniffed := http.DetectContentType(head)
-	if sniffed != "application/octet-stream" {
+	sniffed := "application/octet-stream"
+	if len(head) > 0 {
+		sniffed, _, _ = mime.ParseMediaType(http.DetectContentType(head))
+	}
+	if sniffed != "application/octet-stream" && sniffed != "text/plain" {
 		return sniffed
 	}
-	if mt, _, err := mime.ParseMediaType(declared); err == nil {
+	if mt, _, err := mime.ParseMediaType(declared); err == nil && (sniffed == "application/octet-stream" || strings.HasPrefix(mt, "text/")) {
 		return mt
 	}
 	return sniffed

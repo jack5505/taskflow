@@ -67,7 +67,7 @@ func (h *Handlers) attachments(c *gin.Context) {
 func (h *Handlers) addAttachment(c *gin.Context) {
 	limit := h.svc.MaxAttachmentBytes() + multipartOverhead
 	if c.Request.ContentLength > limit {
-		httpserver.Abort(c, ErrAttachmentTooLarge)
+		httpserver.Abort(c, h.svc.files.tooLarge())
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
@@ -81,7 +81,7 @@ func (h *Handlers) addAttachment(c *gin.Context) {
 		var tooLarge *http.MaxBytesError
 		switch {
 		case errors.As(err, &tooLarge):
-			httpserver.Abort(c, ErrAttachmentTooLarge)
+			httpserver.Abort(c, h.svc.files.tooLarge())
 			return
 		case err != nil: // io.EOF — поля file нет; иначе тело оборвано
 			httpserver.Abort(c, errFileRequired)

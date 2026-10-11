@@ -34,4 +34,8 @@ func TestDetectMime(t *testing.T) {
 	require.Equal(t, "image/png", detectMime([]byte("\x89PNG\r\n\x1a\n"), "text/html"), "по содержимому")
 	require.Equal(t, "application/pdf", detectMime([]byte{0, 1, 2}, "application/pdf; x=1"), "заявленный — если по содержимому не понять")
 	require.Equal(t, "application/octet-stream", detectMime([]byte{0, 1, 2}, "мусор"))
+	require.Equal(t, "text/html", detectMime([]byte("<html></html>"), "text/plain"), "HTML по содержимому")
+	require.Equal(t, "text/csv", detectMime([]byte("a,b\n1,2\n"), "text/csv"), "текст — заявленный text/*")
+	require.Equal(t, "text/plain", detectMime([]byte("a,b"), "application/json"), "текст не выдаётся за не-текст")
+	require.Equal(t, "application/octet-stream", detectMime(nil, ""), "пустой файл — не text/plain")
 }

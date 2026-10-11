@@ -105,7 +105,7 @@ func TestAttachmentUploadListDownload(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	id := a["id"].(string)
 	require.Equal(t, "отчёт <1>.html", a["file_name"])
-	require.Equal(t, "text/html; charset=utf-8", a["mime_type"])
+	require.Equal(t, "text/html", a["mime_type"])
 	require.EqualValues(t, len(html), a["size_bytes"])
 	require.Equal(t, f.memberU.ID.String(), a["author_id"])
 	require.Equal(t, "Пользователь", a["author_name"])
@@ -127,7 +127,7 @@ func TestAttachmentUploadListDownload(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Len(t, list, 2)
 	require.Equal(t, second["id"], list[0]["id"], "новые сверху")
-	require.Equal(t, "text/plain; charset=utf-8", list[0]["mime_type"])
+	require.Equal(t, "text/plain", list[0]["mime_type"])
 
 	before := time.Now()
 	rec, link := f.do(t, "GET", "/api/v1/attachments/"+id, f.manager, "")
@@ -234,6 +234,7 @@ func TestAttachmentSizeLimit(t *testing.T) {
 	rec, body := f.upload(t, f.member, key, "51.bin", "", stream(51<<20))
 	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
 	require.Equal(t, "PAYLOAD_TOO_LARGE", errCode(body))
+	require.EqualValues(t, 50<<20, body["error"].(map[string]any)["details"].(map[string]any)["max_bytes"])
 	// Ровно на байт больше лимита — тоже 413 (лимит файла, а не тела запроса).
 	rec, _ = f.upload(t, f.member, key, "50.bin", "", stream(50<<20+1))
 	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
