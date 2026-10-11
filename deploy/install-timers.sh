@@ -35,6 +35,8 @@ EOF
 cat > "$UNIT_DIR/taskflow-restore-check.service" <<EOF
 [Unit]
 Description=TaskFlow: проверка восстановления последнего бэкапа во временные контейнеры (ТЗ §10.3)
+# После простоя оба таймера (Persistent) срабатывают разом: проверка ждёт, пока допишется бэкап.
+After=taskflow-backup.service
 
 [Service]
 Type=oneshot

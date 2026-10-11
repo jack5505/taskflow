@@ -5,6 +5,7 @@
 # shellcheck disable=SC2034  # переменные используют подключающие скрипты
 
 ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+CALLER_PWD=$PWD
 cd "$ROOT" || exit 1
 
 # env_get KEY [default] — значение из .env без source: там бывают значения с пробелами и спецсимволами
@@ -28,8 +29,15 @@ log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
 PROJECT=$(env_get COMPOSE_PROJECT_NAME "$(basename "$ROOT")")
 export COMPOSE_PROJECT_NAME="$PROJECT"
-# BACKUP_DIR из окружения важнее .env: так проверяют бэкап, скачанный из внешнего хранилища в другой каталог.
-BACKUP_DIR=${BACKUP_DIR:-$(env_get BACKUP_DIR "$ROOT/backups")}
+# BACKUP_DIR из окружения важнее .env: так проверяют бэкап, скачанный из внешнего хранилища в другой
+# каталог. Путь делается абсолютным (относительный из окружения — от каталога вызова, из .env — от
+# корня репозитория): docker run -v принял бы относительный путь за имя тома.
+if [ -n "${BACKUP_DIR:-}" ]; then
+  [[ $BACKUP_DIR == /* ]] || BACKUP_DIR="$CALLER_PWD/$BACKUP_DIR"
+else
+  BACKUP_DIR=$(env_get BACKUP_DIR "$ROOT/backups")
+  [[ $BACKUP_DIR == /* ]] || BACKUP_DIR="$ROOT/$BACKUP_DIR"
+fi
 BACKUP_KEEP_DAYS=$(env_get BACKUP_KEEP_DAYS 30)
 BACKUP_REMOTE=$(env_get BACKUP_REMOTE)
 PORT=$(env_get TASKFLOW_PORT 8100)

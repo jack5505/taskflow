@@ -29,7 +29,7 @@
 | `JWT_SECRET` | да | — | ключ подписи токенов, не короче 32 символов: `openssl rand -base64 32`. Смена разлогинивает всех |
 | `APP_BASE_URL` | да на стенде | `http://localhost:8080` | внешний адрес (`https://<домен>`): из него строятся ссылки в письмах; по схеме `https` ставится флаг `Secure` у cookie |
 | `APP_ADDR` | нет | `:8080` | адрес внутри контейнера; не менять — на него смотрят healthcheck и проброс порта |
-| `APP_ENV` | нет | `development` | `production` включает release-режим Gin (меньше отладочного вывода) |
+| `APP_ENV` | нет | `development` | `production` включает release-режим Gin (меньше отладочного вывода); на API и cookie не влияет — флаг `Secure` зависит от `APP_BASE_URL` |
 | `REDIS_ADDR` | нет | `localhost:6379` | в compose — `redis:6379` |
 | `JWT_ACCESS_TTL` | нет | `15m` | срок access-токена |
 | `JWT_REFRESH_TTL` | нет | `720h` | срок refresh-токена (cookie), 30 дней |
@@ -45,7 +45,7 @@
 | `COMPOSE_PROJECT_NAME` | имя каталога | префикс контейнеров, томов и сети; меняют только для второй копии стенда |
 | `TASKFLOW_PORT` | `8100` | порт `api` на `127.0.0.1`; на него смотрит nginx и `deploy.sh` |
 | `TASKFLOW_IMAGE` | `taskflow:local` | текущий образ; **пишет `deploy.sh`**, руками не задаётся |
-| `BACKUP_DIR` | `<репозиторий>/backups` | каталог бэкапов; переменная окружения важнее `.env` |
+| `BACKUP_DIR` | `<репозиторий>/backups` | каталог бэкапов; переменная окружения важнее `.env`; относительный путь — от каталога вызова (из `.env` — от корня репозитория) |
 | `BACKUP_KEEP_DAYS` | `30` | сколько дней хранить датированные бэкапы (§10.3) |
 | `BACKUP_REMOTE` | пусто | rclone-адрес внешней копии, например `s3:backups/taskflow`; конфиг rclone — `deploy/rclone.conf` (в git не попадает) |
 
@@ -64,7 +64,7 @@
 ```bash
 git clone https://github.com/jack5505/taskflow.git ~/taskflow && cd ~/taskflow
 cp .env.example .env && chmod 600 .env
-# заполнить: JWT_SECRET (openssl rand -base64 32), APP_BASE_URL=https://<домен>, APP_ENV=production,
+# заполнить: JWT_SECRET (openssl rand -base64 32), APP_BASE_URL=https://<домен>,
 #            SMTP_* (если есть почта), BACKUP_REMOTE (если есть внешнее хранилище)
 docker compose up -d --wait postgres redis
 ```
@@ -103,7 +103,7 @@ deploy/install-timers.sh
 systemctl --user list-timers 'taskflow-*'
 ```
 
-Ставит `taskflow-backup.timer` (ежедневно в 03:30) и `taskflow-restore-check.timer` (1-го числа в 05:00). Журналы: `journalctl --user -u taskflow-backup.service`, `journalctl --user -u taskflow-restore-check.service`.
+Ставит `taskflow-backup.timer` (ежедневно в 03:30) и `taskflow-restore-check.timer` (1-го числа в 05:00; если после простоя оба срабатывают разом, проверка ждёт окончания бэкапа). Журналы: `journalctl --user -u taskflow-backup.service`, `journalctl --user -u taskflow-restore-check.service`.
 
 ## 5. Обновление по тегу и откат
 
@@ -139,34 +139,37 @@ deploy/deploy.sh v1.2.3
 ### 7.1. Автоматическая: `deploy/restore-check.sh`
 
 ```bash
-deploy/restore-check.sh            # последний бэкап из BACKUP_DIR
+deploy/restore-check.sh            # последний полный бэкап (есть и дамп, и архив) из BACKUP_DIR
 deploy/restore-check.sh 20261011-0330
 cat backups/CHECKS.md              # журнал проверок
 ```
 
 Скрипт не трогает стенд и его тома: поднимает временные контейнеры `taskflow-restorecheck-<pid>-*` в отдельной сети и после проверки удаляет их. Проверки:
 
-1. дамп целиком восстанавливается в чистый PostgreSQL 16 (`ON_ERROR_STOP`);
+1. временный PostgreSQL поднялся (иначе — провал «не поднялся», а не «битый бэкап»), дамп целиком восстанавливается в чистый PostgreSQL 16 (`ON_ERROR_STOP`);
 2. `schema_migrations` есть и не `dirty`; если версия отличается от последней миграции в репозитории — предупреждение;
-3. в базе есть пользователи; в журнал пишется число пользователей, проектов, задач, записей времени и вложений;
+3. в базе есть пользователи; в журнал пишется число пользователей, проектов, задач, записей времени и вложений (по тем таблицам, что есть в бэкапе — старый `pre-v…` тоже проверяется);
 4. каждое вложение из таблицы `attachments` есть в архиве вложений;
 5. образ стенда (`TASKFLOW_IMAGE`) стартует на восстановленной базе, применяет миграции и отвечает `200` на `/health`. Секреты стенда не используются (свой `JWT_SECRET`, без SMTP и Telegram), `worker` не запускается — копия ничего не рассылает.
 
-Результат — строка `OK` или `ПРОВАЛ — причина` в `$BACKUP_DIR/CHECKS.md`, код выхода `0` только при успехе (провал виден в `systemctl --user status taskflow-restore-check.service`).
+Результат — строка `OK` или `ПРОВАЛ — причина` в `$BACKUP_DIR/CHECKS.md` (другой журнал — `CHECKS_FILE=<файл>`). Строка пишется при любом исходе, в том числе если скрипт упал на docker или psql. Код выхода `0` только при успехе (провал виден в `systemctl --user status taskflow-restore-check.service`). Образ `TASKFLOW_IMAGE` берётся локальный: `deploy.sh` держит три последних релиза.
 
 ### 7.2. Что делает человек раз в месяц
 
 1. После 1-го числа: `tail -3 backups/CHECKS.md` и `systemctl --user status taskflow-restore-check.service` — последняя проверка `OK`. При `ПРОВАЛ` — разобраться сегодня же: битый бэкап значит, что восстанавливаться не из чего.
 2. Проверить **внешнюю копию** (на сервере её не видно — её и надо проверить, на случай потери сервера):
    ```bash
-   label=$(ls backups | sed -n 's/^db-\(20.*\)\.sql\.gz$/\1/p' | sort | tail -1)
+   cd ~/taskflow
+   dir=$(sed -n 's/^BACKUP_DIR=//p' .env | tr -d '"'); dir=${dir:-$PWD/backups}
+   remote=$(sed -n 's/^BACKUP_REMOTE=//p' .env | tr -d '"')
+   label=$(ls "$dir" | sed -n 's/^db-\(20.*\)\.sql\.gz$/\1/p' | sort | tail -1)   # последний датированный
    mkdir -p /tmp/taskflow-remote-check
    docker run --rm -v "$PWD/deploy/rclone.conf:/config/rclone/rclone.conf:ro" -v /tmp/taskflow-remote-check:/in \
-     rclone/rclone copy "$(sed -n 's/^BACKUP_REMOTE=//p' .env)" /in --include "*-$label.*"
-   BACKUP_DIR=/tmp/taskflow-remote-check deploy/restore-check.sh "$label"
+     rclone/rclone copy "$remote" /in --include "*-$label.*"
+   CHECKS_FILE="$dir/CHECKS.md" BACKUP_DIR=/tmp/taskflow-remote-check deploy/restore-check.sh "$label"
    rm -rf /tmp/taskflow-remote-check
    ```
-3. Записать итог строкой в `backups/CHECKS.md` (если проверка внешней копии шла вручную, строка уже в `/tmp/taskflow-remote-check/CHECKS.md` — перенести).
+   Итог попадает в тот же журнал `CHECKS.md` стенда; в строке после метки — каталог, из которого проверялся бэкап, так что проверку внешней копии видно отдельно.
 
 ### 7.3. Полная проверка на копии стенда (по необходимости)
 
