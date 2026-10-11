@@ -41,6 +41,7 @@ type Service struct {
 	db       *gorm.DB
 	projects *project.Service
 	now      func() time.Time
+	files    attachmentStore // вложения (§3.9): WithAttachments
 }
 
 func NewService(db *gorm.DB, projects *project.Service) *Service {
