@@ -45,6 +45,14 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "cmd_status_done"}}Готово{{end}}
 {{define "cmd_status_cancelled"}}Отменена{{end}}
 
+{{- /* Создание задачи /new, §8.5 */}}
+{{define "cmd_new_usage"}}Формат: /new [ключ проекта] <название>{{end}}
+{{define "cmd_new_created"}}Создана задача {{.Key}} «{{.Title}}»{{end}}
+{{define "cmd_new_not_member"}}Вы не участник проекта {{.}}{{end}}
+{{define "cmd_new_no_projects"}}У вас нет активных проектов{{end}}
+{{define "cmd_new_choose"}}{{if .Private}}Укажите проект: /new {{index .Keys 0}} <название>. Ваши проекты: {{else}}К группе подключено несколько проектов, укажите ключ: /new {{index .Keys 0}} <название>. Проекты группы: {{end}}
+{{- range $i, $k := .Keys}}{{if $i}}, {{end}}{{$k}}{{end}}{{end}}
+
 {{- /* Подключение группы к проекту, §8.2 */}}
 {{define "group_only"}}Эта команда работает в группе проекта{{end}}
 {{define "bind_usage"}}Формат: /bind <код>. Код выдаётся в настройках проекта → Telegram{{end}}

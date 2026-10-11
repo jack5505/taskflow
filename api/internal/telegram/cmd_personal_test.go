@@ -35,7 +35,8 @@ type cmdBot struct {
 	tg       map[uuid.UUID]int64
 }
 
-func newCmdBot(t *testing.T) *cmdBot {
+// extra дополняет роутер (другие команды, /help).
+func newCmdBot(t *testing.T, extra ...func(*telegram.Router)) *cmdBot {
 	t.Helper()
 	e := newEnv(t)
 	g := testutil.SharedDB(t)
@@ -44,6 +45,9 @@ func newCmdBot(t *testing.T) *cmdBot {
 	rt := telegram.NewRouter("TaskBot")
 	telegram.RegisterAccount(rt, telegram.NewAccounts(g, "TaskBot"), e.rdb)
 	telegram.RegisterPrivateCommands(rt, b.tasks)
+	for _, f := range extra {
+		f(rt)
+	}
 	b.p = telegram.NewProcessor(e.api, rt, e.out)
 
 	b.admin = newUser(t, g, "Админ")
