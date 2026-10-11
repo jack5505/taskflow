@@ -353,6 +353,27 @@ definitions:
         maxLength: 64
         type: string
     type: object
+  task.AttachmentView:
+    properties:
+      author_id:
+        type: string
+      author_name:
+        type: string
+      created_at:
+        type: string
+      file_name:
+        type: string
+      id:
+        type: string
+      mime_type:
+        type: string
+      size_bytes:
+        type: integer
+      task_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
   task.CommentView:
     properties:
       author_id:
@@ -375,6 +396,14 @@ definitions:
       task_id:
         type: string
       updated_at:
+        type: string
+    type: object
+  task.DownloadLink:
+    properties:
+      expires_at:
+        type: string
+      url:
+        example: /api/v1/attachments/9b2c…/download?exp=1760180000&sig=…
         type: string
     type: object
   task.HistoryView:
@@ -755,6 +784,109 @@ info:
   title: TaskFlow API
   version: "1.0"
 paths:
+  /api/v1/attachments/{id}:
+    delete:
+      description: 'Автор файла или менеджер проекта (§2: чужие — только менеджер).
+        Файл удаляется с диска.'
+      parameters:
+      - description: id вложения
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: чужое вложение'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Удалить вложение
+      tags:
+      - attachments
+    get:
+      description: После проверки прав выдаёт ссылку, подписанную на 10 минут (§3.9).
+        Ссылка открывается без токена.
+      parameters:
+      - description: id вложения
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.DownloadLink'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Ссылка на скачивание вложения
+      tags:
+      - attachments
+  /api/v1/attachments/{id}/download:
+    get:
+      description: |-
+        Без токена: доступ по подписи и сроку из ссылки GET /attachments/{id}. Файл отдаётся как
+        application/octet-stream с Content-Disposition: attachment и X-Content-Type-Options: nosniff —
+        браузер не открывает его как страницу (§3.9).
+      parameters:
+      - description: id вложения
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: срок ссылки, unix-время
+        in: query
+        name: exp
+        required: true
+        type: integer
+      - description: подпись
+        in: query
+        name: sig
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "403":
+          description: 'FORBIDDEN: подпись неверна или срок истёк'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Скачать вложение
+      tags:
+      - attachments
   /api/v1/auth/login:
     post:
       consumes:
@@ -1828,6 +1960,87 @@ paths:
       summary: Изменить задачу
       tags:
       - tasks
+  /api/v1/tasks/{task_key}/attachments:
+    get:
+      description: Новые сверху. Участник проекта; вложения удалённой задачи — администратор
+        системы.
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/task.AttachmentView'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Вложения задачи
+      tags:
+      - attachments
+    post:
+      consumes:
+      - multipart/form-data
+      description: |-
+        Любой участник проекта (§2). multipart/form-data, поле file, до 50 МБ, тип любой (§3.9).
+        Событие attachment.added.
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      - description: файл
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/task.AttachmentView'
+        "400":
+          description: 'VALIDATION_FAILED: нет поля file'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "413":
+          description: PAYLOAD_TOO_LARGE
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Загрузить вложение
+      tags:
+      - attachments
   /api/v1/tasks/{task_key}/comments:
     get:
       parameters:

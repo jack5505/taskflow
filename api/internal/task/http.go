@@ -43,6 +43,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	t.GET("/:task_key/history", h.history)
 	t.POST("/:task_key/transition", h.transition)
 	t.POST("/:task_key/take", h.take)
+	h.registerAttachments(api)
 }
 
 // createRequest — ограничения §3.3 (сервис проверяет их ещё раз: бот вызывает его напрямую).

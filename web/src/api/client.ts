@@ -221,6 +221,18 @@ export interface ProjectUpdateRequest {
   timezone?: string;
 }
 
+export interface TaskAttachmentView {
+  author_id?: string;
+  author_name?: string;
+  created_at?: string;
+  file_name?: string;
+  id?: string;
+  mime_type?: string;
+  size_bytes?: number;
+  task_id?: string;
+  updated_at?: string;
+}
+
 export interface TaskCommentView {
   author_id?: string;
   author_name?: string;
@@ -231,6 +243,12 @@ export interface TaskCommentView {
   source?: "web" | "telegram";
   task_id?: string;
   updated_at?: string;
+}
+
+export interface TaskDownloadLink {
+  expires_at?: string;
+  /** @example "/api/v1/attachments/9b2c…/download?exp=1760180000&sig=…" */
+  url?: string;
 }
 
 export interface TaskHistoryView {
@@ -688,6 +706,66 @@ export class Api<
   SecurityDataType extends unknown,
 > extends HttpClient<SecurityDataType> {
   api = {
+    /**
+     * @description После проверки прав выдаёт ссылку, подписанную на 10 минут (§3.9). Ссылка открывается без токена.
+     *
+     * @tags attachments
+     * @name V1AttachmentsDetail
+     * @summary Ссылка на скачивание вложения
+     * @request GET:/api/v1/attachments/{id}
+     * @secure
+     */
+    v1AttachmentsDetail: (id: string, params: RequestParams = {}) =>
+      this.request<TaskDownloadLink, ApierrResponse>({
+        path: `/api/v1/attachments/${id}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Автор файла или менеджер проекта (§2: чужие — только менеджер). Файл удаляется с диска.
+     *
+     * @tags attachments
+     * @name V1AttachmentsDelete
+     * @summary Удалить вложение
+     * @request DELETE:/api/v1/attachments/{id}
+     * @secure
+     */
+    v1AttachmentsDelete: (id: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/attachments/${id}`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Без токена: доступ по подписи и сроку из ссылки GET /attachments/{id}. Файл отдаётся как application/octet-stream с Content-Disposition: attachment и X-Content-Type-Options: nosniff — браузер не открывает его как страницу (§3.9).
+     *
+     * @tags attachments
+     * @name V1AttachmentsDownloadList
+     * @summary Скачать вложение
+     * @request GET:/api/v1/attachments/{id}/download
+     */
+    v1AttachmentsDownloadList: (
+      id: string,
+      query: {
+        /** срок ссылки, unix-время */
+        exp: number;
+        /** подпись */
+        sig: string;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<Blob, ApierrResponse>({
+        path: `/api/v1/attachments/${id}/download`,
+        method: "GET",
+        query: query,
+        ...params,
+      }),
+
     /**
      * @description Возвращает access-токен (15 минут) и ставит httpOnly cookie refresh_token (30 дней). После 10 неудачных попыток вход по email закрыт на 15 минут.
      *
@@ -1309,6 +1387,51 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Новые сверху. Участник проекта; вложения удалённой задачи — администратор системы.
+     *
+     * @tags attachments
+     * @name V1TasksAttachmentsList
+     * @summary Вложения задачи
+     * @request GET:/api/v1/tasks/{task_key}/attachments
+     * @secure
+     */
+    v1TasksAttachmentsList: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskAttachmentView[], ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/attachments`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Любой участник проекта (§2). multipart/form-data, поле file, до 50 МБ, тип любой (§3.9). Событие attachment.added.
+     *
+     * @tags attachments
+     * @name V1TasksAttachmentsCreate
+     * @summary Загрузить вложение
+     * @request POST:/api/v1/tasks/{task_key}/attachments
+     * @secure
+     */
+    v1TasksAttachmentsCreate: (
+      taskKey: string,
+      data: {
+        /** файл */
+        file: File;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskAttachmentView, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/attachments`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.FormData,
         format: "json",
         ...params,
       }),
