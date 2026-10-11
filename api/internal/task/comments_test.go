@@ -116,3 +116,31 @@ func TestCommentNotifies(t *testing.T) {
 	require.NoError(t, f.db.Model(&notification.Notification{}).Where("user_id = ? AND type = 'comment'", other.ID).Count(&n).Error)
 	require.Zero(t, n, "автору комментария — нет")
 }
+
+// Ревью #92: администратор системы с ролью участника — всё равно права менеджера (§2);
+// правка тем же текстом возвращает полный комментарий; чужой комментарий в архиве — 403, не 409.
+func TestCommentReviewFixes(t *testing.T) {
+	f := newFixture(t)
+	adminMember, adminToken := f.user(t, true)
+	f.join(t, adminMember, project.RoleMember)
+	key := f.create(t, f.member, `{"title":"X"}`)["key"].(string)
+	rec, b := f.do(t, "POST", "/api/v1/tasks/"+key+"/comments", f.member, `{"body":"Текст"}`)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	id := b["id"].(string)
+
+	rec, _ = f.do(t, "PATCH", "/api/v1/comments/"+id, f.member, `{"body":"Правка"}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	rec, b = f.do(t, "PATCH", "/api/v1/comments/"+id, f.member, `{"body":"Правка"}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "Пользователь", b["author_name"])
+	require.Equal(t, true, b["edited"], "прежняя правка не теряется")
+
+	rec, _ = f.do(t, "PATCH", "/api/v1/comments/"+id, adminToken, `{"body":"Администратор"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "администратор-участник правит чужой")
+
+	other, otherToken := f.user(t, false)
+	f.join(t, other, project.RoleMember)
+	require.NoError(t, f.db.Model(f.p).Update("is_archived", true).Error)
+	rec, _ = f.do(t, "DELETE", "/api/v1/comments/"+id, otherToken, "")
+	require.Equal(t, http.StatusForbidden, rec.Code, "права раньше архива")
+}

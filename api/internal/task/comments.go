@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
-	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/user"
@@ -62,14 +60,20 @@ func (s *Service) AddComment(ctx context.Context, u *user.User, key, body string
 	if err != nil {
 		return nil, err
 	}
+	if keyRe.FindStringSubmatch(key) == nil {
+		return nil, ErrNotFound
+	}
 	var view CommentView
-	err = s.onTask(ctx, u, key, func(tx *gorm.DB, t *Task, _ string) error {
-		_, src := audit.From(ctx)
-		source := "web"
-		if src == audit.SourceBot {
-			source = "telegram"
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		if err != nil {
+			return err
 		}
-		c := Comment{TaskID: t.ID, AuthorID: u.ID, Body: body, Source: source}
+		if err := project.EnsureWritable(&o.project); err != nil {
+			return err
+		}
+		t := &o.task
+		c := Comment{TaskID: t.ID, AuthorID: u.ID, Body: body, Source: commentSource(o.actor.source)}
 		if err := tx.Create(&c).Error; err != nil {
 			return fmt.Errorf("task: comment: %w", err)
 		}
@@ -81,7 +85,7 @@ func (s *Service) AddComment(ctx context.Context, u *user.User, key, body string
 		return events.Publish(tx, events.CommentCreated, map[string]any{
 			"comment_id": c.ID, "task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "title": t.Title,
 			"author_id": u.ID, "body": string(preview), "assignee_id": t.AssigneeID, "reporter_id": t.ReporterID,
-			"source": source,
+			"source": c.Source,
 		})
 	})
 	if err != nil {
@@ -96,23 +100,21 @@ func (s *Service) UpdateComment(ctx context.Context, u *user.User, id uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
-	var view CommentView
+	var view *CommentView
 	err = s.onComment(ctx, u, id, func(tx *gorm.DB, c *Comment) error {
-		if c.Body == body {
-			view = CommentView{Comment: *c}
-			return nil
+		if c.Body != body {
+			if err := tx.Model(c).Updates(map[string]any{"body": body, "updated_at": s.now()}).Error; err != nil {
+				return fmt.Errorf("task: comment update: %w", err)
+			}
 		}
-		c.Body = body
-		if err := tx.Model(c).Updates(map[string]any{"body": body, "updated_at": time.Now()}).Error; err != nil {
-			return fmt.Errorf("task: comment update: %w", err)
-		}
-		view = CommentView{Comment: *c, Edited: true}
-		return tx.Raw(`SELECT display_name FROM users WHERE id = ?`, c.AuthorID).Scan(&view.AuthorName).Error
+		var err error
+		view, err = commentView(tx, c.ID)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &view, nil
+	return view, nil
 }
 
 // DeleteComment — удаление автором или менеджером (§2: чужие — только менеджер).
@@ -122,27 +124,43 @@ func (s *Service) DeleteComment(ctx context.Context, u *user.User, id uuid.UUID)
 	})
 }
 
-// onComment — комментарий под FOR UPDATE с проверками задачи (onTask) и прав автора/менеджера.
+func commentView(tx *gorm.DB, id uuid.UUID) (*CommentView, error) {
+	var v CommentView
+	if err := tx.Raw(`SELECT c.*, u.display_name AS author_name, c.updated_at > c.created_at AS edited
+		FROM comments c JOIN users u ON u.id = c.author_id WHERE c.id = ?`, id).Scan(&v).Error; err != nil {
+		return nil, fmt.Errorf("task: comment view: %w", err)
+	}
+	return &v, nil
+}
+
+// onComment — в одной транзакции: задача комментария (openTask, FOR SHARE), комментарий FOR UPDATE
+// с проверкой, что он этой задачи, права автора/менеджера (403) и только затем архив (409).
 func (s *Service) onComment(ctx context.Context, u *user.User, id uuid.UUID, fn func(*gorm.DB, *Comment) error) error {
-	var key string
-	if err := s.db.WithContext(ctx).Raw(`SELECT t.key FROM comments c JOIN tasks t ON t.id = c.task_id WHERE c.id = ?`, id).
-		Scan(&key).Error; err != nil {
-		return fmt.Errorf("task: comment: %w", err)
-	}
-	if key == "" {
-		return ErrCommentNotFound
-	}
-	err := s.onTask(ctx, u, key, func(tx *gorm.DB, _ *Task, role string) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var key string
+		if err := tx.Raw(`SELECT t.key FROM comments c JOIN tasks t ON t.id = c.task_id WHERE c.id = ?`, id).Scan(&key).Error; err != nil {
+			return fmt.Errorf("task: comment: %w", err)
+		}
+		if key == "" {
+			return ErrCommentNotFound
+		}
+		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		if err != nil {
+			return err
+		}
 		var c Comment
-		res := tx.Raw(`SELECT * FROM comments WHERE id = ? FOR UPDATE`, id).Scan(&c)
+		res := tx.Raw(`SELECT * FROM comments WHERE id = ? AND task_id = ? FOR UPDATE`, id, o.task.ID).Scan(&c)
 		if res.Error != nil {
 			return fmt.Errorf("task: comment lock: %w", res.Error)
 		}
 		if res.RowsAffected == 0 {
 			return ErrCommentNotFound
 		}
-		if c.AuthorID != u.ID && role != project.RoleManager {
+		if c.AuthorID != u.ID && !o.actor.manager {
 			return errCommentForbidden
+		}
+		if err := project.EnsureWritable(&o.project); err != nil {
+			return err
 		}
 		return fn(tx, &c)
 	})
@@ -150,54 +168,4 @@ func (s *Service) onComment(ctx context.Context, u *user.User, id uuid.UUID, fn 
 		return ErrCommentNotFound
 	}
 	return err
-}
-
-// onTask — действие над задачей без изменения её полей: актор (FOR SHARE, активен), задача
-// (FOR SHARE, не удалена), проект (FOR SHARE, не архив), участие. Порядок блокировок — как у change().
-func (s *Service) onTask(ctx context.Context, u *user.User, key string, fn func(*gorm.DB, *Task, string) error) error {
-	if keyRe.FindStringSubmatch(key) == nil {
-		return ErrNotFound
-	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var me []struct {
-			IsSystemAdmin bool
-			IsActive      bool
-		}
-		if err := tx.Raw(`SELECT is_system_admin, is_active FROM users WHERE id = ? FOR SHARE`, u.ID).Scan(&me).Error; err != nil {
-			return fmt.Errorf("task: actor: %w", err)
-		}
-		if len(me) == 0 || !me[0].IsActive {
-			return errUserBlocked
-		}
-		var t Task
-		res := tx.Raw(`SELECT * FROM tasks WHERE key = ? AND deleted_at IS NULL FOR SHARE`, key).Scan(&t)
-		if res.Error != nil {
-			return fmt.Errorf("task: lock: %w", res.Error)
-		}
-		if res.RowsAffected == 0 {
-			return ErrNotFound
-		}
-		var p project.Project
-		pr := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR SHARE`, t.ProjectID).Scan(&p)
-		if pr.Error != nil {
-			return fmt.Errorf("task: project: %w", pr.Error)
-		}
-		if pr.RowsAffected == 0 {
-			return ErrNotFound
-		}
-		role, err := project.RoleIn(tx, p.ID, u.ID)
-		if err != nil {
-			return err
-		}
-		if role == "" && !me[0].IsSystemAdmin {
-			return ErrNotFound
-		}
-		if err := project.EnsureWritable(&p); err != nil {
-			return err
-		}
-		if me[0].IsSystemAdmin && role == "" {
-			role = project.RoleManager // §2: администратор системы — права менеджера
-		}
-		return fn(tx, &t, role)
-	})
 }

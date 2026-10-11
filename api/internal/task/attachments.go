@@ -127,10 +127,10 @@ type UploadInput struct {
 
 // AddAttachment — загрузка вложения любым участником (§2, §3.9). Файл пишется во временный файл
 // в каталоге вложений и переименовывается в имя-uuid; строка и событие attachment.added — в одной
-// транзакции, при её ошибке файл удаляется. Больше лимита — 413 PAYLOAD_TOO_LARGE.
+// транзакции (openTask, как у AddComment: версия задачи не меняется), при её ошибке файл удаляется. Больше лимита — 413 PAYLOAD_TOO_LARGE.
 func (s *Service) AddAttachment(ctx context.Context, u *user.User, key string, in UploadInput) (*AttachmentView, error) {
 	// Права и архив проверяются до приёма файла: постороннему не на что тратить 50 МБ диска.
-	// Окончательная проверка — в транзакции (onTask).
+	// Окончательная проверка — в транзакции под блокировками (openTask).
 	_, a, err := s.Get(ctx, u, key)
 	if err != nil {
 		return nil, err
@@ -149,7 +149,15 @@ func (s *Service) AddAttachment(ctx context.Context, u *user.User, key string, i
 	}
 	path := filepath.Join(s.files.dir, id.String())
 	var view AttachmentView
-	err = s.onTask(ctx, u, key, func(tx *gorm.DB, t *Task, _ string) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		if err != nil {
+			return err
+		}
+		if err := project.EnsureWritable(&o.project); err != nil {
+			return err
+		}
+		t := &o.task
 		at := Attachment{Base: model.Base{ID: id}, TaskID: t.ID, AuthorID: u.ID, FileName: name,
 			MimeType: mimeType, SizeBytes: size, StoragePath: id.String()}
 		if err := tx.Create(&at).Error; err != nil {
@@ -304,29 +312,36 @@ func (s *Service) OpenAttachment(ctx context.Context, id uuid.UUID, exp, sig str
 	return &a, f, nil
 }
 
-// DeleteAttachment — удаление автором или менеджером (§2: чужие — только менеджер).
-// Строка удаляется в транзакции onTask, файл — после коммита.
+// DeleteAttachment — удаление автором или менеджером (§2: чужие — только менеджер). Порядок как
+// у onComment: задача (openTask, FOR SHARE), вложение FOR UPDATE, права (403), затем архив (409).
+// Строка удаляется в транзакции, файл — после коммита.
 func (s *Service) DeleteAttachment(ctx context.Context, u *user.User, id uuid.UUID) error {
-	var key string
-	if err := s.db.WithContext(ctx).Raw(`SELECT t.key FROM attachments a JOIN tasks t ON t.id = a.task_id WHERE a.id = ?`, id).
-		Scan(&key).Error; err != nil {
-		return fmt.Errorf("task: attachment: %w", err)
-	}
-	if key == "" {
-		return ErrAttachmentNotFound
-	}
 	var path string
-	err := s.onTask(ctx, u, key, func(tx *gorm.DB, _ *Task, role string) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var key string
+		if err := tx.Raw(`SELECT t.key FROM attachments a JOIN tasks t ON t.id = a.task_id WHERE a.id = ?`, id).Scan(&key).Error; err != nil {
+			return fmt.Errorf("task: attachment: %w", err)
+		}
+		if key == "" {
+			return ErrAttachmentNotFound
+		}
+		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		if err != nil {
+			return err
+		}
 		var a Attachment
-		res := tx.Raw(`SELECT * FROM attachments WHERE id = ? FOR UPDATE`, id).Scan(&a)
+		res := tx.Raw(`SELECT * FROM attachments WHERE id = ? AND task_id = ? FOR UPDATE`, id, o.task.ID).Scan(&a)
 		if res.Error != nil {
 			return fmt.Errorf("task: attachment lock: %w", res.Error)
 		}
 		if res.RowsAffected == 0 {
 			return ErrAttachmentNotFound
 		}
-		if a.AuthorID != u.ID && role != project.RoleManager {
+		if a.AuthorID != u.ID && !o.actor.manager {
 			return errAttachmentForbidden
+		}
+		if err := project.EnsureWritable(&o.project); err != nil {
+			return err
 		}
 		path = filepath.Join(s.files.dir, filepath.Base(a.StoragePath))
 		return tx.Delete(&a).Error
