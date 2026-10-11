@@ -43,6 +43,7 @@ type fixture struct {
 	p                                *project.Project
 	admin, manager, member, outsider string
 	managerU, memberU                *user.User
+	files                            string // ATTACHMENTS_DIR
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -51,8 +52,9 @@ func newFixture(t *testing.T) *fixture {
 	addr := testutil.SharedRedisAddr(t)
 	rdb, jobs := queue.NewRedis(addr), queue.NewClient(addr)
 	t.Cleanup(func() { _ = rdb.Close(); _ = jobs.Close() })
-	cfg := &config.Config{Env: "test", BaseURL: "http://localhost", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: time.Hour}
-	f := &fixture{db: g, r: app.NewServer(cfg, g, rdb, jobs).Router(), auth: auth.NewService(cfg, g, rdb)}
+	cfg := &config.Config{Env: "test", BaseURL: "http://localhost", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: time.Hour,
+		AttachmentsDir: t.TempDir(), AttachmentMaxBytes: 50 << 20}
+	f := &fixture{db: g, r: app.NewServer(cfg, g, rdb, jobs).Router(), auth: auth.NewService(cfg, g, rdb), files: cfg.AttachmentsDir}
 	_, f.admin = f.user(t, true)
 	f.managerU, f.manager = f.user(t, false)
 	f.memberU, f.member = f.user(t, false)

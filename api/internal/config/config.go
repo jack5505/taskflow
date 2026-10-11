@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -51,7 +52,6 @@ func Load() (*Config, error) {
 		SMTPPassword:          os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:              os.Getenv("SMTP_FROM"),
 		AttachmentsDir:        getenv("ATTACHMENTS_DIR", "./data/attachments"),
-		AttachmentMaxBytes:    50 << 20,
 	}
 
 	if c.DatabaseURL == "" {
@@ -67,6 +67,10 @@ func Load() (*Config, error) {
 	}
 	if c.JWTRefreshTTL, err = time.ParseDuration(getenv("JWT_REFRESH_TTL", "720h")); err != nil {
 		return nil, fmt.Errorf("JWT_REFRESH_TTL: %w", err)
+	}
+	// §3.9: до 50 МБ; переменная позволяет только уточнить лимит на стенде.
+	if c.AttachmentMaxBytes, err = strconv.ParseInt(getenv("ATTACHMENT_MAX_BYTES", "52428800"), 10, 64); err != nil || c.AttachmentMaxBytes <= 0 {
+		return nil, errors.New("ATTACHMENT_MAX_BYTES: нужно положительное число байт")
 	}
 	return c, nil
 }

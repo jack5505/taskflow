@@ -18,7 +18,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/taskflow ./cmd/tas
 
 # Этап 3: рантайм. tzdata нужен для часовых поясов (ТЗ §10.2).
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
+# /data/attachments — точка монтирования тома вложений (§3.9): пустой том наследует владельца app.
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app \
+    && mkdir -p /data/attachments && chown app /data/attachments
 WORKDIR /app
 COPY --from=build /out/taskflow /app/taskflow
 USER app
