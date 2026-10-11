@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -95,28 +96,35 @@ func (s *Service) WithClock(now func() time.Time) *Service {
 	return s
 }
 
-// Login проверяет блокировку, пароль и активность, выпускает пару токенов.
+// Login проверяет блокировку, пароль и активность, выпускает пару токенов. Попытка
+// засчитывается до проверки пароля (lockout.take): параллельные запросы не проверят больше
+// maxFailures паролей за окно. Верный пароль счётчик сбрасывает.
 func (s *Service) Login(ctx context.Context, email, password, userAgent string) (*Session, error) {
-	if locked, wait, err := s.lock.locked(ctx, email); err != nil {
+	n, locked, wait, err := s.lock.take(ctx, email)
+	if err != nil {
 		return nil, err
-	} else if locked {
+	}
+	if locked {
 		return nil, ErrLocked.With("retry_after_seconds", int(wait.Seconds()))
 	}
 
 	var u user.User
-	err := s.db.WithContext(ctx).Where("email = ?", email).First(&u).Error
+	err = s.db.WithContext(ctx).Where("email = ?", email).First(&u).Error
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		// Хеш сравниваем и для несуществующего email: время ответа не выдаёт, есть ли пользователь.
 		CheckPassword(dummyHash(), password)
-		return nil, s.failed(ctx, email)
+		return nil, s.failed(ctx, email, n)
 	case err != nil:
+		s.release(ctx, s.lock, email) // пароль не проверен — попытка не в счёт
 		return nil, fmt.Errorf("auth: find user: %w", err)
 	}
 	if !CheckPassword(u.PasswordHash, password) {
-		return nil, s.failed(ctx, email)
+		return nil, s.failed(ctx, email, n)
 	}
 	if !u.IsActive {
+		// Пароль верный — не неудача: снимаем только эту попытку, накопленные неудачи остаются.
+		s.release(ctx, s.lock, email)
 		return nil, ErrUserInactive
 	}
 	if err := s.lock.reset(ctx, email); err != nil {
@@ -125,8 +133,17 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 	return s.issue(ctx, &u, userAgent)
 }
 
-func (s *Service) failed(ctx context.Context, email string) error {
-	if err := s.lock.fail(ctx, email); err != nil {
+// release возвращает попытку, взятую take; сбой Redis только в лог — попытка истечёт с окном.
+func (s *Service) release(ctx context.Context, l lockout, id string) {
+	if err := l.release(ctx, id); err != nil {
+		slog.Warn("auth: lockout release", "err", err)
+	}
+}
+
+// failed — неверный email или пароль: попытка уже засчитана take, с maxFailures-й неудачи
+// блокировка держится ровно lockoutWindow.
+func (s *Service) failed(ctx context.Context, email string, n int64) error {
+	if err := s.lock.takeFailed(ctx, email, n); err != nil {
 		return err
 	}
 	return ErrBadCredentials

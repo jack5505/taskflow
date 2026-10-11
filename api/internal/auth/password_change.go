@@ -47,6 +47,7 @@ func (s *Service) ChangePassword(ctx context.Context, u *user.User, current, nex
 	// Хеш перечитываем из базы: пользователь в контексте запроса мог устареть.
 	var stored user.User
 	if err := s.db.WithContext(ctx).Select("id", "password_hash").First(&stored, "id = ?", u.ID).Error; err != nil {
+		s.release(ctx, s.pwLock, id) // пароль не проверен — попытка не в счёт
 		return fmt.Errorf("auth: load user: %w", err)
 	}
 	if !CheckPassword(stored.PasswordHash, current) {
