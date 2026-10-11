@@ -955,6 +955,56 @@ button.link.danger {
   margin-left: 0;
 }
 
+/* Настройки проекта (ТЗ §7.9) */
+.settings-tabs {
+  margin-bottom: 16px;
+}
+
+.settings-page .notice {
+  margin-bottom: 12px;
+}
+
+.settings-page .panel {
+  max-width: 720px;
+}
+
+.settings-page h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.settings-page .table {
+  margin-bottom: 16px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.form .toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+}
+
+.settings-text ol {
+  padding-left: 20px;
+}
+
+.settings-text h4 {
+  margin: 16px 0 4px;
 /* Бэклог и спринты (ТЗ §7.4) */
 .backlog-page .block-head .primary {
   margin-left: auto;
