@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/redis/go-redis/v9"
@@ -93,7 +94,7 @@ func unbindCommand(groups *Groups) HandlerFunc {
 		}
 		p, err := groups.Unbind(ctx, target.ID, r.Chat.ID, r.User.ID)
 		switch {
-		case errors.Is(err, ErrGroupNotBound), errors.Is(err, project.ErrNotFound):
+		case errors.Is(err, ErrGroupNotBound), errors.Is(err, project.ErrNotFound) && !errors.Is(err, errNotMember):
 			return r.Reply(ctx, Text("unbind_not_here", target.Key)) // отключили одновременно
 		case err != nil:
 			return r.Reply(ctx, groupErrorText(err, p))
@@ -106,7 +107,7 @@ func unbindCommand(groups *Groups) HandlerFunc {
 // причиной»); неизвестная ошибка — общий ответ.
 func groupErrorText(err error, p *project.Project) string {
 	switch {
-	case errors.Is(err, ErrNotManager):
+	case errors.Is(err, ErrNotManager), errors.Is(err, errNotMember):
 		return Text("bind_not_manager", nil)
 	case errors.Is(err, ErrProjectHasGroup) && p != nil:
 		return Text("bind_has_group", p)
@@ -126,21 +127,60 @@ func chatUpdate(groups *Groups) HandlerFunc {
 			return nil // пользователь остановил бота в личном чате — это не группа
 		}
 		if cm := r.Update.MyChatMember; cm != nil {
-			if st := cm.NewChatMember.Type; st != models.ChatMemberTypeLeft && st != models.ChatMemberTypeBanned {
+			if !removed(cm.NewChatMember) {
 				return nil
 			}
 			return botRemoved(ctx, groups, r)
 		}
 		msg := r.Update.Message
-		switch {
-		case msg.MigrateToChatID != 0:
-			return migrate(ctx, groups, r.Chat.ID, msg.MigrateToChatID)
-		case msg.MigrateFromChatID != 0:
-			return migrate(ctx, groups, msg.MigrateFromChatID, r.Chat.ID)
-		default:
-			return groups.Rename(ctx, r.Chat.ID, msg.NewChatTitle)
-		}
+		// Повтора задания у обновления нет (update_id обрабатывается один раз), а потерянная
+		// миграция оставила бы проекты на старом чате — короткий сбой базы переживаем здесь.
+		return withRetry(ctx, func() error {
+			switch {
+			case msg.MigrateToChatID != 0:
+				return migrate(ctx, groups, r.Chat.ID, msg.MigrateToChatID)
+			case msg.MigrateFromChatID != 0:
+				return migrate(ctx, groups, msg.MigrateFromChatID, r.Chat.ID)
+			default:
+				return groups.Rename(ctx, r.Chat.ID, msg.NewChatTitle)
+			}
+		})
 	}
+}
+
+// removed — бота нет в группе: вышел, удалён или ограничен без членства.
+func removed(m models.ChatMember) bool {
+	switch m.Type {
+	case models.ChatMemberTypeLeft, models.ChatMemberTypeBanned:
+		return true
+	case models.ChatMemberTypeRestricted:
+		return m.Restricted != nil && !m.Restricted.IsMember
+	}
+	return false
+}
+
+// chatRetries и chatRetryPause — повторы служебного обновления при сбое базы.
+var (
+	chatRetries    = 3
+	chatRetryPause = time.Second
+)
+
+func withRetry(ctx context.Context, fn func() error) error {
+	var err error
+	for i := range chatRetries {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(chatRetryPause * time.Duration(i)):
+			}
+		}
+		if err = fn(); err == nil {
+			return nil
+		}
+		slog.Warn("telegram: chat update retry", "attempt", i+1, "err", err)
+	}
+	return err
 }
 
 // migrate — переход в супергруппу. Telegram присылает два служебных сообщения (в старый чат
@@ -154,20 +194,30 @@ func migrate(ctx context.Context, groups *Groups, from, to int64) error {
 }
 
 func botRemoved(ctx context.Context, groups *Groups, r *Request) error {
-	ps, err := groups.BotRemoved(ctx, r.Chat.ID)
+	var ps []project.Project
+	err := withRetry(ctx, func() (err error) {
+		ps, err = groups.BotRemoved(ctx, r.Chat.ID)
+		return err
+	})
 	if err != nil || len(ps) == 0 {
 		return err
 	}
 	slog.Info("telegram: bot removed from group, projects unbound", "chat_id", r.Chat.ID, "projects", len(ps))
-	managers, err := groups.ManagersToNotify(ctx, ps)
-	if err != nil {
+	// Привязка уже снята и повторно проектов не найдёт: уведомления — лучшее, что можно сделать
+	// сейчас; сбой отправки одному менеджеру не мешает остальным.
+	var managers map[int64][]project.Project
+	if err := withRetry(ctx, func() (err error) {
+		managers, err = groups.ManagersToNotify(ctx, ps)
+		return err
+	}); err != nil {
 		return err
 	}
+	var errs []error
 	for tgID, list := range managers {
 		text := Text("group_bot_removed", map[string]any{"Title": r.Chat.Title, "Projects": list})
 		if err := r.out.Send(ctx, Message{Op: OpSend, ChatID: tgID, Text: text}, 0); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

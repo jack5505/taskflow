@@ -53,6 +53,9 @@ export function useDisconnectGroup(key: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.api.v1ProjectsTelegramDelete(key),
-    onSuccess: () => qc.invalidateQueries({ queryKey: projectQueryKey(key) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectQueryKey(key) });
+      qc.invalidateQueries({ queryKey: projectsQueryKey });
+    },
   });
 }

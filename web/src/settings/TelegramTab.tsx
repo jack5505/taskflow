@@ -61,7 +61,7 @@ export function TelegramTab({ project, readOnly }: { project: ProjectView; readO
           <p className="muted">Группа не подключена.</p>
           {!me.data?.telegram_bot_enabled ? (
             <p className="notice">Telegram-бот пока не подключён: подключить группу можно после его настройки.</p>
-          ) : code ? (
+          ) : code && !readOnly ? (
             <BindCode code={code} now={now} refreshing={bind.isPending} onRefresh={request} />
           ) : (
             !readOnly && (

@@ -130,6 +130,11 @@ func TestIssueBindCode(t *testing.T) {
 
 	_, err = b.groups.IssueBindCode(ctx, b.access(t, member, p))
 	require.ErrorIs(t, err, telegram.ErrNotManager)
+	// Исключён из проекта между проверкой доступа и блокировкой — 404, как не участнику (§2).
+	memberAccess := b.access(t, member, p)
+	require.NoError(t, b.g.Exec(`DELETE FROM project_members WHERE project_id = ? AND user_id = ?`, p.ID, member.ID).Error)
+	_, err = b.groups.IssueBindCode(ctx, memberAccess)
+	require.ErrorIs(t, err, project.ErrNotFound)
 
 	admin := newUser(t, b.g, "Админ")
 	require.NoError(t, b.g.Model(admin).Update("is_system_admin", true).Error)
@@ -326,6 +331,15 @@ func TestBotRemovedFromGroup(t *testing.T) {
 	b.service(&models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: chat,
 		NewChatMember: models.ChatMember{Type: models.ChatMemberTypeMember, Member: &models.ChatMemberMember{}}}})
 	require.Nil(t, b.reload(t, p1).TelegramChatID)
+	// Ограничен без членства в группе — тоже удалён.
+	b.service(&models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: other,
+		NewChatMember: models.ChatMember{Type: models.ChatMemberTypeRestricted, Restricted: &models.ChatMemberRestricted{IsMember: true}}}})
+	require.Equal(t, other.ID, *b.reload(t, p3).TelegramChatID, "ограничен, но в группе")
+	b.service(&models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: other,
+		NewChatMember: models.ChatMember{Type: models.ChatMemberTypeRestricted, Restricted: &models.ChatMemberRestricted{IsMember: false}}}})
+	require.Nil(t, b.reload(t, p3).TelegramChatID)
+	b.messages(t)
+	require.NoError(t, b.g.Model(p3).Update("telegram_chat_id", other.ID).Error)
 	// Пользователь остановил бота в личном чате — это не группа.
 	b.service(&models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: other.ID, Type: models.ChatTypePrivate},
 		NewChatMember: models.ChatMember{Type: models.ChatMemberTypeBanned, Banned: &models.ChatMemberBanned{}}}})
