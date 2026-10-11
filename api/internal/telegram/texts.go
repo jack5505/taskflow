@@ -23,6 +23,28 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "unlinked"}}Аккаунт отвязан{{end}}
 {{define "not_linked"}}Сначала привяжите аккаунт: профиль → Привязать Telegram{{end}}
 
+{{- /* Личные команды /timer, /stop, /my, §8.5. Длительность — в формате §6.1 (duration.Format). */}}
+{{define "cmd_timer_usage"}}Формат: /timer TM-42{{end}}
+{{define "cmd_timer_started"}}Таймер запущен на {{.TaskKey}}{{end}}
+{{define "cmd_timer_stopped"}}
+{{- if .Minutes}}Таймер остановлен: {{.Duration}} списано на {{.TaskKey}}
+{{- else}}Таймер на {{.TaskKey}} остановлен: меньше минуты, время не списано{{end}}
+{{- if .AutoStopped}}. Таймер шёл больше 12 часов — списано 12 часов{{end}}
+{{- if .Trimmed}}. Запись обрезана по дневному лимиту 24 часа{{end}}{{end}}
+{{define "cmd_no_timer"}}Таймер не запущен{{end}}
+{{define "cmd_timer_not_assignee"}}Таймер на {{.Key}} может запустить только исполнитель задачи{{end}}
+{{define "cmd_timer_not_in_progress"}}Таймер запускается только на задаче в работе, а {{.Key}} не в работе{{end}}
+{{define "cmd_task_not_found"}}Задача {{.Key}} не найдена{{end}}
+{{define "cmd_error"}}{{.Message}}{{end}}
+{{define "cmd_my_empty"}}Открытых задач нет{{end}}
+{{define "cmd_my"}}Ваши открытые задачи{{if .More}} (первые {{len .Items}} из {{.Total}}){{end}}:{{range .Items}}
+{{.Key}} «{{.Title}}» · {{.Status}} · {{.Spent}}{{if .Estimate}} из {{.Estimate}}{{end}}{{if .Overdue}} · просрочена{{end}}{{end}}{{end}}
+{{define "cmd_status_todo"}}К выполнению{{end}}
+{{define "cmd_status_in_progress"}}В работе{{end}}
+{{define "cmd_status_review"}}На проверке{{end}}
+{{define "cmd_status_done"}}Готово{{end}}
+{{define "cmd_status_cancelled"}}Отменена{{end}}
+
 {{- /* Подключение группы к проекту, §8.2 */}}
 {{define "group_only"}}Эта команда работает в группе проекта{{end}}
 {{define "bind_usage"}}Формат: /bind <код>. Код выдаётся в настройках проекта → Telegram{{end}}
