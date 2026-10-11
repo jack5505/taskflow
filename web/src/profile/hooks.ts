@@ -1,6 +1,6 @@
-// Запросы профиля: PATCH /me, письмо для смены пароля, «Выйти везде», привязка и отвязка Telegram.
+// Запросы профиля: PATCH /me, смена пароля и письмо, если текущий забыт, «Выйти везде», привязка и отвязка Telegram.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, logoutAll } from "../api";
+import { api, changePassword, logoutAll } from "../api";
 import type { MeProfile, MeUpdate } from "../api/client";
 import { meQueryKey } from "../auth/hooks";
 import { linkCodeFrom } from "./logic";
@@ -14,10 +14,16 @@ export function useUpdateMe() {
   });
 }
 
+/** Смена пароля с вводом текущего (§7.8): остальные сессии сервер отзывает, эта остаётся. */
+export function usePasswordChange() {
+  return useMutation({
+    mutationFn: ({ current, next }: { current: string; next: string }) => changePassword(current, next),
+  });
+}
+
 /**
- * Смена пароля (§7.8): в API нет смены пароля с вводом текущего, поэтому — тем же путём, что и
- * восстановление (§7.1, §9.1): ссылка на email пользователя, новый пароль задаётся по ней,
- * после установки все сессии отзываются.
+ * «Забыли текущий пароль?» — тем же путём, что восстановление (§7.1, §9.1): ссылка на email
+ * пользователя, новый пароль задаётся по ней, после установки все сессии отзываются.
  */
 export function usePasswordLink() {
   return useMutation({

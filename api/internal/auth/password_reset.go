@@ -131,7 +131,8 @@ func (s *Service) passwordLink(ctx context.Context, userID uuid.UUID) (string, e
 }
 
 // SetPassword задаёт пароль по токену из ссылки. Гасятся все неиспользованные ссылки
-// пользователя, отзываются все сессии (§9.1: смена пароля), сбрасывается счётчик неудачных входов.
+// пользователя, отзываются все сессии (§9.1: смена пароля), сбрасываются счётчики неудачных входов
+// и неверного текущего пароля при смене в профиле.
 // bcrypt считается только после проверки токена: открытый эндпоинт не должен тратить CPU на мусор.
 func (s *Service) SetPassword(ctx context.Context, token, password string) error {
 	if utf8.RuneCountInString(password) < MinPasswordLength {
@@ -141,7 +142,7 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 		return passwordFieldError("не длиннее 72 байт")
 	}
 
-	var email string
+	var email, userID string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var pt PasswordToken
 		res := tx.Raw(`SELECT id, user_id, token_hash, expires_at, used_at, created_at
@@ -175,15 +176,18 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 			Update("revoked_at", now).Error; err != nil {
 			return fmt.Errorf("auth: revoke sessions: %w", err)
 		}
-		email = u.Email
+		email, userID = u.Email, u.ID.String()
 		return nil
 	})
 	if err != nil {
 		return err
 	}
+	// Пароль уже сменён; при сбое Redis блокировки истекут сами.
 	if err := s.lock.reset(ctx, email); err != nil {
-		// Пароль уже сменён; блокировка истечёт сама.
 		slog.Warn("auth: lockout reset after password set", "err", err)
+	}
+	if err := s.pwLock.reset(ctx, userID); err != nil {
+		slog.Warn("auth: pwchange lockout reset after password set", "err", err)
 	}
 	return nil
 }

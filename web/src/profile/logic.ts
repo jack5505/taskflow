@@ -97,3 +97,32 @@ export function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
+
+/** Форма смены пароля (§7.8): текущий, новый и повтор нового. */
+export interface PasswordChangeForm {
+  current: string;
+  next: string;
+  repeat: string;
+}
+
+/** Правила нового пароля — как при установке (§7.1): не короче 10 символов и не длиннее 72 байт (предел bcrypt). */
+export const MIN_PASSWORD = 10;
+const MAX_PASSWORD_BYTES = 72;
+
+/** Ошибки формы смены пароля до запроса: по полям, пустой объект — можно отправлять. */
+export function passwordChangeErrors(f: PasswordChangeForm): Partial<Record<keyof PasswordChangeForm, string>> {
+  const out: Partial<Record<keyof PasswordChangeForm, string>> = {};
+  if (!f.current) out.current = "Введите текущий пароль";
+  if ([...f.next].length < MIN_PASSWORD) out.next = `Не короче ${MIN_PASSWORD} символов`;
+  else if (new TextEncoder().encode(f.next).length > MAX_PASSWORD_BYTES)
+    out.next = "Слишком длинный: не больше 72 байт (около 36 букв кириллицы)";
+  if (f.repeat !== f.next) out.repeat = "Пароли не совпадают";
+  return out;
+}
+
+/** Сколько ждать после блокировки (details.retry_after_seconds из 429): «через 15 мин»; нет срока — пусто. */
+export function retryAfterText(details: Record<string, unknown> | undefined): string {
+  const s = Number(details?.retry_after_seconds);
+  if (!Number.isFinite(s) || s <= 0) return "";
+  return `Попробуйте через ${Math.ceil(s / 60)} мин.`;
+}

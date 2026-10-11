@@ -53,7 +53,8 @@ type Session struct {
 // Service — вход, обновление и отзыв сессий.
 type Service struct {
 	db         *gorm.DB
-	lock       lockout
+	lock       lockout // вход: по email
+	pwLock     lockout // смена пароля: неверный текущий, по id пользователя
 	secret     []byte
 	accessTTL  time.Duration
 	refreshTTL time.Duration
@@ -66,7 +67,8 @@ type Service struct {
 func NewService(cfg *config.Config, db *gorm.DB, rdb *redis.Client) *Service {
 	return &Service{
 		db:         db,
-		lock:       lockout{rdb: rdb},
+		lock:       lockout{rdb: rdb, prefix: loginFailPrefix},
+		pwLock:     lockout{rdb: rdb, prefix: pwchangeFailPrefix},
 		secret:     []byte(cfg.JWTSecret),
 		accessTTL:  cfg.JWTAccessTTL,
 		refreshTTL: cfg.JWTRefreshTTL,
