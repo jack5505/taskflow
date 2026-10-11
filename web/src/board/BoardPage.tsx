@@ -18,7 +18,7 @@ import { errorText } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
-import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
+import { actorFor, fetchAllTasks, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { TimerButton } from "../timer/TimerButton";
 import { canStartTimer } from "../timer/timer";
@@ -26,7 +26,7 @@ import { timerChanged } from "../timer/hooks";
 import { BoardCard, CardBody } from "./BoardCard";
 import { applyMove, boardQueryKey, groupByStatus, moveKey } from "./cards";
 import { BoardFilters } from "./BoardFilters";
-import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter, type TasksQuery } from "./filters";
+import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter } from "./filters";
 import {
   BOARD_COLUMNS,
   canTransition,
@@ -37,17 +37,6 @@ import {
 } from "./transitions";
 import { TransitionDialog } from "./TransitionDialog";
 
-/** Все задачи по запросу: сервер отдаёт до 200 за раз, остальное — по next_cursor. */
-async function fetchAllTasks(key: string, query: TasksQuery, signal: AbortSignal): Promise<TaskListItem[]> {
-  const items: TaskListItem[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = (await api.api.v1ProjectsTasksList(key, { ...query, cursor }, { signal })).data;
-    items.push(...(page.items ?? []));
-    cursor = page.next_cursor || undefined;
-  } while (cursor);
-  return items;
-}
 
 interface Move {
   task: TaskListItem;
@@ -258,6 +247,11 @@ export function BoardPage() {
           <Link className="tab" to={`/projects/${key}/backlog`}>
             Бэклог
           </Link>
+          {actor?.manager && (
+            <Link className="tab" to={`/projects/${key}/settings`}>
+              Настройки
+            </Link>
+          )}
         </nav>
         {sprint && (
           <span className="muted sprint-info">

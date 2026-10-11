@@ -1,12 +1,27 @@
 // Запросы проекта, общие для доски и карточки задачи: один кэш TanStack Query на оба экрана.
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import type { MeProfile, ProjectListItem, ProjectMemberView, ProjectView } from "../api/client";
+import type { MeProfile, ProjectListItem, ProjectMemberView, ProjectView, TaskListItem } from "../api/client";
 import type { Actor } from "../board/transitions";
-import { listQuery, projectsQueryKey } from "./logic";
+import { listQuery, projectsQueryKey, type ProjectsFilter } from "./logic";
 
 export const projectQueryKey = (key: string) => ["project", key] as const;
 export const membersQueryKey = (key: string) => ["project-members", key] as const;
+
+/** Параметры GET /projects/{key}/tasks — как в сгенерированном клиенте. */
+export type TasksListQuery = NonNullable<Parameters<typeof api.api.v1ProjectsTasksList>[1]>;
+
+/** Все задачи по запросу: сервер отдаёт до 200 за раз, остальное — по next_cursor. */
+export async function fetchAllTasks(key: string, query: TasksListQuery, signal: AbortSignal): Promise<TaskListItem[]> {
+  const items: TaskListItem[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = (await api.api.v1ProjectsTasksList(key, { ...query, cursor }, { signal })).data;
+    items.push(...(page.items ?? []));
+    cursor = page.next_cursor || undefined;
+  } while (cursor);
+  return items;
+}
 
 export function useProject(key: string) {
   return useQuery({
@@ -25,18 +40,22 @@ export function useProjectMembers(key: string) {
   });
 }
 
+/** Список проектов (§7.2) — один кэш на главную, доску, карточку и окно создания задачи. */
+export function useProjectsList(filter: ProjectsFilter, enabled = true) {
+  return useQuery({
+    queryKey: [...projectsQueryKey, filter],
+    queryFn: async ({ signal }): Promise<ProjectListItem[]> =>
+      (await api.api.v1ProjectsList(listQuery(filter), { signal })).data ?? [],
+    enabled,
+  });
+}
+
 /**
  * Активный спринт проекта — из карточки проекта в общем списке (тот же кэш, что на главной):
  * отдельного эндпоинта спринтов пока нет.
  */
 export function useActiveSprint(key: string, project: ProjectView | undefined) {
-  const listFilter = project?.is_archived ? "archived" : "active";
-  const projects = useQuery({
-    queryKey: [...projectsQueryKey, listFilter],
-    queryFn: async ({ signal }): Promise<ProjectListItem[]> =>
-      (await api.api.v1ProjectsList(listQuery(listFilter), { signal })).data ?? [],
-    enabled: !!project,
-  });
+  const projects = useProjectsList(project?.is_archived ? "archived" : "active", !!project);
   return { query: projects, sprint: projects.data?.find((p) => p.key === key)?.active_sprint };
 }
 
