@@ -54,9 +54,14 @@ type Page struct {
 
 var errDeletedAdminOnly = apierr.Forbidden("Удалённые задачи видит только администратор системы")
 
-// List — задачи проекта по фильтрам с курсорной пагинацией. Порядок — ручной порядок секции
-// (position), при равенстве — номер задачи; новые задачи встают в конец своей секции, так что
-// курсор (position, number) не сбивается от вставок.
+// sectionExpr — секция задачи для порядка списка: спринт (по id), бэклог — последним.
+const sectionExpr = `COALESCE(t.sprint_id::text, '~')`
+
+// List — задачи проекта по фильтрам с курсорной пагинацией. Порядок — по секциям (спринты, затем
+// бэклог), внутри секции — ручной порядок (position), при равенстве — номер. Курсор — ключ
+// (секция, position, number): уже выданные задачи не повторяются и не теряются при вставке новых
+// (новая задача встаёт в конец своей секции; если её секция уже пройдена — она появится при
+// следующем запросе первой страницы). Перенос задачи во время листания может показать её ещё раз.
 func (s *Service) List(ctx context.Context, a *project.Access, f ListFilter) (*Page, error) {
 	if f.IncludeDeleted && !a.Admin {
 		return nil, errDeletedAdminOnly
@@ -89,7 +94,7 @@ func (s *Service) List(ctx context.Context, a *project.Access, f ListFilter) (*P
 	if !f.IncludeDeleted {
 		where = append(where, "t.deleted_at IS NULL")
 	}
-	add := func(cond string, a ...any) { where, args = append(where, cond), append(args, a...) }
+	add := func(cond string, vals ...any) { where, args = append(where, cond), append(args, vals...) }
 	if len(f.Status) > 0 {
 		add("t.status IN ?", f.Status)
 	}
@@ -113,19 +118,20 @@ func (s *Service) List(ctx context.Context, a *project.Access, f ListFilter) (*P
 		add(`(t.key ILIKE ? OR t.title ILIKE ?)`, like+"%", "%"+like+"%")
 	}
 	if f.Cursor != "" {
-		pos, num, err := decodeCursor(f.Cursor)
+		section, pos, num, err := decodeCursor(f.Cursor)
 		if err != nil {
 			return nil, err
 		}
-		add("(t.position, t.number) > (?, ?)", pos, num)
+		add("("+sectionExpr+", t.position, t.number) > (?, ?, ?)", section, pos, num)
 	}
 	var items []ListItem
 	err := s.db.WithContext(ctx).Raw(`SELECT t.*,
 			(t.due_date IS NOT NULL AND t.status NOT IN ('done', 'cancelled')
-			 AND t.due_date < (now() AT TIME ZONE p.timezone)::date) AS overdue
+			 AND t.due_date < (?::timestamptz AT TIME ZONE p.timezone)::date) AS overdue
 		FROM tasks t JOIN projects p ON p.id = t.project_id
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY t.position, t.number LIMIT ?`, append(args, limit+1)...).Scan(&items).Error
+		ORDER BY `+sectionExpr+`, t.position, t.number LIMIT ?`,
+		append(append([]any{s.now()}, args...), limit+1)...).Scan(&items).Error
 	if err != nil {
 		return nil, fmt.Errorf("task: list: %w", err)
 	}
@@ -136,7 +142,7 @@ func (s *Service) List(ctx context.Context, a *project.Access, f ListFilter) (*P
 	if len(items) > limit {
 		page.Items = items[:limit]
 		last := page.Items[limit-1]
-		page.NextCursor = encodeCursor(last.Position, last.Number)
+		page.NextCursor = encodeCursor(last.SprintID, last.Position, last.Number)
 	}
 	return page, nil
 }
@@ -156,18 +162,21 @@ type MyTask struct {
 	SprintID        *uuid.UUID `json:"sprint_id"`
 }
 
-// Mine — GET /me/tasks: открытые задачи пользователя по всем его проектам, по сроку
-// (без срока — в конце), просроченные оказываются сверху.
+// MaxMine — «Мои задачи» отдаются одним списком, не больше этого числа (самые срочные).
+const MaxMine = 200
+
+// Mine — GET /me/tasks: открытые задачи пользователя по всем его проектам, кроме архивных и
+// удалённых (§7.2), по сроку (без срока — в конце), просроченные оказываются сверху; не больше MaxMine.
 func (s *Service) Mine(ctx context.Context, u *user.User) ([]MyTask, error) {
 	list := []MyTask{}
 	err := s.db.WithContext(ctx).Raw(`SELECT t.key, t.title, p.key AS project_key, p.name AS project_name, t.status,
 			t.due_date, t.spent_minutes, t.estimate_minutes, t.updated_at, t.sprint_id,
-			(t.due_date IS NOT NULL AND t.due_date < (now() AT TIME ZONE p.timezone)::date) AS overdue
+			(t.due_date IS NOT NULL AND t.due_date < (?::timestamptz AT TIME ZONE p.timezone)::date) AS overdue
 		FROM tasks t
-		JOIN projects p ON p.id = t.project_id AND p.deleted_at IS NULL
+		JOIN projects p ON p.id = t.project_id AND p.deleted_at IS NULL AND NOT p.is_archived
 		JOIN project_members m ON m.project_id = p.id AND m.user_id = t.assignee_id
 		WHERE t.assignee_id = ? AND t.deleted_at IS NULL AND t.status NOT IN ('done', 'cancelled')
-		ORDER BY t.due_date NULLS LAST, t.key`, u.ID).Scan(&list).Error
+		ORDER BY t.due_date NULLS LAST, p.key, t.number LIMIT ?`, s.now(), u.ID, MaxMine).Scan(&list).Error
 	if err != nil {
 		return nil, fmt.Errorf("task: my tasks: %w", err)
 	}
@@ -190,24 +199,33 @@ func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-func encodeCursor(pos float64, num int) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatFloat(pos, 'g', -1, 64) + "|" + strconv.Itoa(num)))
+func encodeCursor(sprint *uuid.UUID, pos float64, num int) string {
+	section := "~"
+	if sprint != nil {
+		section = sprint.String()
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(section + "|" + strconv.FormatFloat(pos, 'g', -1, 64) + "|" + strconv.Itoa(num)))
 }
 
-func decodeCursor(c string) (float64, int, error) {
+func decodeCursor(c string) (string, float64, int, error) {
 	bad := fieldError("cursor", "некорректный курсор")
 	raw, err := base64.RawURLEncoding.DecodeString(c)
 	if err != nil {
-		return 0, 0, bad
+		return "", 0, 0, bad
 	}
-	p, n, ok := strings.Cut(string(raw), "|")
-	if !ok {
-		return 0, 0, bad
+	parts := strings.Split(string(raw), "|")
+	if len(parts) != 3 {
+		return "", 0, 0, bad
 	}
-	pos, err1 := strconv.ParseFloat(p, 64)
-	num, err2 := strconv.Atoi(n)
+	if parts[0] != "~" {
+		if _, err := uuid.Parse(parts[0]); err != nil {
+			return "", 0, 0, bad
+		}
+	}
+	pos, err1 := strconv.ParseFloat(parts[1], 64)
+	num, err2 := strconv.Atoi(parts[2])
 	if err1 != nil || err2 != nil {
-		return 0, 0, bad
+		return "", 0, 0, bad
 	}
-	return pos, num, nil
+	return parts[0], pos, num, nil
 }

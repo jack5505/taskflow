@@ -363,8 +363,8 @@ func (h *Handlers) list(c *gin.Context) {
 		}
 	}
 	if err == nil && c.Query("limit") != "" {
-		if f.Limit, err = strconv.Atoi(c.Query("limit")); err != nil || f.Limit == 0 {
-			err = fieldError("limit", "от 1 до 200")
+		if f.Limit, err = strconv.Atoi(c.Query("limit")); err != nil {
+			err = fieldError("limit", "целое число")
 		}
 	}
 	if err != nil {
@@ -382,7 +382,7 @@ func (h *Handlers) list(c *gin.Context) {
 // mine — мои открытые задачи по всем проектам.
 //
 // @Summary      Мои задачи
-// @Description  Открытые задачи текущего пользователя по всем его проектам (§7.2), по сроку: без срока — в конце, просроченные — сверху.
+// @Description  Открытые задачи текущего пользователя по всем его проектам, кроме архивных (§7.2), по сроку: без срока — в конце, просроченные — сверху. Не больше 200 самых срочных.
 // @Tags         tasks
 // @Produce      json
 // @Security     BearerAuth

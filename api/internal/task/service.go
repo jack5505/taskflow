@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -39,10 +40,17 @@ func fieldError(field, reason string) error {
 type Service struct {
 	db       *gorm.DB
 	projects *project.Service
+	now      func() time.Time
 }
 
 func NewService(db *gorm.DB, projects *project.Service) *Service {
-	return &Service{db: db, projects: projects}
+	return &Service{db: db, projects: projects, now: time.Now}
+}
+
+// WithClock подменяет часы (тесты просрочки).
+func (s *Service) WithClock(now func() time.Time) *Service {
+	s.now = now
+	return s
 }
 
 // CreateInput — поля новой задачи. Пустые Type и Priority — умолчания §3.3.

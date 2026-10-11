@@ -1,6 +1,7 @@
 package task_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -76,7 +77,7 @@ func TestListFilters(t *testing.T) {
 	}
 
 	for query, field := range map[string]string{"status=open": "status", "type=epic": "type", "priority=urgent": "priority",
-		"assignee_id=me": "assignee_id", "sprint_id=x": "sprint_id", "limit=201": "limit", "limit=0": "limit", "cursor=@@@": "cursor", "include_deleted=maybe": "include_deleted"} {
+		"assignee_id=me": "assignee_id", "sprint_id=x": "sprint_id", "limit=201": "limit", "limit=x": "limit", "cursor=@@@": "cursor", "include_deleted=maybe": "include_deleted"} {
 		rec, b := f.do(t, "GET", "/api/v1/projects/"+f.p.Key+"/tasks?"+query, f.member, "")
 		require.Equal(t, http.StatusBadRequest, rec.Code, query)
 		require.Equal(t, field, b["error"].(map[string]any)["details"].(map[string]any)["fields"].([]any)[0].(map[string]any)["field"], query)
@@ -175,4 +176,78 @@ func TestMyTasks(t *testing.T) {
 	require.Equal(t, []string{late, otherKey, later, noDue}, got, "по сроку, просроченные сверху, без срока — в конце, закрытые и чужие не входят")
 	require.Equal(t, true, raw[0]["overdue"])
 	require.Equal(t, other.Key, raw[1]["project_key"])
+}
+
+// Ревью #87: позиции упорядочены только внутри секции — список идёт по секциям (спринт, затем
+// бэклог), курсор проходит все задачи ровно по разу и при вставке в уже пройденную секцию.
+func TestListOrderAcrossSections(t *testing.T) {
+	f := newFixture(t)
+	sprint := f.sprint(t, f.p.ID, "planned")
+	var backlog, inSprint []string
+	for range 3 {
+		backlog = append(backlog, f.create(t, f.member, `{"title":"Бэклог"}`)["key"].(string))
+		inSprint = append(inSprint, f.create(t, f.manager, `{"title":"Спринт","sprint_id":"`+sprint.String()+`"}`)["key"].(string))
+	}
+	_, p := f.list(t, f.member, "")
+	got := []string{}
+	for _, it := range p.Items {
+		got = append(got, it.Key)
+	}
+	require.Equal(t, append(append([]string{}, inSprint...), backlog...), got, "сначала спринт, потом бэклог, внутри — ручной порядок")
+
+	seen := map[string]int{}
+	code, p := f.list(t, f.member, "limit=2")
+	require.Equal(t, http.StatusOK, code)
+	for _, it := range p.Items {
+		seen[it.Key]++
+	}
+	late := f.create(t, f.manager, `{"title":"В пройденную секцию","sprint_id":"`+sprint.String()+`"}`)["key"].(string)
+	for p.NextCursor != "" {
+		_, p = f.list(t, f.member, "limit=2&cursor="+p.NextCursor)
+		for _, it := range p.Items {
+			seen[it.Key]++
+		}
+	}
+	for _, k := range append(inSprint, backlog...) {
+		require.Equal(t, 1, seen[k], k)
+	}
+	require.LessOrEqual(t, seen[late], 1, "вставленная не повторяется")
+}
+
+func TestOverdueUsesServiceClock(t *testing.T) {
+	f := newFixture(t)
+	key := f.create(t, f.member, `{"title":"X","due_date":"2026-10-31"}`)["key"].(string)
+	a, err := project.NewService(f.db).Access(context.Background(), f.memberU, f.p.Key)
+	require.NoError(t, err)
+	for now, want := range map[time.Time]bool{
+		time.Date(2026, 10, 31, 20, 0, 0, 0, time.UTC):  false, // 23:00 по Москве — ещё 31-е
+		time.Date(2026, 10, 31, 21, 30, 0, 0, time.UTC): true,  // 00:30 1-го по Москве
+	} {
+		svc := task.NewService(f.db, project.NewService(f.db)).WithClock(func() time.Time { return now })
+		page, err := svc.List(context.Background(), a, task.ListFilter{Q: key})
+		require.NoError(t, err)
+		require.Len(t, page.Items, 1)
+		require.Equal(t, want, page.Items[0].Overdue, now)
+	}
+}
+
+func TestMyTasksSkipsArchivedAndSortsByNumber(t *testing.T) {
+	f := newFixture(t)
+	me := `"assignee_id":"` + f.memberU.ID.String() + `"`
+	var keys []string
+	for range 10 {
+		keys = append(keys, f.create(t, f.manager, `{"title":"Без срока",`+me+`}`)["key"].(string))
+	}
+	rec, _ := f.do(t, "GET", "/api/v1/me/tasks", f.member, "")
+	var raw []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	got := []string{}
+	for _, m := range raw {
+		got = append(got, m["key"].(string))
+	}
+	require.Equal(t, keys, got, "TM-9 раньше TM-10")
+
+	require.NoError(t, f.db.Model(f.p).Update("is_archived", true).Error)
+	rec, _ = f.do(t, "GET", "/api/v1/me/tasks", f.member, "")
+	require.JSONEq(t, `[]`, rec.Body.String(), "задачи архивного проекта не показываются")
 }
