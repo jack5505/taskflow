@@ -1,9 +1,11 @@
-// Запросы настроек проекта: изменение проекта (PATCH /projects/{key}) и список пользователей.
+// Запросы настроек проекта: изменение проекта (PATCH /projects/{key}), список пользователей,
+// подключение и отключение Telegram-группы.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { ProjectUpdateRequest, ProjectView, UserUser } from "../api/client";
 import { projectQueryKey } from "../projects/hooks";
 import { projectsQueryKey } from "../projects/logic";
+import { bindCodeFrom } from "./logic";
 
 export const usersQueryKey = ["users"] as const;
 
@@ -36,5 +38,21 @@ export function useUpdateProject(key: string) {
       qc.setQueryData(projectQueryKey(key), p);
       qc.invalidateQueries({ queryKey: projectsQueryKey });
     },
+  });
+}
+
+/** Код подключения группы (§8.2): POST /projects/{key}/telegram-bind-code. */
+export function useBindCode(key: string) {
+  return useMutation({
+    mutationFn: async () => bindCodeFrom((await api.api.v1ProjectsTelegramBindCodeCreate(key)).data),
+  });
+}
+
+/** «Отключить» группу (§8.2, п. 5): DELETE /projects/{key}/telegram, затем проект перечитывается. */
+export function useDisconnectGroup(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.api.v1ProjectsTelegramDelete(key),
+    onSuccess: () => qc.invalidateQueries({ queryKey: projectQueryKey(key) }),
   });
 }

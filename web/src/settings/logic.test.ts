@@ -5,8 +5,10 @@ import {
   auditChanges,
   auditEntity,
   auditQuery,
+  bindCodeFrom,
   changedEvents,
   effectiveEvents,
+  groupLabel,
   isValidTime,
   memberErrorText,
   normalizeTime,
@@ -156,5 +158,31 @@ describe("корзина", () => {
     expect(trashDeleter({ deleted_by: { id: "u1", display_name: "Админ" } })).toBe("Админ");
     expect(trashDeleter({ deleted_by: undefined })).toBe("—");
     expect(trashDeleter({})).toBe("—");
+  });
+});
+
+describe("Telegram-группа (§7.9, §8.2)", () => {
+  it("подпись группы: название, без него — id чата, не подключена — null", () => {
+    expect(groupLabel({ telegram_chat_id: -100, telegram_chat_title: "Команда" })).toBe("«Команда»");
+    expect(groupLabel({ telegram_chat_id: -100 })).toBe("id чата -100");
+    expect(groupLabel({ telegram_chat_title: "Старая" })).toBeNull();
+    expect(groupLabel({})).toBeNull();
+  });
+
+  it("код подключения: недостающие поля заполняются, команда — /bind <код>", () => {
+    expect(bindCodeFrom({ code: "K7M2X9QD", expires_at: "2026-10-11T10:15:00Z" })).toEqual({
+      code: "K7M2X9QD",
+      expires_at: "2026-10-11T10:15:00Z",
+      command: "/bind K7M2X9QD",
+      bot_username: "",
+    });
+    expect(bindCodeFrom({ code: "A", command: "/bind A", bot_username: "taskflow_bot" }).bot_username).toBe(
+      "taskflow_bot",
+    );
+  });
+
+  it("действия журнала о группе подписаны", () => {
+    expect(auditActionLabel("project.telegram_bound")).toBe("Telegram-группа подключена");
+    expect(auditActionLabel("project.telegram_unbound")).toBe("Telegram-группа отключена");
   });
 });

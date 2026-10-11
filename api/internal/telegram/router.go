@@ -111,6 +111,9 @@ type Router struct {
 	commands    map[string]HandlerFunc
 	callbacks   map[string]HandlerFunc
 	middlewares []Middleware
+	// chatUpdate — служебные обновления чата (§8.2): бота удалили из группы, группа стала
+	// супергруппой, группу переименовали. Без middleware: отправитель тут не важен.
+	chatUpdate HandlerFunc
 }
 
 // NewRouter — роутер бота с именем botUsername: команды вида /take@другой_бот в группе
@@ -125,6 +128,10 @@ func (rt *Router) Command(name string, h HandlerFunc) { rt.commands[strings.ToLo
 
 // Callback регистрирует действие кнопки: callback_data вида "<action>:<данные>".
 func (rt *Router) Callback(action string, h HandlerFunc) { rt.callbacks[action] = h }
+
+// ChatUpdate регистрирует обработчик служебных обновлений чата: my_chat_member и сообщений
+// с migrate_to_chat_id, migrate_from_chat_id, new_chat_title. Middleware к нему не применяются.
+func (rt *Router) ChatUpdate(h HandlerFunc) { rt.chatUpdate = h }
 
 // Use добавляет middleware ко всем обработчикам; первая добавленная — внешняя.
 func (rt *Router) Use(mw Middleware) { rt.middlewares = append(rt.middlewares, mw) }
@@ -162,6 +169,16 @@ func (rt *Router) parseCommand(text string) (name, args string, ok bool) {
 // route находит обработчик обновления. nil — обновление боту не интересно.
 func (rt *Router) route(upd *models.Update, out *Queue) (*Request, HandlerFunc) {
 	switch {
+	case upd.MyChatMember != nil && rt.chatUpdate != nil:
+		cm := upd.MyChatMember
+		return &Request{Update: upd, Chat: cm.Chat, From: cm.From, out: out}, rt.chatUpdate
+	case upd.Message != nil && isChatService(upd.Message) && rt.chatUpdate != nil:
+		msg := upd.Message
+		r := &Request{Update: upd, Chat: msg.Chat, MessageID: msg.ID, out: out}
+		if msg.From != nil {
+			r.From = *msg.From
+		}
+		return r, rt.chatUpdate
 	case upd.Message != nil && upd.Message.From != nil:
 		msg := upd.Message
 		name, args, ok := rt.parseCommand(msg.Text)
@@ -194,6 +211,11 @@ func (rt *Router) route(upd *models.Update, out *Queue) (*Request, HandlerFunc) 
 		return r, rt.wrap(h)
 	}
 	return nil, nil
+}
+
+// isChatService — служебное сообщение о самом чате, которое нужно боту (§8.2).
+func isChatService(m *models.Message) bool {
+	return m.MigrateToChatID != 0 || m.MigrateFromChatID != 0 || m.NewChatTitle != ""
 }
 
 // UnknownCommand — имя для Command: обработчик команд, у которых нет своего (§8.5:

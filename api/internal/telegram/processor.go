@@ -63,7 +63,9 @@ func (p *Processor) Handle(ctx context.Context, upd *models.Update, receivedAt t
 	if !r.IsCallback() {
 		if err := h(ctx, r); err != nil {
 			log.Error("telegram: handler failed", "err", err)
-			p.sendLater(ctx, r.reply(Text("internal_error", nil)))
+			if r.Command != "" { // на служебное обновление чата отвечать некому
+				p.sendLater(ctx, r.reply(Text("internal_error", nil)))
+			}
 		}
 		return
 	}
