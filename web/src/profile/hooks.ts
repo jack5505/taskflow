@@ -1,9 +1,9 @@
-// Запросы профиля: PATCH /me, письмо для смены пароля, «Выйти везде», код привязки Telegram.
+// Запросы профиля: PATCH /me, письмо для смены пароля, «Выйти везде», привязка и отвязка Telegram.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, logoutAll } from "../api";
 import type { MeProfile, MeUpdate } from "../api/client";
 import { meQueryKey } from "../auth/hooks";
-import type { TelegramLinkCode } from "./logic";
+import { linkCodeFrom } from "./logic";
 
 /** Изменить профиль: ответ сервера (весь профиль) сразу в кэш — пояс и имя применятся везде. */
 export function useUpdateMe() {
@@ -30,20 +30,18 @@ export function useLogoutAll() {
   return useMutation({ mutationFn: logoutAll });
 }
 
-/**
- * Выдача кода привязки Telegram (§8.1). Эндпоинта пока нет — он появится в issue #49
- * (ожидаемый контракт: POST /api/v1/me/telegram/link-code → {code, expires_at, url}).
- * Пока здесь null, кнопка «Привязать Telegram» не показывается (web/CLAUDE.md: кнопку,
- * которую сервер отклонит, не показываем). После #49 и `npm run gen:api` достаточно заменить
- * на `async () => (await api.api.<метод>()).data`.
- */
-export const requestLinkCode: (() => Promise<TelegramLinkCode>) | null = null;
-
-export function useLinkCode(request: (() => Promise<TelegramLinkCode>) | null = requestLinkCode) {
+/** Выдача кода привязки Telegram (§8.1): POST /me/telegram-link-code. */
+export function useLinkCode() {
   return useMutation({
-    mutationFn: async () => {
-      if (!request) throw new Error("Привязка Telegram из профиля пока недоступна");
-      return request();
-    },
+    mutationFn: async () => linkCodeFrom((await api.api.v1MeTelegramLinkCodeCreate()).data),
+  });
+}
+
+/** «Отвязать» (§8.1, п. 6): DELETE /me/telegram, затем профиль перечитывается. */
+export function useUnlinkTelegram() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.api.v1MeTelegramDelete(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
   });
 }

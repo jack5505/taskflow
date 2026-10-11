@@ -6,6 +6,7 @@ import {
   effectiveNotifications,
   formatCountdown,
   isKnownTimeZone,
+  linkCodeFrom,
   profileChanges,
   secondsLeft,
   telegramAccount,
@@ -95,6 +96,16 @@ describe("Telegram (§8.1)", () => {
     expect(secondsLeft("2026-10-11T10:00:00.400Z", now)).toBe(1);
     expect(secondsLeft("2026-10-11T09:59:00Z", now)).toBe(0);
     expect(secondsLeft("не дата", now)).toBe(0);
+  });
+
+  it("ответ POST /me/telegram-link-code: недостающие поля — пустые строки", () => {
+    const full = { code: "K7M2X9QD", expires_at: "2026-10-11T10:10:00Z", url: "https://t.me/bot?start=K7M2X9QD" };
+    expect(linkCodeFrom(full)).toEqual(full);
+    expect(linkCodeFrom({ code: "K7M2X9QD", expires_at: "2026-10-11T10:10:00Z" })).toEqual({
+      code: "K7M2X9QD",
+      expires_at: "2026-10-11T10:10:00Z",
+      url: "",
+    });
   });
 
   it("обратный отсчёт м:сс", () => {

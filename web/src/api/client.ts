@@ -675,6 +675,17 @@ export interface TaskWorklogRequest {
   work_date?: string;
 }
 
+export interface TelegramLinkCode {
+  /** @example "K7M2X9QD" */
+  code?: string;
+  expires_at?: string;
+  /**
+   * URL — https://t.me/<бот>?start=<код>; пусто, если имя бота не задано (TELEGRAM_BOT_USERNAME).
+   * @example "https://t.me/taskflow_bot?start=K7M2X9QD"
+   */
+  url?: string;
+}
+
 export interface UserUser {
   created_at?: string;
   display_name?: string;
@@ -1291,6 +1302,41 @@ export class Api<
       this.request<TaskMyTask[], ApierrResponse>({
         path: `/api/v1/me/tasks`,
         method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start. Без привязки — тоже 204.
+     *
+     * @tags me
+     * @name V1MeTelegramDelete
+     * @summary Отвязать Telegram
+     * @request DELETE:/api/v1/me/telegram
+     * @secure
+     */
+    v1MeTelegramDelete: (params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/me/telegram`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный. url пустой, если имя бота не настроено.
+     *
+     * @tags me
+     * @name V1MeTelegramLinkCodeCreate
+     * @summary Код привязки Telegram
+     * @request POST:/api/v1/me/telegram-link-code
+     * @secure
+     */
+    v1MeTelegramLinkCodeCreate: (params: RequestParams = {}) =>
+      this.request<TelegramLinkCode, ApierrResponse>({
+        path: `/api/v1/me/telegram-link-code`,
+        method: "POST",
         secure: true,
         format: "json",
         ...params,
