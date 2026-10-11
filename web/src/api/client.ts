@@ -56,6 +56,13 @@ export interface AuthLoginRequest {
   password: string;
 }
 
+export interface AuthPasswordChangeRequest {
+  /** @maxLength 200 */
+  current_password: string;
+  /** @maxLength 200 */
+  new_password: string;
+}
+
 export interface AuthPasswordResetRequest {
   /** @maxLength 254 */
   email: string;
@@ -1121,6 +1128,28 @@ export class Api<
         path: `/api/v1/auth/logout-all`,
         method: "POST",
         secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Новый пароль — по тем же правилам, что при установке: не короче 10 символов и не длиннее 72 байт. После смены отзываются все сессии пользователя, кроме текущей — той, чей refresh-токен пришёл в cookie refresh_token (без cookie отзываются все). Неверный текущий пароль засчитывается в счётчик: после 10 неудач за 15 минут смена пароля закрыта на 15 минут, даже с верным.
+     *
+     * @tags auth
+     * @name V1AuthPasswordChangeCreate
+     * @summary Сменить пароль
+     * @request POST:/api/v1/auth/password-change
+     * @secure
+     */
+    v1AuthPasswordChangeCreate: (
+      body: AuthPasswordChangeRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/auth/password-change`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
         ...params,
       }),
 

@@ -271,6 +271,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/auth/password-change": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Новый пароль — по тем же правилам, что при установке: не короче 10 символов и не длиннее 72 байт. После смены отзываются все сессии пользователя, кроме текущей — той, чей refresh-токен пришёл в cookie refresh_token (без cookie отзываются все). Неверный текущий пароль засчитывается в счётчик: после 10 неудач за 15 минут смена пароля закрыта на 15 минут, даже с верным.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сменить пароль",
+                "parameters": [
+                    {
+                        "description": "текущий и новый пароль",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.passwordChangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED: details.fields[current_password] — неверный текущий пароль, details.fields[new_password] — новый не подходит по правилам",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "429": {
+                        "description": "RATE_LIMITED: слишком много неверных попыток, details.retry_after_seconds",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/password-reset": {
             "post": {
                 "description": "Отправляет на email ссылку для установки нового пароля (действует 24 часа, одноразовая). Ответ всегда 204, даже если такого пользователя нет; повторный запрос на тот же email в течение минуты письма не шлёт.",
@@ -3841,6 +3892,23 @@ const docTemplate = `{
                     "maxLength": 254
                 },
                 "password": {
+                    "type": "string",
+                    "maxLength": 200
+                }
+            }
+        },
+        "auth.passwordChangeRequest": {
+            "type": "object",
+            "required": [
+                "current_password",
+                "new_password"
+            ],
+            "properties": {
+                "current_password": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "new_password": {
                     "type": "string",
                     "maxLength": 200
                 }

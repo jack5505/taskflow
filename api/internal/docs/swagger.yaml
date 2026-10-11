@@ -79,6 +79,18 @@ definitions:
     - email
     - password
     type: object
+  auth.passwordChangeRequest:
+    properties:
+      current_password:
+        maxLength: 200
+        type: string
+      new_password:
+        maxLength: 200
+        type: string
+    required:
+    - current_password
+    - new_password
+    type: object
   auth.passwordResetRequest:
     properties:
       email:
@@ -1489,6 +1501,43 @@ paths:
       security:
       - BearerAuth: []
       summary: Выйти везде
+      tags:
+      - auth
+  /api/v1/auth/password-change:
+    post:
+      consumes:
+      - application/json
+      description: 'Новый пароль — по тем же правилам, что при установке: не короче
+        10 символов и не длиннее 72 байт. После смены отзываются все сессии пользователя,
+        кроме текущей — той, чей refresh-токен пришёл в cookie refresh_token (без
+        cookie отзываются все). Неверный текущий пароль засчитывается в счётчик: после
+        10 неудач за 15 минут смена пароля закрыта на 15 минут, даже с верным.'
+      parameters:
+      - description: текущий и новый пароль
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.passwordChangeRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: 'VALIDATION_FAILED: details.fields[current_password] — неверный
+            текущий пароль, details.fields[new_password] — новый не подходит по правилам'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "429":
+          description: 'RATE_LIMITED: слишком много неверных попыток, details.retry_after_seconds'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Сменить пароль
       tags:
       - auth
   /api/v1/auth/password-reset:
