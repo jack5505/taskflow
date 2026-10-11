@@ -169,12 +169,11 @@ var texts = template.Must(template.New("bot").Parse(`
 {{end}}📋 Свободные задачи {{$p.Key}} «{{$p.Name}}»
 {{- if $p.Archived}}: проект в архиве
 {{- else if not $p.Sprint}}: нет активного спринта
-{{- else if not $p.Tasks}}: нет
+{{- else if and (not $p.Tasks) (not $p.More)}}: нет
 {{- else}}:{{range $p.Tasks}}
-{{.Key}} «{{.Title}}» · {{.Priority}}{{end}}{{end}}{{end}}
-{{- if .More}}
-
-…и ещё {{.More}}{{end}}{{end}}
+{{.Key}} «{{.Title}}» · {{.Priority}}{{end}}
+{{- if $p.More}}
+…и ещё {{$p.More}}: /tasks {{$p.Key}}{{end}}{{end}}{{end}}{{end}}
 
 {{- /* По расписанию: напоминания о сроке (§8.7) и ежедневная сводка в группу (§8.6). */}}
 {{define "p_due_tomorrow"}}⏰ Срок {{.Key}} «{{.Title}}» завтра, {{.Date}}{{end}}

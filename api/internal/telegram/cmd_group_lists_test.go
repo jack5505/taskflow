@@ -116,21 +116,30 @@ func TestTasksCommandTwoProjects(t *testing.T) {
 	require.Nil(t, msgs[0].Keyboard)
 }
 
-// §8.5: /tasks — не больше 20 задач на все проекты, остальные — числом.
+// §8.5: /tasks — не больше 20 задач на все проекты, самые приоритетные; у проекта — сколько его
+// задач не поместилось, даже если не показана ни одна.
 func TestTasksCommandLimit(t *testing.T) {
 	b := newListBot(t)
 	s1, s2 := b.sprint(t, b.pr, "Спринт 7"), b.sprint(t, b.other, "Спринт 1")
-	for i := range 12 {
-		b.task(t, b.pr, s1, fmt.Sprintf("Первый %d", i), "medium")
+	for i := range 3 {
+		b.task(t, b.pr, s1, fmt.Sprintf("Первый %d", i), "low")
+	}
+	for i := range 22 {
 		b.task(t, b.other, s2, fmt.Sprintf("Второй %d", i), "high")
 	}
 	msgs := b.cmd(t, "/tasks")
 	require.Len(t, msgs, 1)
 	require.Len(t, msgs[0].Keyboard.InlineKeyboard, telegram.MaxFreeTasks)
-	require.True(t, strings.HasSuffix(msgs[0].Text, "\n\n…и ещё 4"), msgs[0].Text)
-	// Сначала все high второго проекта, затем medium первого — 8 штук.
-	require.Equal(t, 8, strings.Count(msgs[0].Text, "· Средний"))
-	require.Equal(t, 12, strings.Count(msgs[0].Text, "· Высокий"))
+	require.Equal(t, 20, strings.Count(msgs[0].Text, "· Высокий"))
+	require.Contains(t, msgs[0].Text, "📋 Свободные задачи "+b.pr.Key+" «Тайм-менеджмент»:\n…и ещё 3: /tasks "+b.pr.Key)
+	require.Contains(t, msgs[0].Text, "\n…и ещё 2: /tasks "+b.other.Key)
+
+	// Длинные названия: текст не длиннее лимита, кнопки — только у показанных задач.
+	require.NoError(t, b.g.Exec(`UPDATE tasks SET title = ? WHERE project_id = ?`, strings.Repeat("Д", 200), b.other.ID).Error)
+	require.NoError(t, b.g.Exec(`UPDATE projects SET name = ? WHERE id IN ?`, strings.Repeat("Н", 100), []any{b.pr.ID, b.other.ID}).Error)
+	msgs = b.cmd(t, "/tasks "+b.other.Key+" лишнее")
+	require.LessOrEqual(t, len([]rune(msgs[0].Text)), 4000)
+	require.Equal(t, strings.Count(msgs[0].Text, "· Высокий"), len(msgs[0].Keyboard.InlineKeyboard))
 }
 
 // Приёмка §8.5: /sprint — сводка активного спринта по каждому проекту группы одним сообщением.

@@ -43,7 +43,8 @@ func activeSprint(db *gorm.DB, projectID uuid.UUID) (*sprintSummary, error) {
 		Name               string
 		StartDate, EndDate *time.Time
 	}
-	if err := db.Raw(`SELECT id, name, start_date, end_date FROM sprints WHERE project_id = ? AND state = 'active' LIMIT 1`,
+	if err := db.Raw(`SELECT id, name, start_date, end_date FROM sprints WHERE project_id = ? AND state = 'active'
+		ORDER BY start_date, id LIMIT 1`,
 		projectID).Scan(&sp).Error; err != nil {
 		return nil, fmt.Errorf("telegram: active sprint: %w", err)
 	}
@@ -101,16 +102,17 @@ func chatProjects(ctx context.Context, r *Request, groups *Groups) ([]project.Pr
 	if len(ps) == 0 {
 		return nil, r.Reply(ctx, Text("group_no_projects", nil))
 	}
-	key := strings.ToUpper(strings.TrimSpace(r.Args))
-	if key == "" {
+	args := strings.Fields(r.Args)
+	if len(args) == 0 {
 		return ps, nil
 	}
+	key := strings.ToUpper(args[0]) // остальные слова не нужны
 	for _, p := range ps {
 		if p.Key == key {
 			return []project.Project{p}, nil
 		}
 	}
-	return nil, r.Reply(ctx, Text("unbind_not_here", key))
+	return nil, r.Reply(ctx, Text("unbind_not_here", clip(key, 20)))
 }
 
 // sprintCommand — /sprint [ключ проекта]: сводка активного спринта по каждому проекту группы
@@ -143,13 +145,22 @@ type freeTask struct {
 	ProjectID  uuid.UUID
 	Key, Title string
 	Priority   string
-	Total      int // свободных задач всего (до LIMIT)
+}
+
+// freeLine и freeGroup — данные шаблона cmd_tasks.
+type freeLine struct{ Key, Title, Priority string }
+
+type freeGroup struct {
+	Key, Name        string
+	Archived, Sprint bool
+	Tasks            []freeLine
+	More             int // свободных задач проекта, не попавших в список
 }
 
 // tasksCommand — /tasks [ключ проекта]: свободные задачи активных спринтов (todo, без
 // исполнителя) с кнопкой «Взять» у каждой (§8.5). Не больше MaxFreeTasks на все проекты, самые
-// приоритетные; в сообщении — с разбивкой по проектам, внутри проекта по приоритету. Задачи
-// архивного проекта не предлагаются: взять их нельзя (§3.2).
+// приоритетные; в сообщении — с разбивкой по проектам, внутри проекта по приоритету, у проекта —
+// сколько его задач не поместилось. Задачи архивного проекта не предлагаются: взять их нельзя (§3.2).
 func tasksCommand(db *gorm.DB, groups *Groups) HandlerFunc {
 	return func(ctx context.Context, r *Request) error {
 		ps, err := chatProjects(ctx, r, groups)
@@ -160,13 +171,22 @@ func tasksCommand(db *gorm.DB, groups *Groups) HandlerFunc {
 		for i, p := range ps {
 			ids[i] = p.ID
 		}
-		var withSprint []uuid.UUID
-		if err := db.WithContext(ctx).Raw(`SELECT project_id FROM sprints WHERE project_id IN ? AND state = 'active'`, ids).
-			Scan(&withSprint).Error; err != nil {
+		// Проекты с активным спринтом и число свободных задач в каждом.
+		var counts []struct {
+			ProjectID uuid.UUID
+			Free      int
+		}
+		if err := db.WithContext(ctx).Raw(`SELECT s.project_id, count(t.id) AS free FROM sprints s
+			LEFT JOIN tasks t ON t.sprint_id = s.id AND t.status = 'todo' AND t.assignee_id IS NULL AND t.deleted_at IS NULL
+			WHERE s.project_id IN ? AND s.state = 'active' GROUP BY s.project_id`, ids).Scan(&counts).Error; err != nil {
 			return fmt.Errorf("telegram: active sprints: %w", err)
 		}
+		freeCount := map[uuid.UUID]int{}
+		for _, c := range counts {
+			freeCount[c.ProjectID] = c.Free
+		}
 		var free []freeTask
-		if err := db.WithContext(ctx).Raw(`SELECT t.id, t.project_id, t.key, t.title, t.priority, count(*) OVER () AS total
+		if err := db.WithContext(ctx).Raw(`SELECT t.id, t.project_id, t.key, t.title, t.priority
 			FROM tasks t JOIN sprints s ON s.id = t.sprint_id AND s.state = 'active'
 			JOIN projects p ON p.id = t.project_id AND NOT p.is_archived
 			WHERE t.project_id IN ? AND t.status = 'todo' AND t.assignee_id IS NULL AND t.deleted_at IS NULL
@@ -175,35 +195,32 @@ func tasksCommand(db *gorm.DB, groups *Groups) HandlerFunc {
 			return fmt.Errorf("telegram: free tasks: %w", err)
 		}
 
-		type line struct{ Key, Title, Priority string }
-		type group struct {
-			Key, Name        string
-			Archived, Sprint bool
-			Tasks            []line
-		}
-		data := struct {
-			Projects []group
-			More     int
-		}{}
-		var kb [][]models.InlineKeyboardButton
+		data := struct{ Projects []freeGroup }{}
 		for _, p := range ps {
-			g := group{Key: p.Key, Name: p.Name, Archived: p.IsArchived}
-			for _, id := range withSprint {
-				g.Sprint = g.Sprint || id == p.ID
-			}
-			for _, t := range free {
-				if t.ProjectID != p.ID {
-					continue
-				}
-				g.Tasks = append(g.Tasks, line{Key: t.Key, Title: clip(t.Title, freeTitle), Priority: priorityLabels[t.Priority]})
-				kb = append(kb, []models.InlineKeyboardButton{{Text: Text("button_take_key", t.Key), CallbackData: ActionTake + ":" + t.ID.String()}})
+			n, sprint := freeCount[p.ID]
+			g := freeGroup{Key: p.Key, Name: p.Name, Archived: p.IsArchived, Sprint: sprint}
+			if !p.IsArchived {
+				g.More = n
 			}
 			data.Projects = append(data.Projects, g)
 		}
-		if len(free) > 0 {
-			data.More = free[0].Total - len(free)
+		// Задачи добавляются, пока текст влезает в сообщение: кнопки — только у показанных.
+		var kb [][]models.InlineKeyboardButton
+		for gi := range data.Projects {
+			g := &data.Projects[gi]
+			for _, t := range free {
+				if t.ProjectID != ps[gi].ID {
+					continue
+				}
+				g.Tasks, g.More = append(g.Tasks, freeLine{Key: t.Key, Title: clip(t.Title, freeTitle), Priority: priorityLabels[t.Priority]}), g.More-1
+				if len([]rune(Text("cmd_tasks", data))) > maxMessage {
+					g.Tasks, g.More = g.Tasks[:len(g.Tasks)-1], g.More+1
+					continue
+				}
+				kb = append(kb, []models.InlineKeyboardButton{{Text: Text("button_take_key", t.Key), CallbackData: ActionTake + ":" + t.ID.String()}})
+			}
 		}
-		m := r.reply(clip(Text("cmd_tasks", data), maxMessage))
+		m := r.reply(Text("cmd_tasks", data))
 		if len(kb) > 0 {
 			m.Keyboard = &models.InlineKeyboardMarkup{InlineKeyboard: kb}
 		}
