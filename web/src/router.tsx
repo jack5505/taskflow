@@ -34,6 +34,8 @@ export const router = createBrowserRouter([
           { path: "/", element: <HomePage /> },
           { path: "/projects/:key", element: <BoardPage /> },
           { path: "/projects/:key/backlog", element: <BacklogPage /> },
+          // Карточка с Markdown (marked + DOMPurify) — отдельным чанком: на остальных экранах не нужна.
+          { path: "/tasks/:key", lazy: async () => ({ Component: (await import("./task/TaskPage")).TaskPage }) },
         ],
       },
     ],

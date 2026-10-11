@@ -4,7 +4,7 @@ import { statusLabel } from "../lib/status";
 import { commentError, type Status } from "./transitions";
 
 interface Props {
-  task: TaskListItem;
+  task: Pick<TaskListItem, "key" | "title" | "status">;
   to: Status;
   /** Нужен комментарий: причина возврата на доработку или отмены. */
   comment: "rework" | "cancel" | null;

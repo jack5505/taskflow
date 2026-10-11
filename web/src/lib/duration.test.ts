@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, formatSpentEstimate } from "./duration";
+import { formatDuration, formatSpentEstimate, parseDuration } from "./duration";
 
 describe("formatDuration", () => {
   it.each([
@@ -31,5 +31,22 @@ describe("formatSpentEstimate", () => {
   it("без оценки — прочерк, без списаний — 0m", () => {
     expect(formatSpentEstimate(0, undefined)).toBe("0m / —");
     expect(formatSpentEstimate(undefined, 30)).toBe("0m / 30m");
+  });
+});
+
+describe("parseDuration", () => {
+  it.each([
+    ["2h 30m", 150],
+    ["2h30m", 150],
+    ["45m", 45],
+    ["3h", 180],
+    ["1d", 480],
+    ["1d 2h 5m", 605],
+    ["  1D  ", 480],
+  ])("%s → %i", (s, want) => {
+    expect(parseDuration(s)).toBe(want);
+  });
+  it.each(["", "  ", "30m 2h", "2", "1.5h", "2x", "h", "-1h", "2h 3h"])("%s — не формат", (s) => {
+    expect(parseDuration(s)).toBeNull();
   });
 });
