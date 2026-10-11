@@ -26,19 +26,22 @@ api/                 Go: один бинарник `taskflow` с режимам�
 web/                 React + TypeScript (Vite)
 loadtest/            нагрузочный тест k6 (ТЗ §10.4) и запуск на временном стенде
 docs/TZ.md           техническое задание
+docs/DEPLOY.md       развёртывание и сопровождение стенда
+deploy/              скрипты выкладки, бэкапа и восстановления
 docker-compose.yml   api, worker, postgres, redis
 Makefile             сборка и тесты через docker, без локального Go
 ```
 
 ## Запуск стенда
 
+Развёртывание на сервере, переменные окружения, обновление по тегу, откат, бэкап и проверка восстановления — [docs/DEPLOY.md](docs/DEPLOY.md). Локально из исходников:
+
 ```bash
-cp .env.example .env        # заполнить секреты
+cp .env.example .env        # заполнить JWT_SECRET (не короче 32 символов)
 make up                     # docker compose up -d --build --wait
 curl -s localhost:8100/health
+docker compose exec api /app/taskflow admin create --email admin@example.com   # ссылка на пароль — в консоли
 ```
-
-Снаружи сервис открывается через nginx сервера по адресу https://tasks.157.173.109.181.nip.io (ТЗ §10.2).
 
 ## Разработка
 
@@ -61,4 +64,4 @@ make swag         # Swagger 2.0 из аннотаций → /api/docs
 
 ## CI/CD и стенд
 
-GitHub Actions на каждый PR: `go vet`, golangci-lint, тесты с порогом покрытия 80%, eslint, сборка фронтенда и Docker-образа, shellcheck. Тег `vX.Y.Z` публикует образ в GHCR и создаёт GitHub Release; выкладка на стенд — `deploy/deploy.sh vX.Y.Z` с откатом при неудаче `/health`. Бэкап, восстановление, nginx и сертификат — в [deploy/README.md](deploy/README.md).
+GitHub Actions на каждый PR: `go vet`, golangci-lint, тесты с порогом покрытия 80%, eslint, сборка фронтенда и Docker-образа, shellcheck. Тег `vX.Y.Z` публикует образ в GHCR и создаёт GitHub Release; выкладка на стенд — `deploy/deploy.sh vX.Y.Z` с откатом при неудаче `/health`. Бэкап, восстановление, nginx и сертификат — в [docs/DEPLOY.md](docs/DEPLOY.md).

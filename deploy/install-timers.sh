@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Ставит пользовательский systemd-таймер ежедневного бэкапа (03:30 по времени сервера).
+# Ставит пользовательские systemd-таймеры: ежедневный бэкап (03:30 по времени сервера) и
+# ежемесячная проверка восстановления последнего бэкапа (1-го числа в 05:00, deploy/restore-check.sh).
 # Запускать один раз на сервере от пользователя, под которым работает docker compose.
 set -euo pipefail
 
@@ -31,7 +32,31 @@ RandomizedDelaySec=5min
 WantedBy=timers.target
 EOF
 
+cat > "$UNIT_DIR/taskflow-restore-check.service" <<EOF
+[Unit]
+Description=TaskFlow: проверка восстановления последнего бэкапа во временные контейнеры (ТЗ §10.3)
+# После простоя оба таймера (Persistent) срабатывают разом: проверка ждёт, пока допишется бэкап.
+After=taskflow-backup.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=$ROOT
+ExecStart=$ROOT/deploy/restore-check.sh
+EOF
+
+cat > "$UNIT_DIR/taskflow-restore-check.timer" <<'EOF'
+[Unit]
+Description=TaskFlow: проверка восстановления 1-го числа каждого месяца в 05:00
+
+[Timer]
+OnCalendar=*-*-01 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 systemctl --user daemon-reload
-systemctl --user enable --now taskflow-backup.timer
-systemctl --user list-timers taskflow-backup.timer --no-pager
+systemctl --user enable --now taskflow-backup.timer taskflow-restore-check.timer
+systemctl --user list-timers 'taskflow-*' --no-pager
 echo "Чтобы таймер работал без активной сессии: sudo loginctl enable-linger $USER (если ещё не включено)"
