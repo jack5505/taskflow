@@ -12,11 +12,9 @@ import (
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 
-	"github.com/jack5505/taskflow/api/internal/duration"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/project"
-	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -107,70 +105,21 @@ type summaryData struct {
 	More            int
 }
 
-type sprintSummary struct {
-	Name, Dates     string
-	Statuses        string // «К выполнению: 5 · В работе: 3 · …»
-	Spent, Estimate string
-}
-
 type overdueTask struct {
 	Key, Title, Assignee, Due string
 }
 
-// summary — текст сводки: активный спринт как в /sprint (название, даты, задачи по статусам,
-// списано из оценки) и просроченные задачи проекта (§3.3: срок раньше сегодняшней даты по поясу
+// summary — текст сводки: активный спринт как в /sprint (activeSprint) и просроченные задачи проекта (§3.3: срок раньше сегодняшней даты по поясу
 // проекта, задача не закрыта).
 func (d *Digest) summary(ctx context.Context, projectID uuid.UUID, key, name string, today time.Time) (string, error) {
 	db := d.db.WithContext(ctx)
 	data := summaryData{Key: key, Name: name, Date: today.Format("02.01.2006")}
 
-	var sp []struct {
-		ID                 uuid.UUID
-		Name               string
-		StartDate, EndDate *time.Time
+	sprint, err := activeSprint(db, projectID)
+	if err != nil {
+		return "", err
 	}
-	if err := db.Raw(`SELECT id, name, start_date, end_date FROM sprints WHERE project_id = ? AND state = 'active' LIMIT 1`,
-		projectID).Scan(&sp).Error; err != nil {
-		return "", fmt.Errorf("telegram: summary sprint: %w", err)
-	}
-	if len(sp) == 1 {
-		var st []struct {
-			Status   string
-			N        int
-			Spent    int
-			Estimate int
-		}
-		if err := db.Raw(`SELECT status, count(*) AS n, COALESCE(SUM(spent_minutes), 0) AS spent,
-				COALESCE(SUM(estimate_minutes), 0) AS estimate
-			FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL GROUP BY status`, sp[0].ID).Scan(&st).Error; err != nil {
-			return "", fmt.Errorf("telegram: summary statuses: %w", err)
-		}
-		counts := map[string]int{}
-		spent, estimate := 0, 0
-		for _, s := range st {
-			counts[s.Status] = s.N
-			spent += s.Spent
-			if s.Status != task.StatusCancelled {
-				estimate += s.Estimate
-			}
-		}
-		var parts []string
-		for _, s := range []string{task.StatusTodo, task.StatusInProgress, task.StatusReview, task.StatusDone, task.StatusCancelled} {
-			if counts[s] > 0 || s != task.StatusCancelled {
-				parts = append(parts, fmt.Sprintf("%s: %d", task.StatusName(s), counts[s]))
-			}
-		}
-		s := &sprintSummary{Name: sp[0].Name, Statuses: strings.Join(parts, " · "),
-			Spent: duration.Format(spent), Estimate: duration.Format(estimate)}
-		if start, end := sp[0].StartDate, sp[0].EndDate; start != nil && end != nil {
-			layout := "02.01"
-			if start.Year() != end.Year() {
-				layout = "02.01.2006" // спринт через Новый год
-			}
-			s.Dates = start.Format(layout) + "–" + end.Format("02.01.2006")
-		}
-		data.Sprint = s
-	}
+	data.Sprint = sprint
 
 	var overdue []struct {
 		Key, Title string
