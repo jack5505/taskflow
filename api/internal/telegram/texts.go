@@ -74,6 +74,29 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "p_rework_forbidden"}}Вернуть на доработку может автор задачи или менеджер проекта{{end}}
 {{define "p_task_not_found"}}Задача не найдена{{end}}
 {{define "p_archived"}}Проект {{.Key}} в архиве, изменения недоступны{{end}}
+
+{{- /* По расписанию: напоминания о сроке (§8.7) и ежедневная сводка в группу (§8.6). */}}
+{{define "p_due_tomorrow"}}⏰ Срок {{.Key}} «{{.Title}}» завтра, {{.Date}}{{end}}
+{{define "p_overdue"}}⚠️ Срок {{.Key}} «{{.Title}}» просрочен: {{.Date}}{{end}}
+{{define "daily_summary"}}📊 Сводка {{.Key}} «{{.Name}}» на {{.Date}}
+{{with .Sprint}}
+🏃 {{.Name}}{{if .Dates}}: {{.Dates}}{{end}}
+{{.Statuses}}
+Списано {{.Spent}} из {{.Estimate}}
+{{else}}
+Нет активного спринта
+{{end}}
+{{- if .Overdue}}
+⚠️ Просрочено:
+{{- range .Overdue}}
+{{.Key}} «{{.Title}}» — {{.Assignee}}, срок {{.Due}}
+{{- end}}
+{{- if .More}}
+и ещё {{.More}}
+{{- end}}
+{{- else}}
+Просроченных задач нет
+{{- end}}{{end}}
 `))
 
 // Text — текст по имени шаблона. Ошибка шаблона — ошибка кода; она пишется в лог,
