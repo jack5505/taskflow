@@ -5,6 +5,7 @@ import {
   commentRequirement,
   STATUSES,
   transitionLabel,
+  transitionPrompt,
   isValidTransition,
   needsNewAssignee,
   type Actor,
@@ -140,5 +141,14 @@ describe("transitionLabel", () => {
       "done>in_progress: Переоткрыть",
       "cancelled>todo: Вернуть в бэклог",
     ]);
+  });
+});
+
+describe("transitionPrompt", () => {
+  it("окно — для причины и для выбора исполнителя; иначе сразу", () => {
+    expect(transitionPrompt("review", "in_progress", true)).toEqual({ comment: "rework", chooseAssignee: false });
+    expect(transitionPrompt("todo", "cancelled", undefined)).toEqual({ comment: "cancel", chooseAssignee: false });
+    expect(transitionPrompt("done", "in_progress", false)).toEqual({ comment: null, chooseAssignee: true });
+    expect(transitionPrompt("in_progress", "review", true)).toBeNull();
   });
 });

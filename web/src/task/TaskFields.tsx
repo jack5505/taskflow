@@ -42,6 +42,8 @@ export function InlineEdit(p: InlineProps) {
   const [busy, setBusy] = useState(false);
   // Escape закрывает поле; уход фокуса при закрытии не должен сохранять.
   const cancelled = useRef(false);
+  // Черновик, сохранение которого не удалось: уход фокуса его не отправляет повторно (Enter — да).
+  const failed = useRef<string | null>(null);
 
   if (!p.editable) return <span className={p.className}>{p.children}</span>;
   if (draft === null)
@@ -55,6 +57,7 @@ export function InlineEdit(p: InlineProps) {
         onClick={() => {
           setError("");
           cancelled.current = false;
+          failed.current = null;
           setBase(p.task);
           setDraft(p.initial);
         }}
@@ -63,8 +66,8 @@ export function InlineEdit(p: InlineProps) {
       </button>
     );
 
-  const commit = async () => {
-    if (busy || cancelled.current) return;
+  const commit = async (fromBlur = false) => {
+    if (busy || cancelled.current || (fromBlur && draft === failed.current)) return;
     const err = p.validate?.(draft) ?? "";
     setError(err);
     if (err) return;
@@ -72,6 +75,7 @@ export function InlineEdit(p: InlineProps) {
     const r = await p.onSave(draft, base);
     setBusy(false);
     if (r !== "error") setDraft(null);
+    else failed.current = draft;
   };
   return (
     <span className="inline-editor">
@@ -88,7 +92,7 @@ export function InlineEdit(p: InlineProps) {
           setDraft(e.target.value);
           setError("");
         }}
-        onBlur={() => void commit()}
+        onBlur={() => void commit(true)}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();

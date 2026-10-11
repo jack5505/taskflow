@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskTask } from "../api/client";
-import { buildPatch, compareConflict, ifMatch, isEmptyPatch, parseLabels, rebasePatch, versionConflict } from "./patch";
+import { buildPatch, ifMatchBase, compareConflict, ifMatch, isEmptyPatch, parseLabels, rebasePatch, versionConflict } from "./patch";
 
 const base: TaskTask = {
   key: "TM-1",
@@ -144,5 +144,20 @@ describe("parseLabels", () => {
   it("через запятую, без пустых и повторов", () => {
     expect(parseLabels(" api, вход ,, api ,ui ")).toEqual(["api", "вход", "ui"]);
     expect(parseLabels("  ")).toEqual([]);
+  });
+});
+
+describe("ifMatchBase", () => {
+  const v = (version: number): TaskTask => ({ ...base, version });
+  it("свои версии после открытия — сохраняем от текущей", () => {
+    expect(ifMatchBase(v(3), v(5), new Set([4, 5])).version).toBe(5);
+  });
+  it("среди новых версий есть чужая — от открытой (сервер ответит 409)", () => {
+    expect(ifMatchBase(v(3), v(5), new Set([5])).version).toBe(3);
+    expect(ifMatchBase(v(3), v(4), new Set()).version).toBe(3);
+  });
+  it("версия не менялась или кэша нет — от открытой", () => {
+    expect(ifMatchBase(v(3), v(3), new Set()).version).toBe(3);
+    expect(ifMatchBase(v(3), undefined, new Set([4])).version).toBe(3);
   });
 });

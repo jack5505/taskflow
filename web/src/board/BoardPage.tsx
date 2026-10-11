@@ -27,10 +27,10 @@ import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter, type 
 import {
   BOARD_COLUMNS,
   canTransition,
-  commentRequirement,
-  needsNewAssignee,
+  transitionPrompt,
   type BoardStatus,
   type Status,
+  type TransitionPrompt,
 } from "./transitions";
 import { TransitionDialog } from "./TransitionDialog";
 
@@ -56,11 +56,9 @@ interface Move {
   queryKey: QueryKey;
 }
 
-interface DialogState {
+interface DialogState extends TransitionPrompt {
   task: TaskListItem;
   to: Status;
-  comment: "rework" | "cancel" | null;
-  chooseAssignee: boolean;
 }
 
 /** Подсказки и объявления dnd-kit для экранного диктора — на русском (§10.3). */
@@ -200,13 +198,11 @@ export function BoardPage() {
 
   const startTransition = (t: TaskListItem, to: Status) => {
     setActionError("");
-    const from = t.status as Status;
-    const comment = commentRequirement(from, to);
     const assigneeActive = t.assignee_id ? memberById.get(t.assignee_id)?.is_active : undefined;
-    const chooseAssignee = needsNewAssignee(from, to, assigneeActive);
-    if (comment || chooseAssignee) {
+    const prompt = transitionPrompt(t.status as Status, to, assigneeActive);
+    if (prompt) {
       dialogMove.reset();
-      setDialog({ task: t, to, comment, chooseAssignee });
+      setDialog({ task: t, to, ...prompt });
       return;
     }
     move.mutate({ task: t, to, queryKey: tasksKey });

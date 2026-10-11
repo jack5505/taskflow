@@ -106,7 +106,14 @@ function CommentItem({
             <button type="submit" className="primary" disabled={update.isPending}>
               {update.isPending ? "Сохраняем…" : "Сохранить"}
             </button>
-            <button type="button" onClick={() => setDraft(null)}>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(null);
+                setLocalError("");
+                update.reset();
+              }}
+            >
               Отмена
             </button>
           </div>

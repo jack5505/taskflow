@@ -130,3 +130,16 @@ export function parseLabels(input: string): string[] {
   }
   return out;
 }
+
+/**
+ * От какой версии сохранять правку, начатую на версии `opened`: если все версии после неё
+ * получены нашими же изменениями (`own`), то от текущей — иначе от открытой, чтобы чужая
+ * правка дала 409, а не перезаписалась.
+ */
+export function ifMatchBase(opened: TaskTask, current: TaskTask | undefined, own: ReadonlySet<number>): TaskTask {
+  const from = opened.version ?? 0;
+  const to = current?.version ?? from;
+  if (!current || to <= from) return opened;
+  for (let v = from + 1; v <= to; v++) if (!own.has(v)) return opened;
+  return current;
+}

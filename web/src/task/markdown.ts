@@ -9,9 +9,19 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
-/** Картинка со своего сервера: путь от корня, не «//host». */
+const PROBE = "https://same-origin.invalid";
+
+/**
+ * Картинка со своего сервера: путь от корня. Проверяем разбором URL, как это сделает браузер:
+ * «//host» и «/\\host» он считает адресом другого сервера.
+ */
 function sameOrigin(href: string): boolean {
-  return href.startsWith("/") && !href.startsWith("//");
+  if (!href.startsWith("/")) return false;
+  try {
+    return new URL(href, PROBE).origin === PROBE;
+  } catch {
+    return false;
+  }
 }
 
 const marked = new Marked({

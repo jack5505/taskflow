@@ -16,6 +16,8 @@ function useDownloadLink(id: string | undefined, enabled: boolean) {
     enabled: enabled && !!id,
     staleTime: 8 * 60_000,
     gcTime: 8 * 60_000,
+    // Превью должно успеть загрузиться по живой ссылке, пока вкладка открыта.
+    refetchInterval: 8 * 60_000,
   });
 }
 
@@ -53,7 +55,7 @@ function AttachmentItem({
     <li className="attachment">
       <div className="attachment-thumb">
         {preview && link.data?.url ? (
-          <img src={link.data.url} alt={a.file_name} loading="lazy" />
+          <img src={link.data.url} alt={a.file_name} />
         ) : (
           <span className="muted" aria-hidden="true">
             {(a.file_name?.split(".").pop() ?? "").slice(0, 4).toUpperCase() || "ФАЙЛ"}

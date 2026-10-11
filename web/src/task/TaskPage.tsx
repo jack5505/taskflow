@@ -10,10 +10,10 @@ import { TransitionDialog } from "../board/TransitionDialog";
 import {
   STATUSES,
   canTransition,
-  commentRequirement,
-  needsNewAssignee,
   transitionLabel,
+  transitionPrompt,
   type Status,
+  type TransitionPrompt,
 } from "../board/transitions";
 import { statusLabel } from "../lib/status";
 import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
@@ -24,7 +24,7 @@ import { commentsQueryKey, historyQueryKey, taskQueryKey } from "./keys";
 import { ConflictDialog, type Conflict } from "./ConflictDialog";
 import { describeHistory, type ValueContext } from "./history";
 import { MarkdownEditor, MarkdownView } from "./Markdown";
-import { buildPatch, ifMatch, isEmptyPatch, versionConflict, type Edits } from "./patch";
+import { buildPatch, ifMatchBase, ifMatch, isEmptyPatch, versionConflict, type Edits } from "./patch";
 import { taskPerms } from "./perms";
 import { InlineEdit, TaskFields, type Save, type SaveResult } from "./TaskFields";
 
@@ -37,10 +37,8 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "history", label: "История" },
 ];
 
-interface DialogState {
+interface DialogState extends TransitionPrompt {
   to: Status;
-  comment: "rework" | "cancel" | null;
-  chooseAssignee: boolean;
 }
 
 /** Описание задачи: Markdown с предпросмотром; правка — по кнопке «Изменить». */
@@ -182,7 +180,10 @@ export function TaskPage() {
   }, [memberList, activeSprint, timeZone]);
 
   /** После любого изменения: новая задача в кэше, история и списки других экранов устарели. */
+  // Версии, которые получились из наших же сохранений и переходов в этой вкладке.
+  const ownVersions = useRef(new Set<number>());
   const changed = (next?: TaskTask) => {
+    if (next?.version !== undefined) ownVersions.current.add(next.version);
     if (next) queryClient.setQueryData(taskQueryKey(key), next);
     void queryClient.invalidateQueries({ queryKey: historyQueryKey(key) });
     void queryClient.invalidateQueries({ queryKey: boardQueryKey(projectKey), refetchType: "none" });
@@ -213,9 +214,13 @@ export function TaskPage() {
     },
   });
 
-  const saveEdits: Save = async (edits: Edits, base: TaskTask) => {
-    const patch = buildPatch(base, edits);
+  const saveEdits: Save = async (edits: Edits, opened: TaskTask) => {
+    const patch = buildPatch(opened, edits);
     if (isEmptyPatch(patch)) return "saved";
+    // Пока поле было открыто, задачу могли изменить мы сами (другое поле, переход) — это не
+    // чужая правка: If-Match берём от текущей версии. Если среди новых версий есть чужая — от
+    // открытой, и сервер ответит 409.
+    const base = ifMatchBase(opened, queryClient.getQueryData<TaskTask>(taskQueryKey(key)), ownVersions.current);
     setSaveError("");
     try {
       await save.mutateAsync({ base, patch });
@@ -281,10 +286,9 @@ export function TaskPage() {
     if (statusMenu.current) statusMenu.current.open = false;
     setActionError("");
     transition.reset();
-    const comment = commentRequirement(status, to);
     const assigneeActive = t.assignee_id ? memberList.find((m) => m.user_id === t.assignee_id)?.is_active : undefined;
-    const chooseAssignee = needsNewAssignee(status, to, assigneeActive);
-    if (comment || chooseAssignee) setDialog({ to, comment, chooseAssignee });
+    const prompt = transitionPrompt(status, to, assigneeActive);
+    if (prompt) setDialog({ to, ...prompt });
     else transition.mutate({ to });
   };
 

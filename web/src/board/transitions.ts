@@ -107,3 +107,15 @@ export function transitionLabel(from: Status, to: Status): string {
 
 /** Все статусы в порядке схемы §4. */
 export const STATUSES: readonly Status[] = ["todo", "in_progress", "review", "done", "cancelled"];
+
+/** Что спросить перед переходом: комментарий (§4) и/или нового исполнителя; null — переходить сразу. */
+export interface TransitionPrompt {
+  comment: "rework" | "cancel" | null;
+  chooseAssignee: boolean;
+}
+
+export function transitionPrompt(from: Status, to: Status, assigneeActive: boolean | undefined): TransitionPrompt | null {
+  const comment = commentRequirement(from, to);
+  const chooseAssignee = needsNewAssignee(from, to, assigneeActive);
+  return comment || chooseAssignee ? { comment, chooseAssignee } : null;
+}

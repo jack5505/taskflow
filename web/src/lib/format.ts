@@ -71,7 +71,8 @@ export function formatBytes(n: number | null | undefined): string {
   const units = ["Б", "КБ", "МБ", "ГБ"];
   let v = n;
   let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
+  // По округлённому значению: 1048575 Б — «1 МБ», а не «1024 КБ».
+  while (Math.round(v) >= 1024 && i < units.length - 1) {
     v /= 1024;
     i++;
   }

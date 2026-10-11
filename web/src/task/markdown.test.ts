@@ -52,6 +52,11 @@ describe("renderMarkdown", () => {
     expect(el.querySelector('a[href="https://example.com/b.png"]')?.textContent).toBe("b");
   });
 
+  it("адреса, которые браузер считает чужим сервером, — ссылкой", () => {
+    const el = dom(renderMarkdown("![a](//evil.example/p.png) ![b](/\\evil.example/p.png) ![c](/%5Cok.png)"));
+    expect([...el.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual(["/%5Cok.png"]);
+  });
+
   it("список задач GFM: флажки остаются, только для показа", () => {
     const boxes = [...dom(renderMarkdown("- [x] сделано\n- [ ] осталось")).querySelectorAll("input")];
     expect(boxes.map((b) => [b.type, b.checked, b.disabled])).toEqual([
