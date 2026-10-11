@@ -3416,6 +3416,50 @@ paths:
       summary: Списать время
       tags:
       - worklogs
+  /api/v1/telegram/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Приём обновлений бота (§8.8). Секрет в X-Telegram-Bot-Api-Secret-Token
+        проверяется на каждом запросе. Ответ 200 отдаётся сразу, обработка идёт в
+        очереди; повторно доставленный update_id (24 часа) не обрабатывается. Маршрут
+        есть, только если задан TELEGRAM_BOT_TOKEN и бот работает в режиме webhook.
+      parameters:
+      - description: секрет webhook
+        in: header
+        name: X-Telegram-Bot-Api-Secret-Token
+        required: true
+        type: string
+      - description: Update из Bot API
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 'ok: true'
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: INVALID_JSON
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: неверный секрет
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "413":
+          description: PAYLOAD_TOO_LARGE
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Webhook Telegram
+      tags:
+      - telegram
   /api/v1/users:
     get:
       description: Администратору — все пользователи целиком (user.User). Менеджеру

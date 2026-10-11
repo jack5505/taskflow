@@ -15,17 +15,23 @@ import (
 	"github.com/jack5505/taskflow/api/internal/report"
 	"github.com/jack5505/taskflow/api/internal/sprint"
 	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/users"
 )
 
-// NewServer — API со всеми маршрутами. jobs — очередь заданий воркера (письма).
+// NewServer — API со всеми маршрутами. jobs — очередь заданий воркера (письма, обновления бота).
+// Webhook Telegram есть, только если бот включён (TELEGRAM_BOT_TOKEN) и работает не в long polling.
 func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Client) *httpserver.Server {
 	authSvc := auth.NewService(cfg, g, rdb).WithQueue(jobs)
 	authH := auth.NewHandlers(authSvc, auth.SecureCookies(cfg.BaseURL))
 	requireAuth := authH.RequireAuth()
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects).WithAttachments(cfg.AttachmentsDir, cfg.AttachmentMaxBytes, cfg.JWTSecret)
-	return httpserver.New(cfg, g, rdb).
+	srv := httpserver.New(cfg, g, rdb)
+	if cfg.TelegramWebhook() {
+		srv.Mount(telegram.NewWebhook(cfg.TelegramWebhookSecret, telegram.NewIntake(rdb, jobs)).Register)
+	}
+	return srv.
 		Mount(authH.Register).
 		Mount(users.NewHandlers(users.NewService(g, authSvc), requireAuth).Register).
 		Mount(project.NewHandlers(projects, requireAuth).Register).

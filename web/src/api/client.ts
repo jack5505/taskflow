@@ -2160,6 +2160,24 @@ export class Api<
       }),
 
     /**
+     * @description Приём обновлений бота (§8.8). Секрет в X-Telegram-Bot-Api-Secret-Token проверяется на каждом запросе. Ответ 200 отдаётся сразу, обработка идёт в очереди; повторно доставленный update_id (24 часа) не обрабатывается. Маршрут есть, только если задан TELEGRAM_BOT_TOKEN и бот работает в режиме webhook.
+     *
+     * @tags telegram
+     * @name V1TelegramWebhookCreate
+     * @summary Webhook Telegram
+     * @request POST:/api/v1/telegram/webhook
+     */
+    v1TelegramWebhookCreate: (body: object, params: RequestParams = {}) =>
+      this.request<Record<string, boolean>, ApierrResponse>({
+        path: `/api/v1/telegram/webhook`,
+        method: "POST",
+        body: body,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
      * @description Администратору — все пользователи целиком (user.User). Менеджеру проекта — только активные и только id, email, display_name (user.Brief) — для добавления в проект.
      *
      * @tags users

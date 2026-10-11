@@ -7,10 +7,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jack5505/taskflow/api/internal/app"
+	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/notification"
+	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/testutil"
 )
 
 func TestMeProfile(t *testing.T) {
@@ -102,4 +107,32 @@ func TestMeNotifications(t *testing.T) {
 	}
 	rec = w.do("POST", "/api/v1/me/notifications/read", w.member, `{"ids":["not-uuid"]}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// Без TELEGRAM_BOT_TOKEN бот выключен: маршрута webhook нет, ответ 404 в формате §9.3.
+func TestTelegramWebhookDisabledWithoutToken(t *testing.T) {
+	w := newWorld(t)
+	rec := w.do("POST", "/api/v1/telegram/webhook", "", `{"update_id":1}`)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":"NOT_FOUND"`)
+}
+
+// С токеном и в режиме webhook маршрут есть и проверяет секрет; в long polling — нет.
+func TestTelegramWebhookMountedWithToken(t *testing.T) {
+	g := testutil.SharedDB(t)
+	addr := testutil.SharedRedisAddr(t)
+	rdb, jobs := queue.NewRedis(addr), queue.NewClient(addr)
+	t.Cleanup(func() { _ = rdb.Close(); _ = jobs.Close() })
+	cfg := &config.Config{Env: "test", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: time.Minute,
+		TelegramBotToken: "123:abc", TelegramWebhookSecret: "secret"}
+
+	call := func(cfg *config.Config) int {
+		rec := httptest.NewRecorder()
+		app.NewServer(cfg, g, rdb, jobs).Router().ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/telegram/webhook", strings.NewReader(`{"update_id":1}`)))
+		return rec.Code
+	}
+	require.Equal(t, http.StatusUnauthorized, call(cfg), "без секрета")
+	polling := *cfg
+	polling.TelegramPolling = true
+	require.Equal(t, http.StatusNotFound, call(&polling))
 }
