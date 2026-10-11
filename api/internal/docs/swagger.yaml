@@ -939,6 +939,94 @@ definitions:
       title:
         type: string
     type: object
+  task.TrashItem:
+    properties:
+      assignee_id:
+        type: string
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      deleted_by:
+        allOf:
+        - $ref: '#/definitions/task.UserRef'
+        x-nullable: true
+      description:
+        type: string
+      due_date:
+        example: "2026-10-31"
+        type: string
+      estimate_minutes:
+        type: integer
+      id:
+        type: string
+      key:
+        example: TM-42
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      number:
+        type: integer
+      position:
+        type: number
+      priority:
+        enum:
+        - low
+        - medium
+        - high
+        - critical
+        type: string
+      project_id:
+        type: string
+      reporter_id:
+        type: string
+      spent_minutes:
+        type: integer
+      sprint_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        enum:
+        - todo
+        - in_progress
+        - review
+        - done
+        - cancelled
+        type: string
+      title:
+        type: string
+      type:
+        enum:
+        - task
+        - bug
+        - feature
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
+    type: object
+  task.TrashPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/task.TrashItem'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  task.UserRef:
+    properties:
+      display_name:
+        type: string
+      id:
+        type: string
+    type: object
   task.WorklogView:
     properties:
       comment:
@@ -2346,6 +2434,55 @@ paths:
       security:
       - BearerAuth: []
       summary: Создать задачу
+      tags:
+      - tasks
+  /api/v1/projects/{key}/trash:
+    get:
+      description: Удалённые задачи проекта (§7.9) — только администратор системы
+        (§2), в том числе для удалённого проекта. Новые удаления первыми; deleted_by
+        — кто удалил (последнее удаление по истории задачи), null, если неизвестно.
+        limit до 200 (по умолчанию 50), следующая страница — cursor из next_cursor.
+        Восстановление — POST /tasks/{key}/restore.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: до 200, по умолчанию 50
+        in: query
+        name: limit
+        type: integer
+      - description: курсор следующей страницы
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.TrashPage'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: участник, но не администратор системы'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет проекта или пользователь в нём не участвует'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Корзина проекта
       tags:
       - tasks
   /api/v1/reports/time:

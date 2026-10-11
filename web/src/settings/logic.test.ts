@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { TaskListItem } from "../api/client";
 import {
   AUDIT_ACTIONS,
   auditActionLabel,
@@ -12,7 +11,7 @@ import {
   memberErrorText,
   normalizeTime,
   tabFromParam,
-  trashItems,
+  trashDeleter,
   visibleTabs,
 } from "./logic";
 
@@ -153,19 +152,9 @@ describe("журнал аудита §3.8", () => {
 });
 
 describe("корзина", () => {
-  const task = (id: string, key: string, deleted_at?: string): TaskListItem => ({ id, key, title: key, deleted_at });
-
-  it("только удалённые, новые сверху, кто удалил — из последней записи журнала", () => {
-    const items = trashItems(
-      [task("1", "TM-1", "2026-10-01T10:00:00Z"), task("2", "TM-2"), task("3", "TM-3", "2026-10-05T10:00:00Z")],
-      [
-        { action: "task.deleted", entity_id: "1", actor_id: "old", created_at: "2026-09-01T10:00:00Z" },
-        { action: "task.deleted", entity_id: "1", actor_id: "admin", created_at: "2026-10-01T10:00:00Z" },
-        { action: "task.restored", entity_id: "3", actor_id: "x", created_at: "2026-10-06T10:00:00Z" },
-      ],
-    );
-    expect(items.map((i) => i.key)).toEqual(["TM-3", "TM-1"]);
-    expect(items[1].deletedBy).toBe("admin");
-    expect(items[0].deletedBy).toBeUndefined();
+  it("кто удалил — имя из ответа сервера, неизвестен — прочерк", () => {
+    expect(trashDeleter({ deleted_by: { id: "u1", display_name: "Админ" } })).toBe("Админ");
+    expect(trashDeleter({ deleted_by: undefined })).toBe("—");
+    expect(trashDeleter({})).toBe("—");
   });
 });

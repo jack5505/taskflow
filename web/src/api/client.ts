@@ -527,6 +527,45 @@ export interface TaskTimerView {
   title?: string;
 }
 
+export interface TaskTrashItem {
+  assignee_id?: string;
+  completed_at?: string;
+  created_at?: string;
+  deleted_at?: string;
+  deleted_by?: TaskUserRef | null;
+  description?: string;
+  /** @example "2026-10-31" */
+  due_date?: string;
+  estimate_minutes?: number;
+  id?: string;
+  /** @example "TM-42" */
+  key?: string;
+  labels?: string[];
+  number?: number;
+  position?: number;
+  priority?: "low" | "medium" | "high" | "critical";
+  project_id?: string;
+  reporter_id?: string;
+  spent_minutes?: number;
+  sprint_id?: string;
+  started_at?: string;
+  status?: "todo" | "in_progress" | "review" | "done" | "cancelled";
+  title?: string;
+  type?: "task" | "bug" | "feature";
+  updated_at?: string;
+  version?: number;
+}
+
+export interface TaskTrashPage {
+  items?: TaskTrashItem[];
+  next_cursor?: string;
+}
+
+export interface TaskUserRef {
+  display_name?: string;
+  id?: string;
+}
+
 export interface TaskWorklogView {
   comment?: string;
   created_at?: string;
@@ -1624,6 +1663,34 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Удалённые задачи проекта (§7.9) — только администратор системы (§2), в том числе для удалённого проекта. Новые удаления первыми; deleted_by — кто удалил (последнее удаление по истории задачи), null, если неизвестно. limit до 200 (по умолчанию 50), следующая страница — cursor из next_cursor. Восстановление — POST /tasks/{key}/restore.
+     *
+     * @tags tasks
+     * @name V1ProjectsTrashList
+     * @summary Корзина проекта
+     * @request GET:/api/v1/projects/{key}/trash
+     * @secure
+     */
+    v1ProjectsTrashList: (
+      key: string,
+      query?: {
+        /** до 200, по умолчанию 50 */
+        limit?: number;
+        /** курсор следующей страницы */
+        cursor?: string;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskTrashPage, ApierrResponse>({
+        path: `/api/v1/projects/${key}/trash`,
+        method: "GET",
+        query: query,
+        secure: true,
         format: "json",
         ...params,
       }),

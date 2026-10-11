@@ -28,6 +28,7 @@ func NewHandlers(svc *Service, projects *project.Service, requireAuth gin.Handle
 func (h *Handlers) Register(api *gin.RouterGroup) {
 	api.POST("/projects/:key/tasks", h.requireAuth, h.create)
 	api.GET("/projects/:key/tasks", h.requireAuth, h.list)
+	api.GET("/projects/:key/trash", h.requireAuth, h.trash)
 	api.GET("/me/tasks", h.requireAuth, h.mine)
 	t := api.Group("/tasks", h.requireAuth)
 	t.GET("/:task_key", h.get)

@@ -1,6 +1,6 @@
 // Логика настроек проекта (ТЗ §7.9): какие вкладки видны, тексты ошибок, события §8.6, журнал §3.8.
 // Права из §2 здесь только скрывают вкладки и кнопки — проверяет сервер.
-import type { AuditEntry, TaskListItem } from "../api/client";
+import type { AuditEntry, TaskTrashItem } from "../api/client";
 import { errorText, parseApiError } from "../api/errors";
 
 export type SettingsTab = "general" | "members" | "telegram" | "notifications" | "audit" | "trash";
@@ -173,31 +173,7 @@ export function auditQuery(f: { from: string; to: string; userId: string; action
   return q;
 }
 
-export interface TrashItem {
-  key: string;
-  title: string;
-  deletedAt: string;
-  deletedBy?: string;
-}
-
-/**
- * Корзина: удалённые задачи из списка с include_deleted, кто удалил — из записей журнала
- * task.deleted (entity_id — id задачи; берём последнюю). Новые удаления сверху.
- */
-export function trashItems(tasks: TaskListItem[], deletions: AuditEntry[]): TrashItem[] {
-  const by = new Map<string, AuditEntry>();
-  for (const d of deletions) {
-    if (d.action !== "task.deleted" || !d.entity_id) continue;
-    const prev = by.get(d.entity_id);
-    if (!prev || (d.created_at ?? "") > (prev.created_at ?? "")) by.set(d.entity_id, d);
-  }
-  return tasks
-    .filter((t) => !!t.deleted_at)
-    .map((t) => ({
-      key: t.key ?? "",
-      title: t.title ?? "",
-      deletedAt: t.deleted_at ?? "",
-      deletedBy: by.get(t.id ?? "")?.actor_id,
-    }))
-    .sort((a, b) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt));
+/** Корзина: кто удалил — имя из ответа GET /projects/{key}/trash; неизвестен — прочерк. */
+export function trashDeleter(t: Pick<TaskTrashItem, "deleted_by">): string {
+  return t.deleted_by?.display_name || "—";
 }
