@@ -88,6 +88,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		rt := telegram.NewRouter(cfg.TelegramBotUsername)
 		telegram.RegisterAccount(rt, accounts, rdb)
 		telegram.RegisterPrivateCommands(rt, tasks)
+		telegram.RegisterGroupLists(rt, g, telegram.NewGroups(g, cfg.TelegramBotUsername))
 		telegram.RegisterGroups(rt, telegram.NewGroups(g, cfg.TelegramBotUsername), rdb)
 		telegram.RegisterCards(rt, d, telegram.NewCards(g, telegram.NewQueue(client), cfg.BaseURL))
 		telegram.RegisterGroupEvents(rt, d, telegram.NewGroupEvents(g, rdb, telegram.NewQueue(client)))

@@ -147,18 +147,33 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "p_task_not_found"}}Задача не найдена{{end}}
 {{define "p_archived"}}Проект {{.Key}} в архиве, изменения недоступны{{end}}
 
+{{- /* Сводки группы /tasks и /sprint, §8.5; блок спринта — общий с ежедневной сводкой */}}
+{{define "sprint_block"}}{{with .}}🏃 {{.Name}}{{if .Dates}}: {{.Dates}}{{end}}
+{{.Statuses}}
+Списано {{.Spent}} из {{.Estimate}}{{else}}Нет активного спринта{{end}}{{end}}
+{{define "cmd_sprint"}}{{range $i, $p := .}}{{if $i}}
+
+{{end}}📊 {{$p.Key}} «{{$p.Name}}»
+{{template "sprint_block" $p.Sprint}}{{end}}{{end}}
+{{define "cmd_tasks"}}{{range $i, $p := .Projects}}{{if $i}}
+
+{{end}}📋 Свободные задачи {{$p.Key}} «{{$p.Name}}»
+{{- if $p.Archived}}: проект в архиве
+{{- else if not $p.Sprint}}: нет активного спринта
+{{- else if not $p.Tasks}}: нет
+{{- else}}:{{range $p.Tasks}}
+{{.Key}} «{{.Title}}» · {{.Priority}}{{end}}{{end}}{{end}}
+{{- if .More}}
+
+…и ещё {{.More}}{{end}}{{end}}
+
 {{- /* По расписанию: напоминания о сроке (§8.7) и ежедневная сводка в группу (§8.6). */}}
 {{define "p_due_tomorrow"}}⏰ Срок {{.Key}} «{{.Title}}» завтра, {{.Date}}{{end}}
 {{define "p_overdue"}}⚠️ Срок {{.Key}} «{{.Title}}» просрочен: {{.Date}}{{end}}
 {{define "daily_summary"}}📊 Сводка {{.Key}} «{{.Name}}» на {{.Date}}
-{{with .Sprint}}
-🏃 {{.Name}}{{if .Dates}}: {{.Dates}}{{end}}
-{{.Statuses}}
-Списано {{.Spent}} из {{.Estimate}}
-{{else}}
-Нет активного спринта
-{{end}}
-{{- if .Overdue}}
+
+{{template "sprint_block" .Sprint}}
+{{if .Overdue}}
 ⚠️ Просрочено:
 {{- range .Overdue}}
 {{.Key}} «{{.Title}}» — {{.Assignee}}, срок {{.Due}}
