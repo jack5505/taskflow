@@ -61,6 +61,7 @@ type TransitionInput struct {
 type actor struct {
 	user    *user.User
 	member  bool // участник проекта (исполнителем может быть только участник)
+	admin   bool // администратор системы
 	manager bool // менеджер проекта или администратор системы (§2)
 	source  string
 }
@@ -122,6 +123,7 @@ var (
 // после проверки прав, чтобы ошибки шли в порядке 404 → 403 → 400.
 type preLock struct {
 	users, sprints []uuid.UUID
+	withDeleted    bool // разрешить удалённую задачу (восстановление)
 }
 
 // change — общая часть изменений задачи. Порядок блокировок тот же, что у деактивации и закрытия
@@ -153,7 +155,11 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
 			return err
 		}
-		res := tx.Raw(`SELECT * FROM tasks WHERE key = ? AND deleted_at IS NULL FOR UPDATE`, key).Scan(&t)
+		cond := " AND deleted_at IS NULL"
+		if pre.withDeleted {
+			cond = ""
+		}
+		res := tx.Raw(`SELECT * FROM tasks WHERE key = ?`+cond+` FOR UPDATE`, key).Scan(&t)
 		if res.Error != nil {
 			return fmt.Errorf("task: lock: %w", res.Error)
 		}
@@ -176,6 +182,9 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		if role == "" && !me[0].IsSystemAdmin {
 			return ErrNotFound
 		}
+		if t.DeletedAt != nil && !me[0].IsSystemAdmin {
+			return ErrNotFound // корзину видит только администратор (§2) — раньше любых других ответов
+		}
 		if err := project.EnsureWritable(&p); err != nil {
 			return err
 		}
@@ -185,7 +194,8 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 				With("current", t).With("expected_version", ifMatch)
 		}
 		_, source := audit.From(ctx)
-		a := actor{user: u, member: role != "", manager: me[0].IsSystemAdmin || role == project.RoleManager, source: source}
+		a := actor{user: u, member: role != "", admin: me[0].IsSystemAdmin,
+			manager: me[0].IsSystemAdmin || role == project.RoleManager, source: source}
 		before = t
 		if err := fn(tx, &t, a); err != nil {
 			return err

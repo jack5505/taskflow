@@ -1579,6 +1579,40 @@ paths:
       tags:
       - tasks
   /api/v1/tasks/{task_key}:
+    delete:
+      description: 'Мягкое удаление (§4): задача пропадает с доски, из бэклога, поиска
+        и бота; записи времени остаются в отчётах. Менеджер проекта или администратор.
+        Восстановление — POST /tasks/{key}/restore (администратор).'
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Удалить задачу
+      tags:
+      - tasks
     get:
       parameters:
       - description: ключ задачи, например TM-42
@@ -1697,6 +1731,44 @@ paths:
       security:
       - BearerAuth: []
       summary: История задачи
+      tags:
+      - tasks
+  /api/v1/tasks/{task_key}/restore:
+    post:
+      description: Только администратор системы (§2). Не удалённая задача возвращается
+        без изменений.
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.Task'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Восстановить задачу
       tags:
       - tasks
   /api/v1/tasks/{task_key}/take:
