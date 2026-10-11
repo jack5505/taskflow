@@ -65,6 +65,8 @@ type Message struct {
 	// Replaces — send вместо edit этого сообщения, который Telegram отклонил (старше 48 часов
 	// или удалено): новое публикуется, только если старое всё ещё текущее.
 	Replaces int `json:"replaces,omitempty"`
+	// Republish — опубликовать собираемое сообщение заново, даже если оно уже есть (/task).
+	Republish bool `json:"republish,omitempty"`
 }
 
 // KindHooks — сборка сообщения вида Kind при отправке и действие после неё.

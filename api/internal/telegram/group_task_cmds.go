@@ -3,7 +3,9 @@ package telegram
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/duration"
@@ -12,9 +14,8 @@ import (
 )
 
 // RegisterTaskCommands подключает команды по задачам §8.5: /drop, /review, /done, /log, /comment,
-// /task — в группе и личном чате. cards — карточка задачи для /task (§8.3).
-func RegisterTaskCommands(rt *Router, tc *TaskCommands, cards *Cards) {
-	tc.cards = cards
+// /task — в группе и личном чате.
+func RegisterTaskCommands(rt *Router, tc *TaskCommands) {
 	rt.Command("drop", tc.transitionCommand(transitionCmd{from: task.StatusInProgress, to: task.StatusTodo,
 		usage: "/drop TM-42", setting: project.NotifyTaskReturned, reply: "cmd_dropped"}))
 	rt.Command("review", tc.transitionCommand(transitionCmd{from: task.StatusInProgress, to: task.StatusReview,
@@ -47,7 +48,7 @@ func (tc *TaskCommands) transitionCommand(c transitionCmd) HandlerFunc {
 		}
 		t, err := tc.tasks.Transition(ctx, r.User, ref.Key, task.TransitionInput{From: c.from, To: c.to})
 		if err != nil {
-			return tc.refuse(ctx, r, ref, err)
+			return tc.refuse(ctx, r, ref, err, true)
 		}
 		text := Text(c.reply, map[string]any{"Key": t.Key, "Title": t.Title, "Spent": spentText(t.SpentMinutes, t.EstimateMinutes)})
 		if !ref.inGroup {
@@ -66,7 +67,7 @@ func (tc *TaskCommands) transitionCommand(c transitionCmd) HandlerFunc {
 // через 30 секунд.
 func (tc *TaskCommands) logCommand(ctx context.Context, r *Request) error {
 	const usage = "/log TM-42 1h 30m [комментарий]"
-	keyArg, rest, _ := strings.Cut(strings.TrimSpace(r.Args), " ")
+	keyArg, rest := cutWord(r.Args)
 	dur, comment, ok := splitDuration(rest)
 	if !ok {
 		return r.Answer(ctx, Text("cmd_usage", usage), true)
@@ -86,22 +87,40 @@ func (tc *TaskCommands) logCommand(ctx context.Context, r *Request) error {
 	if err != nil {
 		return tc.refuse(ctx, r, ref, err)
 	}
-	t, _, err := tc.tasks.Get(ctx, r.User, ref.Key)
-	if err != nil {
-		return err
+	data := map[string]any{"Key": ref.Key, "Logged": duration.Format(w.Minutes)}
+	// Время уже записано: если сумму прочитать не удалось, отвечаем без неё, а не ошибкой —
+	// иначе пользователь повторит /log и запишет время дважды.
+	if t, _, err := tc.tasks.Get(ctx, r.User, ref.Key); err == nil {
+		data["Total"] = spentText(t.SpentMinutes, t.EstimateMinutes)
 	}
-	return r.ReplyTemp(ctx, Text("cmd_logged", map[string]any{"Key": t.Key, "Logged": duration.Format(w.Minutes),
-		"Total": spentText(t.SpentMinutes, t.EstimateMinutes)}))
+	return r.ReplyTemp(ctx, Text("cmd_logged", data))
 }
 
+// cutWord — первое слово и остаток без пробелов по краям; разделитель — любой пробельный символ
+// (ключ задачи и текст могут быть на разных строках).
+func cutWord(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	i := strings.IndexFunc(s, unicode.IsSpace)
+	if i < 0 {
+		return s, ""
+	}
+	return s[:i], strings.TrimSpace(s[i:])
+}
+
+// maxDurationWords — длительность §6.1 — не больше трёх частей («1d 2h 30m»).
+const maxDurationWords = 3
+
+var wordRe = regexp.MustCompile(`\S+`)
+
 // splitDuration делит «1h 30m починил экспорт» на длительность и комментарий: длительность — самое
-// длинное начало из слов, которое разбирает парсер §6.1. ok=false — длительности нет.
+// длинное (до трёх слов) начало, которое разбирает парсер §6.1; комментарий — остаток текста как
+// есть, с переносами строк. ok=false — длительности нет.
 func splitDuration(s string) (dur, comment string, ok bool) {
-	words := strings.Fields(s)
+	words := wordRe.FindAllStringIndex(s, maxDurationWords)
 	for n := len(words); n > 0; n-- {
-		head := strings.Join(words[:n], " ")
-		if _, err := duration.Parse(head); err == nil {
-			return head, strings.Join(words[n:], " "), true
+		end := words[n-1][1]
+		if _, err := duration.Parse(s[:end]); err == nil {
+			return strings.TrimSpace(s[:end]), strings.TrimSpace(s[end:]), true
 		}
 	}
 	return "", "", false
@@ -110,8 +129,8 @@ func splitDuration(s string) (dur, comment string, ok bool) {
 // commentCommand — /comment <ключ> <текст>: комментарий с source = telegram (§8.5).
 func (tc *TaskCommands) commentCommand(ctx context.Context, r *Request) error {
 	const usage = "/comment TM-42 <текст>"
-	keyArg, body, _ := strings.Cut(strings.TrimSpace(r.Args), " ")
-	if strings.TrimSpace(body) == "" {
+	keyArg, body := cutWord(r.Args)
+	if body == "" {
 		return r.Answer(ctx, Text("cmd_usage", usage), true)
 	}
 	ref, err := tc.resolveKey(ctx, r, keyArg, usage)
@@ -121,10 +140,18 @@ func (tc *TaskCommands) commentCommand(ctx context.Context, r *Request) error {
 	if !ref.inChat() {
 		return tc.refuse(ctx, r, ref, nil)
 	}
-	if _, err := tc.tasks.AddComment(ctx, r.User, ref.Key, strings.TrimSpace(body)); err != nil {
+	if _, err := tc.tasks.AddComment(ctx, r.User, ref.Key, body); err != nil {
 		return tc.refuse(ctx, r, ref, err)
 	}
-	return r.Reply(ctx, Text("cmd_commented", ref))
+	if !ref.inGroup {
+		return r.Reply(ctx, Text("cmd_commented", ref))
+	}
+	// В группе подтверждение временное, а если комментарии публикуются (§8.6) — его не нужно.
+	announced, err := tc.announced(ctx, ref.ProjectKey, project.NotifyCommentCreated)
+	if err != nil || announced {
+		return err
+	}
+	return r.ReplyTemp(ctx, Text("cmd_commented", ref))
 }
 
 // taskCommand — /task <ключ>: карточка задачи в формате §8.3 с кнопками. В группе проекта это
@@ -146,16 +173,19 @@ func (tc *TaskCommands) taskCommand(ctx context.Context, r *Request) error {
 		return tc.refuse(ctx, r, ref, err)
 	}
 	if ref.inGroup {
-		return r.out.Send(ctx, Message{Op: OpSend, Kind: KindCard, Ref: t.ID.String(), Stamp: cardRepublish}, 0)
+		// Прежняя карточка заменяется: новая становится текущей, старая удаляется (Cards.sent).
+		m := Message{Op: OpSend, Kind: KindCard, Ref: t.ID.String(), Republish: true}
+		if t.TelegramMessageID != nil {
+			m.Replaces = int(*t.TelegramMessageID)
+		}
+		return r.out.Send(ctx, m, 0)
 	}
-	row, err := tc.cards.load(ctx, t.ID.String())
-	if err != nil || row == nil {
+	m, err := tc.cards.Show(ctx, t.ID.String())
+	if err != nil || m == nil {
 		return err
 	}
-	m := r.reply("")
-	m.Text, m.Keyboard = tc.cards.content(row)
-	m.HTML = true
-	return r.out.Send(ctx, m, 0)
+	m.ChatID = r.Chat.ID
+	return r.out.Send(ctx, *m, 0)
 }
 
 // commandErrorText — отказ сервиса на команду-переход: вместо «Переход done → todo не разрешён» —

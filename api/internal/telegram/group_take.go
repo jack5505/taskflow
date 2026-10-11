@@ -25,11 +25,11 @@ type TaskCommands struct {
 	tasks    *task.Service
 	projects *project.Service
 	groups   *Groups
-	cards    *Cards // карточка для /task (RegisterTaskCommands)
+	cards    *Cards // карточка задачи для /task (§8.3)
 }
 
-func NewTaskCommands(db *gorm.DB, tasks *task.Service, projects *project.Service, groups *Groups) *TaskCommands {
-	return &TaskCommands{db: db, tasks: tasks, projects: projects, groups: groups}
+func NewTaskCommands(db *gorm.DB, tasks *task.Service, projects *project.Service, groups *Groups, cards *Cards) *TaskCommands {
+	return &TaskCommands{db: db, tasks: tasks, projects: projects, groups: groups, cards: cards}
 }
 
 // RegisterTake подключает взятие задачи в работу (§8.4): кнопку take:<task_id> (карточка в группе,
@@ -114,7 +114,10 @@ func (ref *taskRef) inChat() bool {
 // который в группе удаляется через 30 секунд, у команды. В группе «не найдена» уточняется:
 // если пользователь не участник проекта — «Вы не участник проекта TM». Права проверяет сервис
 // под блокировкой; здесь — только выбор текста отказа.
-func (tc *TaskCommands) refuse(ctx context.Context, r *Request, ref *taskRef, err error) error {
+//
+// statusText — отказ перехода (409 INVALID_TRANSITION) показать статусом задачи («в статусе
+// Готово, команда недоступна»), а не текстом сервиса: для команд-переходов §8.5.
+func (tc *TaskCommands) refuse(ctx context.Context, r *Request, ref *taskRef, err error, statusText ...bool) error {
 	if ref.inGroup && (err == nil || errors.Is(err, task.ErrNotFound)) {
 		if _, aerr := tc.projects.Access(ctx, r.User, ref.ProjectKey); errors.Is(aerr, project.ErrNotFound) {
 			return r.Answer(ctx, Text("not_project_member", ref), true)
@@ -125,7 +128,7 @@ func (tc *TaskCommands) refuse(ctx context.Context, r *Request, ref *taskRef, er
 			return r.Answer(ctx, Text("not_project_member", ref), true)
 		}
 	}
-	if text, ok := commandErrorText(ref, err); ok && r.Command != "" && r.Command != "take" {
+	if text, ok := commandErrorText(ref, err); ok && len(statusText) > 0 && statusText[0] {
 		return r.Answer(ctx, text, true)
 	}
 	text, ferr := taskErrorText(ref, err)

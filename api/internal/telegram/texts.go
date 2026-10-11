@@ -45,6 +45,36 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "cmd_status_done"}}Готово{{end}}
 {{define "cmd_status_cancelled"}}Отменена{{end}}
 
+{{- /* /help, меню бота, неизвестные команды, архивный проект, §8.5 */}}
+{{define "cmd_help_private"}}Команды в личном чате:{{range .Commands}}
+/{{.Name}}{{if .Args}} {{.Args}}{{end}} — {{.Description}}{{end}}
+{{- if .Keyed}}
+Ключ задачи пишется вместе с ключом проекта: TM-42.{{end}}{{end}}
+{{define "cmd_help_group"}}Команды в группе:{{range .Commands}}
+/{{.Name}}{{if .Args}} {{.Args}}{{end}} — {{.Description}}{{end}}
+{{- if .Keyed}}
+Если к группе подключён один проект, ключ проекта можно не писать: TM-42 или 42.{{end}}{{end}}
+{{define "cmd_unknown"}}Неизвестная команда. /help{{end}}
+{{define "cmd_project_archived"}}Проект {{with .Project}}{{.}} {{end}}в архиве, изменения недоступны{{end}}
+{{define "cmd_menu_start"}}Привязать аккаунт по коду из профиля{{end}}
+{{define "cmd_menu_unlink"}}Отвязать аккаунт{{end}}
+{{define "cmd_menu_bind"}}Подключить группу к проекту{{end}}
+{{define "cmd_menu_unbind"}}Отключить группу от проекта{{end}}
+{{define "cmd_menu_take"}}Взять задачу в работу{{end}}
+{{define "cmd_menu_drop"}}Вернуть свою задачу в очередь{{end}}
+{{define "cmd_menu_review"}}Отправить свою задачу на проверку{{end}}
+{{define "cmd_menu_done"}}Принять задачу{{end}}
+{{define "cmd_menu_log"}}Списать время на сегодня{{end}}
+{{define "cmd_menu_timer"}}Запустить таймер{{end}}
+{{define "cmd_menu_stop"}}Остановить таймер{{end}}
+{{define "cmd_menu_my"}}Мои открытые задачи{{end}}
+{{define "cmd_menu_tasks"}}Свободные задачи активного спринта{{end}}
+{{define "cmd_menu_sprint"}}Сводка активного спринта{{end}}
+{{define "cmd_menu_task"}}Карточка задачи{{end}}
+{{define "cmd_menu_new"}}Создать задачу{{end}}
+{{define "cmd_menu_comment"}}Добавить комментарий к задаче{{end}}
+{{define "cmd_menu_help"}}Список команд{{end}}
+
 {{- /* Подключение группы к проекту, §8.2 */}}
 {{define "group_only"}}Эта команда работает в группе проекта{{end}}
 {{define "bind_usage"}}Формат: /bind <код>. Код выдаётся в настройках проекта → Telegram{{end}}
@@ -96,7 +126,7 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "cmd_dropped"}}↩️ {{.Key}} «{{.Title}}» возвращена в очередь{{end}}
 {{define "cmd_reviewed"}}🔍 {{.Key}} «{{.Title}}» отправлена на проверку{{end}}
 {{define "cmd_accepted"}}✅ {{.Key}} «{{.Title}}» принята. Списано {{.Spent}}{{end}}
-{{define "cmd_logged"}}Списано {{.Logged}} на {{.Key}}. Всего {{.Total}}{{end}}
+{{define "cmd_logged"}}Списано {{.Logged}} на {{.Key}}.{{with .Total}} Всего {{.}}{{end}}{{end}}
 {{define "cmd_commented"}}Комментарий добавлен к {{.Key}}{{end}}
 {{define "cmd_bad_status"}}Задача {{.Key}} в статусе {{.Status}}, команда недоступна{{end}}
 {{- /* Личные уведомления, §8.7. Обычный текст без разметки. */}}

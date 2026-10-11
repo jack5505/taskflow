@@ -29,9 +29,11 @@ func newTakeBot(t *testing.T) *takeBot {
 	b.chat = models.Chat{ID: b.chatID, Type: models.ChatTypeGroup, Title: "Команда"}
 	rt := telegram.NewRouter("TaskBot")
 	telegram.RegisterAccount(rt, telegram.NewAccounts(b.g, "TaskBot"), b.rdb)
-	tc := telegram.NewTaskCommands(b.g, b.tasks, project.NewService(b.g), b.groups)
+	tc := telegram.NewTaskCommands(b.g, b.tasks, project.NewService(b.g), b.groups,
+		telegram.NewCards(b.g, b.out, "https://tasks.example/"))
 	telegram.RegisterTake(rt, tc)
-	telegram.RegisterTaskCommands(rt, tc, telegram.NewCards(b.g, b.out, "https://tasks.example/"))
+	telegram.RegisterTaskCommands(rt, tc)
+	telegram.RegisterHelp(rt) // последним, как в воркере
 	b.bot = telegram.NewProcessor(b.api, rt, b.out)
 	return b
 }
@@ -235,4 +237,16 @@ func TestTakeReplyWhenNotAnnounced(t *testing.T) {
 	msgs = b.messages(t)
 	require.Len(t, msgs, 1)
 	require.Equal(t, "🛠 "+t2.Key+" «Тихо» взята в работу", msgs[0].Text)
+}
+
+// /take есть в /help и в группе, и в личном чате (меню собирается из зарегистрированных команд).
+func TestTakeInHelp(t *testing.T) {
+	b := newTakeBot(t)
+	memberTG := b.tgOf(t, b.member)
+	for _, chat := range []models.Chat{b.chat, {ID: memberTG, Type: models.ChatTypePrivate}} {
+		b.command(memberTG, chat, "/help")
+		msgs := b.messages(t)
+		require.Len(t, msgs, 1)
+		require.Contains(t, msgs[0].Text, "/take <ключ> — Взять задачу в работу", chat.Type)
+	}
 }

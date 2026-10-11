@@ -47,8 +47,14 @@ func TestLogCommand(t *testing.T) {
 	require.NoError(t, b.g.Raw(`SELECT source, COALESCE(comment, '') AS comment FROM worklogs WHERE task_id = ? ORDER BY minutes DESC`, tk.ID).Scan(&rows).Error)
 	require.Equal(t, []struct{ Source, Comment string }{{"telegram", "починил экспорт"}, {"manual", ""}}, rows)
 
+	// Ключ и время на разных строках, многострочный комментарий сохраняется как есть.
+	b.one(t, memberTG, b.chat, "/log "+tk.Key+"\n10m пункт 1\nпункт 2")
+	var c []string
+	require.NoError(t, b.g.Raw(`SELECT comment FROM worklogs WHERE task_id = ? AND minutes = 10`, tk.ID).Scan(&c).Error)
+	require.Equal(t, []string{"пункт 1\nпункт 2"}, c)
+
 	m = b.one(t, memberTG, b.private(memberTG), "/log "+tk.Key+" 15m")
-	require.Equal(t, "Списано 15m на "+tk.Key+". Всего 2h 30m из 3h", m.Text)
+	require.Equal(t, "Списано 15m на "+tk.Key+". Всего 2h 40m из 3h", m.Text)
 	require.Zero(t, m.DeleteAfter, "в личном чате ответ не удаляется")
 
 	for _, bad := range []string{"/log", "/log " + tk.Key, "/log " + tk.Key + " много"} {
@@ -101,10 +107,18 @@ func TestCommentCommand(t *testing.T) {
 	memberTG := b.tgOf(t, b.member)
 	tk := b.createdCard(t, task.CreateInput{Title: "Обсуждение"})
 	b.messages(t)
-	require.Equal(t, "Комментарий добавлен к "+tk.Key, b.one(t, memberTG, b.chat, "/comment "+tk.Key+" Готово, проверьте").Text)
+	m := b.one(t, memberTG, b.chat, "/comment "+tk.Key+"\nГотово,\nпроверьте")
+	require.Equal(t, "Комментарий добавлен к "+tk.Key, m.Text)
+	require.Equal(t, 30, m.DeleteAfter, "в группе подтверждение временное")
 	var rows []struct{ Body, Source string }
 	require.NoError(t, b.g.Raw(`SELECT body, source FROM comments WHERE task_id = ?`, tk.ID).Scan(&rows).Error)
-	require.Equal(t, []struct{ Body, Source string }{{"Готово, проверьте", "telegram"}}, rows)
+	require.Equal(t, []struct{ Body, Source string }{{"Готово,\nпроверьте", "telegram"}}, rows)
+
+	// Комментарии публикуются в группу (§8.6) — подтверждение не нужно.
+	require.NoError(t, b.g.Model(b.p).Update("notification_settings", `{"comment_created":true}`).Error)
+	b.command(memberTG, b.chat, "/comment "+tk.Key+" ещё")
+	require.Empty(t, b.messages(t))
+	require.Equal(t, "Комментарий добавлен к "+tk.Key, b.one(t, memberTG, b.private(memberTG), "/comment "+tk.Key+" из лички").Text)
 	require.Equal(t, "Формат: /comment TM-42 <текст>", b.one(t, memberTG, b.chat, "/comment "+tk.Key).Text)
 }
 
@@ -117,7 +131,10 @@ func TestTaskCommand(t *testing.T) {
 	b.messages(t)
 
 	b.command(memberTG, b.chat, "/task "+tk.Key)
-	require.Equal(t, 1, b.flush(t))
+	require.Equal(t, 2, b.flush(t), "новая карточка и удаление прежней")
+	dels := b.tg.Calls("deleteMessage")
+	require.Len(t, dels, 1)
+	require.Equal(t, itoa64(old), dels[0].Params["message_id"])
 	sends := b.tg.Calls("sendMessage")
 	last := sends[len(sends)-1].Params
 	require.Equal(t, "HTML", last["parse_mode"])
@@ -132,4 +149,16 @@ func TestTaskCommand(t *testing.T) {
 
 	require.NoError(t, b.tasks.Delete(context.Background(), b.manager, tk.Key))
 	require.Equal(t, "Задача "+tk.Key+" не найдена", b.one(t, memberTG, b.chat, "/task "+tk.Key).Text)
+}
+
+// Команды §8.5 по задачам — в /help и в группе, и в личном чате (меню — из зарегистрированных).
+func TestTaskCommandsInHelp(t *testing.T) {
+	b := newTakeBot(t)
+	memberTG := b.tgOf(t, b.member)
+	for _, chat := range []models.Chat{b.chat, b.private(memberTG)} {
+		help := b.one(t, memberTG, chat, "/help").Text
+		for _, cmd := range []string{"/drop <ключ>", "/review <ключ>", "/done <ключ>", "/log <ключ> <время> [комментарий]", "/task <ключ>", "/comment <ключ> <текст>"} {
+			require.Contains(t, help, cmd, chat.Type)
+		}
+	}
 }
