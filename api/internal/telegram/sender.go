@@ -32,6 +32,9 @@ const (
 	sendTimeout = 30 * time.Second // предел одного вызова Bot API
 )
 
+// infraRetries — повторы asynq при сбое воркера (не Telegram).
+const infraRetries = 3
+
 // TempReplyTTL — через сколько бот удаляет свой временный ответ в группе (§8.1, §8.4, §8.5).
 const TempReplyTTL = 30 * time.Second
 
@@ -64,7 +67,9 @@ func (q *Queue) Send(ctx context.Context, m Message, delay time.Duration) error 
 	if err != nil {
 		return fmt.Errorf("telegram: message payload: %w", err)
 	}
-	opts := []asynq.Option{asynq.Queue(queue.QueueDefault), asynq.MaxRetry(0), asynq.Timeout(sendTimeout + 5*time.Second)}
+	// Повторы после ответа Telegram ведёт Deliverer (счётчик Attempt). Повторы asynq — только
+	// на случай сбоя самого воркера: Redis лимитера недоступен, повтор не поставился.
+	opts := []asynq.Option{asynq.Queue(queue.QueueDefault), asynq.MaxRetry(infraRetries), asynq.Timeout(sendTimeout + 5*time.Second)}
 	if delay > 0 {
 		opts = append(opts, asynq.ProcessIn(delay))
 	}
@@ -96,7 +101,7 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		// Группа: не больше GroupLimit сообщений в минуту. Удаление сообщением не считается.
 		wait, err := d.limit.Reserve(ctx, m.ChatID)
 		if err != nil {
-			return err // Redis недоступен — пусть asynq сообщит об ошибке; сообщение не потеряно
+			return err // Redis недоступен — asynq повторит задание (infraRetries)
 		}
 		if wait > 0 {
 			return d.out.Send(ctx, m, wait)

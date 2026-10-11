@@ -89,6 +89,9 @@ func Load() (*Config, error) {
 // TelegramEnabled — бот включён: задан токен.
 func (c *Config) TelegramEnabled() bool { return c.TelegramBotToken != "" }
 
+// TelegramWebhook — бот получает обновления через webhook (включён и не в long polling).
+func (c *Config) TelegramWebhook() bool { return c.TelegramEnabled() && !c.TelegramPolling }
+
 // webhookSecret — допустимый secret_token Telegram: 1–256 символов A-Z a-z 0-9 _ -.
 var webhookSecret = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 
@@ -98,6 +101,10 @@ var webhookSecret = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 func (c *Config) checkTelegram() error {
 	if !c.TelegramEnabled() {
 		return nil
+	}
+	// Без имени бота не разобрать команды вида /take@бот в группе и не собрать ссылку t.me (§8.1).
+	if c.TelegramBotUsername == "" {
+		return errors.New("TELEGRAM_BOT_USERNAME: при заданном TELEGRAM_BOT_TOKEN нужно имя бота")
 	}
 	if c.TelegramPolling {
 		if c.Env == "production" {

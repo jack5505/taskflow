@@ -10,6 +10,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jack5505/taskflow/api/internal/queue"
 	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/testutil"
 )
@@ -19,6 +20,7 @@ func (e *env) pendingMessage(t *testing.T) (telegram.Message, time.Duration) {
 	t.Helper()
 	tasks := e.take(t, telegram.TaskSend)
 	require.Len(t, tasks, 1)
+	require.Equal(t, 3, tasks[0].MaxRetry, "повторы asynq — только на сбой воркера, не Telegram")
 	var m telegram.Message
 	require.NoError(t, json.Unmarshal(tasks[0].Payload, &m))
 	return m, time.Until(tasks[0].NextProcessAt)
@@ -191,4 +193,14 @@ func TestLimiterIsAtomic(t *testing.T) {
 		}
 	}
 	require.Equal(t, telegram.GroupLimit, allowed)
+}
+
+// Redis лимитера недоступен — ошибка задания: asynq повторит его, сообщение не потеряно.
+func TestDeliverFailsTaskWhenLimiterIsDown(t *testing.T) {
+	e := newEnv(t)
+	broken := queue.NewRedis("127.0.0.1:1")
+	t.Cleanup(func() { _ = broken.Close() })
+	d := telegram.NewDeliverer(e.api, broken, e.out)
+	require.Error(t, e.deliver(t, d, telegram.Message{Op: telegram.OpSend, ChatID: -1, Text: "x"}))
+	require.Empty(t, e.tg.Calls("sendMessage"))
 }

@@ -14,7 +14,9 @@ import (
 
 // RunPolling — long polling для локальной разработки (§8.8: в production только webhook).
 // Снимает webhook (иначе getUpdates отвечает 409) и принимает обновления тем же Intake, что и
-// webhook: идемпотентность и очередь одинаковые. Возвращается по отмене ctx.
+// webhook: идемпотентность и очередь одинаковые. Отличие: обновление, которое не удалось
+// принять (Redis недоступен), только пишется в лог — getUpdates уже сдвинул offset, повторной
+// доставки не будет. Для локальной разработки это приемлемо. Возвращается по отмене ctx.
 func RunPolling(ctx context.Context, cfg *config.Config, in *Intake) error {
 	b, err := NewBot(cfg, bot.WithAllowedUpdates(allowedUpdates), bot.WithDefaultHandler(func(ctx context.Context, _ *bot.Bot, upd *models.Update) {
 		raw, err := json.Marshal(upd)

@@ -218,3 +218,19 @@ func TestProcessTaskPayload(t *testing.T) {
 		require.ErrorIs(t, p.ProcessTask(context.Background(), asynq.NewTask(telegram.TaskUpdate, []byte(bad))), asynq.SkipRetry, bad)
 	}
 }
+
+// answerCallbackQuery не прошёл (запрос устарел) — ответ обработчика не теряется, а приходит
+// временным сообщением.
+func TestProcessorFallsBackWhenAckFails(t *testing.T) {
+	e := newEnv(t)
+	rt := telegram.NewRouter("TaskBot")
+	rt.Callback("done", func(ctx context.Context, r *telegram.Request) error {
+		return r.Answer(ctx, "TM-42 принята", true)
+	})
+	p := telegram.NewProcessor(e.api, rt, e.out)
+	e.tg.Respond("answerCallbackQuery", `{"ok":false,"error_code":400,"description":"Bad Request: query is too old"}`)
+
+	p.Handle(context.Background(), callbackUpdate(-100, "done:1"), time.Now())
+	require.Len(t, e.tg.Calls("answerCallbackQuery"), 1)
+	require.Equal(t, []telegram.Message{{Op: telegram.OpSend, ChatID: -100, ReplyTo: 9, Text: "TM-42 принята", DeleteAfter: 30}}, e.messages(t))
+}

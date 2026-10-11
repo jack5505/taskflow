@@ -121,17 +121,30 @@ func startBot(ctx context.Context, cfg *config.Config, in *telegram.Intake) {
 		slog.Info("telegram: bot disabled, TELEGRAM_BOT_TOKEN is empty")
 		return
 	}
+	if cfg.TelegramPolling {
+		go func() {
+			if err := telegram.RunPolling(ctx, cfg, in); err != nil && ctx.Err() == nil {
+				slog.Error("telegram: polling", "err", err)
+			}
+		}()
+		return
+	}
+	// setWebhook повторяется, пока не пройдёт: при первой выкладке HTTPS или Telegram могут быть
+	// ещё недоступны, а без webhook бот молчит до перезапуска.
 	go func() {
-		var err error
-		if cfg.TelegramPolling {
-			err = telegram.RunPolling(ctx, cfg, in)
-		} else {
+		for pause := 5 * time.Second; ; pause = min(2*pause, 10*time.Minute) {
 			setCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			err = telegram.SetWebhook(setCtx, cfg)
-		}
-		if err != nil && ctx.Err() == nil {
-			slog.Error("telegram: bot start", "err", err)
+			err := telegram.SetWebhook(setCtx, cfg)
+			cancel()
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+			slog.Error("telegram: setWebhook, retrying", "in", pause, "err", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(pause):
+			}
 		}
 	}()
 }

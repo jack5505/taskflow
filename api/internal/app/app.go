@@ -28,7 +28,7 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects).WithAttachments(cfg.AttachmentsDir, cfg.AttachmentMaxBytes, cfg.JWTSecret)
 	srv := httpserver.New(cfg, g, rdb)
-	if cfg.TelegramEnabled() && !cfg.TelegramPolling {
+	if cfg.TelegramWebhook() {
 		srv.Mount(telegram.NewWebhook(cfg.TelegramWebhookSecret, telegram.NewIntake(rdb, jobs)).Register)
 	}
 	return srv.

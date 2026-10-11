@@ -79,7 +79,7 @@ func (p *Processor) Handle(ctx context.Context, upd *models.Update, receivedAt t
 		text, alert = Text("internal_error", nil), true
 	}
 	if !ack.send(ctx, text, alert) && text != "" {
-		// Подтверждение уже ушло пустым — ответ показываем временным сообщением в чате.
+		// Подтверждение уже ушло пустым или не прошло — ответ показываем временным сообщением в чате.
 		m := r.reply(text)
 		if !r.Private() {
 			m.DeleteAfter = int(TempReplyTTL.Seconds())
@@ -105,7 +105,8 @@ type acker struct {
 	done bool
 }
 
-// send вызывает answerCallbackQuery; false — подтверждение уже было.
+// send вызывает answerCallbackQuery. true — этот вызов показал ответ; false — подтверждение уже
+// было или Telegram его не принял (текст тогда нужно показать сообщением).
 func (a *acker) send(ctx context.Context, text string, alert bool) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -120,6 +121,7 @@ func (a *acker) send(ctx context.Context, text string, alert bool) bool {
 	}); err != nil {
 		// Подтверждение не повторяем: через 3 секунды Telegram его уже не примет.
 		slog.Warn("telegram: answerCallbackQuery", "err", err)
+		return false
 	}
 	return true
 }
