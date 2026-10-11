@@ -5,6 +5,9 @@ import type { MeProfile } from "../api/client";
 export const projectsQueryKey = ["projects"] as const;
 export const myTasksQueryKey = ["my-tasks"] as const;
 
+/** Часовой пояс проекта по умолчанию (§3.2). */
+export const DEFAULT_TIMEZONE = "Europe/Moscow";
+
 /** Какие проекты показывать: обычные, «Архив» или «Удалённые» (только администратор). */
 export type ProjectsFilter = "active" | "archived" | "deleted";
 
@@ -64,6 +67,6 @@ export function timeZones(): string[] {
   try {
     return Intl.supportedValuesOf("timeZone");
   } catch {
-    return ["Europe/Moscow"];
+    return [DEFAULT_TIMEZONE];
   }
 }

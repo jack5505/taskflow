@@ -10,6 +10,7 @@ import {
   filterFromParams,
   isSystemAdmin,
   listQuery,
+  myTasksQueryKey,
   paramsForFilter,
   projectsQueryKey,
   visibleFilters,
@@ -43,7 +44,12 @@ export function HomePage() {
 
   const restore = useMutation({
     mutationFn: (key: string) => api.api.v1ProjectsRestoreCreate(key),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
+    // Задачи удалённого проекта в «Мои задачи» не попадали — после восстановления обновляем и их.
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
+        queryClient.invalidateQueries({ queryKey: myTasksQueryKey }),
+      ]),
   });
 
   return (
@@ -59,7 +65,10 @@ export function HomePage() {
                 type="button"
                 className={f.value === filter ? "tab active" : "tab"}
                 aria-pressed={f.value === filter}
-                onClick={() => setParams(paramsForFilter(f.value))}
+                onClick={() => {
+                  restore.reset();
+                  setParams(paramsForFilter(f.value));
+                }}
               >
                 {f.label}
               </button>

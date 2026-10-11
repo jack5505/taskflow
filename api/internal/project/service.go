@@ -134,7 +134,7 @@ type ActiveSprint struct {
 }
 
 // ListItem — карточка проекта в списке (§7.2): проект, активный спринт (null — нет),
-// открытые задачи (todo, in_progress, review) и открытые задачи текущего пользователя.
+// открытые задачи (не done и не cancelled) и открытые задачи текущего пользователя.
 type ListItem struct {
 	View
 	ActiveSprint *ActiveSprint `json:"active_sprint"`
@@ -143,7 +143,9 @@ type ListItem struct {
 }
 
 // listSQL — проекты со спринтом и счётчиками одним запросом: LATERAL на проект вместо N+1.
-// Активный спринт в проекте один (§5), LIMIT 1 — страховка от дубля.
+// Активный спринт в проекте один (§5), LIMIT 1 — страховка от дубля, id — для устойчивого выбора.
+// Открытые — как в «Моих задачах» (task.Mine): не done и не cancelled; «на мне» — только пока
+// пользователь участник, иначе счётчик разошёлся бы с блоком «Мои задачи».
 const listSQL = `SELECT p.*, m.role AS my_role,
 		s.id AS sprint_id, s.name AS sprint_name,
 		to_char(s.start_date, 'YYYY-MM-DD') AS sprint_start, to_char(s.end_date, 'YYYY-MM-DD') AS sprint_end,
@@ -152,12 +154,12 @@ const listSQL = `SELECT p.*, m.role AS my_role,
 	LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = @user
 	LEFT JOIN LATERAL (
 		SELECT id, name, start_date, end_date FROM sprints
-		WHERE project_id = p.id AND state = 'active' ORDER BY start_date LIMIT 1
+		WHERE project_id = p.id AND state = 'active' ORDER BY start_date, id LIMIT 1
 	) s ON true
 	LEFT JOIN LATERAL (
-		SELECT count(*) AS open_tasks, count(*) FILTER (WHERE assignee_id = @user) AS my_open_tasks
+		SELECT count(*) AS open_tasks, count(*) FILTER (WHERE assignee_id = @user AND m.user_id IS NOT NULL) AS my_open_tasks
 		FROM tasks
-		WHERE project_id = p.id AND deleted_at IS NULL AND status IN ('todo', 'in_progress', 'review')
+		WHERE project_id = p.id AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')
 	) c ON true
 	WHERE `
 

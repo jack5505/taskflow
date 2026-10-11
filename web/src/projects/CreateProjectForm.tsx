@@ -3,9 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "../api";
 import type { ProjectView } from "../api/client";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
-import { normalizeKeyInput, projectKeyError, timeZones } from "./logic";
-
-const DEFAULT_TZ = "Europe/Moscow"; // ТЗ §3.2
+import { DEFAULT_TIMEZONE, normalizeKeyInput, projectKeyError, timeZones } from "./logic";
 
 interface Props {
   onCreated: (p: ProjectView) => void;
@@ -17,7 +15,7 @@ export function CreateProjectForm({ onCreated, onCancel }: Props) {
   const [key, setKey] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [timezone, setTimezone] = useState(DEFAULT_TZ);
+  const [timezone, setTimezone] = useState(DEFAULT_TIMEZONE);
   const [keyLocalError, setKeyLocalError] = useState("");
   const zones = useMemo(() => timeZones(), []);
 
@@ -39,6 +37,12 @@ export function CreateProjectForm({ onCreated, onCancel }: Props) {
   const keyError = keyLocalError || reason("key");
   const generalError = create.isError && fields.length === 0 ? errorText(create.error) : "";
 
+  // Ошибки сервера относятся к отправленным значениям: при правке формы их убираем.
+  const edit = (set: (v: string) => void, value: string) => {
+    set(value);
+    if (create.isError) create.reset();
+  };
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const err = projectKeyError(key);
@@ -58,7 +62,7 @@ export function CreateProjectForm({ onCreated, onCancel }: Props) {
           placeholder="TM"
           value={key}
           onChange={(e) => {
-            setKey(normalizeKeyInput(e.target.value));
+            edit(setKey, normalizeKeyInput(e.target.value));
             setKeyLocalError("");
           }}
           aria-invalid={keyError ? true : undefined}
@@ -68,17 +72,17 @@ export function CreateProjectForm({ onCreated, onCancel }: Props) {
       </label>
       <label>
         Название
-        <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+        <input required maxLength={100} value={name} onChange={(e) => edit(setName, e.target.value)} />
         {reason("name") && <span role="alert">{reason("name")}</span>}
       </label>
       <label>
         Описание
-        <textarea rows={3} maxLength={2000} value={description} onChange={(e) => setDescription(e.target.value)} />
+        <textarea rows={3} maxLength={2000} value={description} onChange={(e) => edit(setDescription, e.target.value)} />
         {reason("description") && <span role="alert">{reason("description")}</span>}
       </label>
       <label>
         Часовой пояс
-        <input list="tz-list" maxLength={64} value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+        <input list="tz-list" maxLength={64} value={timezone} onChange={(e) => edit(setTimezone, e.target.value)} />
         <datalist id="tz-list">
           {zones.map((z) => (
             <option key={z} value={z} />

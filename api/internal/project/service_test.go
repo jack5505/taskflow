@@ -431,7 +431,7 @@ func TestListCardCounters(t *testing.T) {
 	f := newFixture(t)
 	me, token := f.user(t, false)
 	other, _ := f.user(t, false)
-	_, admin := f.user(t, true)
+	adminUser, admin := f.user(t, true)
 	withSprint := f.project(t, map[*user.User]string{me: project.RoleMember, other: project.RoleMember})
 	empty := f.project(t, map[*user.User]string{me: project.RoleManager})
 
@@ -463,6 +463,7 @@ func TestListCardCounters(t *testing.T) {
 	task(withSprint, "done", me, false)
 	task(withSprint, "cancelled", me, false)
 	task(withSprint, "todo", me, true)
+	task(withSprint, "todo", adminUser, false) // администратор — исполнитель, но не участник
 
 	type card struct {
 		Key          string
@@ -491,7 +492,7 @@ func TestListCardCounters(t *testing.T) {
 	cards := list(token)
 	require.Len(t, cards, 2)
 	c := cards[withSprint.Key]
-	require.Equal(t, 4, c.OpenTasks, "todo, in_progress, review; без done, cancelled и удалённых")
+	require.Equal(t, 5, c.OpenTasks, "todo, in_progress, review; без done, cancelled и удалённых")
 	require.Equal(t, 2, c.MyOpenTasks)
 	require.NotNil(t, c.ActiveSprint)
 	require.Equal(t, "Спринт 2", c.ActiveSprint.Name)
@@ -505,9 +506,9 @@ func TestListCardCounters(t *testing.T) {
 	require.Zero(t, e.MyOpenTasks)
 	require.Equal(t, project.RoleManager, *e.MyRole)
 
-	// Администратор не участник: счётчик «на мне» — по нему самому, роли нет.
+	// Администратор не участник: роли нет, задача на нём в «на мне» не считается — как в «Моих задачах».
 	a := list(admin)[withSprint.Key]
-	require.Equal(t, 4, a.OpenTasks)
+	require.Equal(t, 5, a.OpenTasks)
 	require.Zero(t, a.MyOpenTasks)
 	require.Nil(t, a.MyRole)
 }
