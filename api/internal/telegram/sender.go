@@ -130,10 +130,17 @@ type Deliverer struct {
 	limit *Limiter
 	out   *Queue
 	kinds map[string]KindHooks
+	alert *Alerter // оповещение администраторам об отброшенном после повторов сообщении (§10.3)
 }
 
 func NewDeliverer(api API, rdb *redis.Client, out *Queue) *Deliverer {
 	return &Deliverer{api: api, limit: NewLimiter(rdb), out: out}
+}
+
+// WithAlerts — оповещать администраторов, когда сообщение отброшено после MaxAttempts попыток.
+func (d *Deliverer) WithAlerts(a *Alerter) *Deliverer {
+	d.alert = a
+	return d
 }
 
 // WithRouter — сборка сообщений по видам, зарегистрированным в роутере (Router.Kind).
@@ -215,6 +222,9 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	}
 	if m.Attempt >= MaxAttempts {
 		log.Error("telegram: message dropped after retries")
+		if d.alert != nil {
+			d.alert.Notify(ctx, AlertSend, Text("alert_send", map[string]any{"ChatID": m.ChatID, "Attempts": m.Attempt, "Err": err.Error()}))
+		}
 		return nil
 	}
 	delay := backoff(m.Attempt)

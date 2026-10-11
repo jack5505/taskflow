@@ -97,7 +97,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		telegram.RegisterPersonal(rt, d, g, tasks, rdb, client, cfg.BaseURL)
 		telegram.RegisterTake(rt, telegram.NewTaskCommands(g, tasks, projects, groups))
 		telegram.RegisterHelp(rt)
-		telegram.Mount(mux, b, rt, rdb, client)
+		telegram.Mount(mux, b, rt, rdb, client, telegram.NewAlerter(g, b))
 		digest = telegram.NewDigest(g, client, cfg.BaseURL)
 		go func() { // меню отдельно для личных чатов и групп (§8.5); недоступный Telegram не держит старт
 			if err := telegram.SetMyCommands(ctx, b, rt); err != nil && ctx.Err() == nil {
@@ -152,6 +152,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	wg.Go(func() {
 		runDaily(ctx, "due reminders cleanup", func(ctx context.Context) (int64, error) { return notification.CleanupDue(ctx, g, time.Now()) })
 	})
+	wg.Go(func() { telegram.Heartbeat(ctx, rdb) }) // сигнал «воркер жив» для оповещений §10.3
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 
 	<-ctx.Done()

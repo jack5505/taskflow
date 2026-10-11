@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/app"
@@ -111,6 +112,7 @@ func runAPI(ctx context.Context, cfg *config.Config) error {
 	defer func() { _ = mq.Close() }()
 
 	startBot(ctx, cfg, telegram.NewIntake(rdb, mq))
+	startMonitor(ctx, cfg, g, rdb)
 	return app.NewServer(cfg, g, rdb, mq).Run(ctx)
 }
 
@@ -163,4 +165,18 @@ func runWorker(ctx context.Context, cfg *config.Config) error {
 	}
 	defer func() { _ = db.Close(g) }()
 	return worker.Run(ctx, cfg, g)
+}
+
+// startMonitor — оповещения администраторам §10.3 (база, Redis, воркер, диск) в личный чат бота;
+// без бота оповещать некуда — только логи.
+func startMonitor(ctx context.Context, cfg *config.Config, g *gorm.DB, rdb *redis.Client) {
+	if !cfg.TelegramEnabled() {
+		return
+	}
+	b, err := telegram.NewBot(cfg)
+	if err != nil {
+		slog.Error("alert: bot", "err", err)
+		return
+	}
+	go telegram.NewMonitor(telegram.NewAlerter(g, b), g, rdb, cfg.AttachmentsDir).Run(ctx)
 }

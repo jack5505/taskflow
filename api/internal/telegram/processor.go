@@ -129,8 +129,8 @@ func (a *acker) send(ctx context.Context, text string, alert bool) bool {
 }
 
 // Mount подключает обработчики заданий бота к серверу asynq воркера.
-func Mount(mux *asynq.ServeMux, api API, router *Router, rdb *redis.Client, jobs *asynq.Client) {
+func Mount(mux *asynq.ServeMux, api API, router *Router, rdb *redis.Client, jobs *asynq.Client, alerts *Alerter) {
 	out := NewQueue(jobs)
 	mux.Handle(TaskUpdate, NewProcessor(api, router, out))
-	mux.Handle(TaskSend, NewDeliverer(api, rdb, out).WithRouter(router))
+	mux.Handle(TaskSend, NewDeliverer(api, rdb, out).WithRouter(router).WithAlerts(alerts))
 }
