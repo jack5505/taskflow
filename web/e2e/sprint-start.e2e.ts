@@ -37,7 +37,7 @@ test("создание и запуск спринта", async ({ page, api }) =>
   await expect(sprint.getByText("Активный")).toBeVisible();
 
   // Перетаскивание сохранилось на сервере.
-  expect((await api.getTask(first.key)).sprint_id).toBeTruthy();
+  for (const t of [first, second]) await expect.poll(async () => (await api.getTask(t.key)).sprint_id).toBeTruthy();
 
   // Второй спринт: кнопки «Запустить» нет, а сервер отказывает с 409.
   const next = await api.sprint(key, "Спринт 2");

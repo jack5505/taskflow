@@ -36,6 +36,8 @@ test("завершение спринта с переносом задач", asy
   await expect(page.getByText(done.key)).toHaveCount(0);
   await expect(second.getByText("Задач: 3, оценка 1h 30m")).toBeVisible();
 
+  // Готовая задача осталась в закрытом спринте — видна в его карточке в архиве.
   await page.getByRole("link", { name: "Архив спринтов" }).click();
-  await expect(page.getByText("Спринт 1")).toBeVisible();
+  await page.getByRole("button", { name: "Спринт 1", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Спринт Спринт 1" }).getByText(done.key)).toBeVisible();
 });

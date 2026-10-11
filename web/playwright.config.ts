@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { BASE_URL } from "./e2e/env.ts";
 
 // E2E-сценарии приёмки ТЗ §10.4 (issue #46). Стенд поднимает e2e/stack.sh, адрес и ссылки
 // установки пароля приходят в переменных E2E_* (см. e2e/env.ts).
@@ -15,11 +16,10 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:8199",
+    baseURL: BASE_URL,
     locale: "ru-RU",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    viewport: { width: 1280, height: 900 },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 900 } } }],
 });

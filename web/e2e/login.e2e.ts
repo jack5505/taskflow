@@ -2,6 +2,10 @@ import { expect, login, test } from "./fixtures.ts";
 import { LOGIN_EMAIL, LOGIN_LINK } from "./env.ts";
 
 // ТЗ §7.1, §10.4: первый администратор создаётся CLI-командой (e2e/stack.sh) и входит по ссылке.
+// Ссылка одноразовая: повтор после её использования упал бы на погашенной ссылке и скрыл
+// настоящую причину — без повторов.
+test.describe.configure({ retries: 0 });
+
 test("вход по ссылке установки пароля", async ({ page }) => {
   expect(LOGIN_LINK, "E2E_LOGIN_LINK: ссылку печатает e2e/stack.sh up").not.toBe("");
   await page.goto(new URL(LOGIN_LINK).pathname + new URL(LOGIN_LINK).search);
