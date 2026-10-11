@@ -324,6 +324,111 @@ definitions:
       user_id:
         type: string
     type: object
+  task.ListItem:
+    properties:
+      assignee_id:
+        type: string
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      description:
+        type: string
+      due_date:
+        example: "2026-10-31"
+        type: string
+      estimate_minutes:
+        type: integer
+      id:
+        type: string
+      key:
+        example: TM-42
+        type: string
+      labels:
+        items:
+          type: string
+        type: array
+      number:
+        type: integer
+      overdue:
+        type: boolean
+      position:
+        type: number
+      priority:
+        enum:
+        - low
+        - medium
+        - high
+        - critical
+        type: string
+      project_id:
+        type: string
+      reporter_id:
+        type: string
+      spent_minutes:
+        type: integer
+      sprint_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        enum:
+        - todo
+        - in_progress
+        - review
+        - done
+        - cancelled
+        type: string
+      title:
+        type: string
+      type:
+        enum:
+        - task
+        - bug
+        - feature
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
+    type: object
+  task.MyTask:
+    properties:
+      due_date:
+        example: "2026-10-31"
+        type: string
+      estimate_minutes:
+        type: integer
+      key:
+        type: string
+      overdue:
+        type: boolean
+      project_key:
+        type: string
+      project_name:
+        type: string
+      spent_minutes:
+        type: integer
+      sprint_id:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  task.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/task.ListItem'
+        type: array
+      next_cursor:
+        type: string
+    type: object
   task.Task:
     properties:
       assignee_id:
@@ -824,6 +929,29 @@ paths:
       summary: Отметить уведомления прочитанными
       tags:
       - me
+  /api/v1/me/tasks:
+    get:
+      description: 'Открытые задачи текущего пользователя по всем его проектам, кроме
+        архивных (§7.2), по сроку: без срока — в конце, просроченные — сверху. Не
+        больше 200 самых срочных.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/task.MyTask'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Мои задачи
+      tags:
+      - tasks
   /api/v1/ping:
     get:
       produces:
@@ -1250,6 +1378,102 @@ paths:
       tags:
       - projects
   /api/v1/projects/{key}/tasks:
+    get:
+      description: 'Фильтры (повторяемые или через запятую): status, type, priority;
+        assignee_id и sprint_id — UUID или null (без исполнителя / бэклог); label;
+        q — поиск по ключу (с начала) и названию. include_deleted — только администратор.
+        Порядок — ручной порядок секции (position), затем номер; limit до 200 (по
+        умолчанию 50), следующая страница — cursor из next_cursor. overdue — срок
+        прошёл по поясу проекта, а задача не закрыта.'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - collectionFormat: multi
+        description: статусы
+        in: query
+        items:
+          type: string
+        name: status
+        type: array
+      - collectionFormat: multi
+        description: типы
+        in: query
+        items:
+          type: string
+        name: type
+        type: array
+      - collectionFormat: multi
+        description: приоритеты
+        in: query
+        items:
+          type: string
+        name: priority
+        type: array
+      - collectionFormat: multi
+        description: исполнители; null — без исполнителя
+        in: query
+        items:
+          type: string
+        name: assignee_id
+        type: array
+      - collectionFormat: multi
+        description: спринты; null — бэклог
+        in: query
+        items:
+          type: string
+        name: sprint_id
+        type: array
+      - description: метка
+        in: query
+        name: label
+        type: string
+      - description: поиск по ключу и названию
+        in: query
+        name: q
+        type: string
+      - description: с удалёнными (администратор)
+        in: query
+        name: include_deleted
+        type: boolean
+      - description: до 200
+        in: query
+        name: limit
+        type: integer
+      - description: курсор следующей страницы
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.Page'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: include_deleted не администратору'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Задачи проекта
+      tags:
+      - tasks
     post:
       consumes:
       - application/json

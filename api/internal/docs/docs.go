@@ -416,6 +416,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/me/tasks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Открытые задачи текущего пользователя по всем его проектам, кроме архивных (§7.2), по сроку: без срока — в конце, просроченные — сверху. Не больше 200 самых срочных.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Мои задачи",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/task.MyTask"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ping": {
             "get": {
                 "produces": [
@@ -1056,6 +1090,142 @@ const docTemplate = `{
             }
         },
         "/api/v1/projects/{key}/tasks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Фильтры (повторяемые или через запятую): status, type, priority; assignee_id и sprint_id — UUID или null (без исполнителя / бэклог); label; q — поиск по ключу (с начала) и названию. include_deleted — только администратор. Порядок — ручной порядок секции (position), затем номер; limit до 200 (по умолчанию 50), следующая страница — cursor из next_cursor. overdue — срок прошёл по поясу проекта, а задача не закрыта.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Задачи проекта",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "статусы",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "типы",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "приоритеты",
+                        "name": "priority",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "исполнители; null — без исполнителя",
+                        "name": "assignee_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "спринты; null — бэклог",
+                        "name": "sprint_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "метка",
+                        "name": "label",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поиск по ключу и названию",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "с удалёнными (администратор)",
+                        "name": "include_deleted",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "до 200",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "курсор следующей страницы",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.Page"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: include_deleted не администратору",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -2106,6 +2276,159 @@ const docTemplate = `{
                     ]
                 },
                 "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.ListItem": {
+            "type": "object",
+            "properties": {
+                "assignee_id": {
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "deleted_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "due_date": {
+                    "type": "string",
+                    "example": "2026-10-31"
+                },
+                "estimate_minutes": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string",
+                    "example": "TM-42"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "overdue": {
+                    "type": "boolean"
+                },
+                "position": {
+                    "type": "number"
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "critical"
+                    ]
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "reporter_id": {
+                    "type": "string"
+                },
+                "spent_minutes": {
+                    "type": "integer"
+                },
+                "sprint_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "todo",
+                        "in_progress",
+                        "review",
+                        "done",
+                        "cancelled"
+                    ]
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "task",
+                        "bug",
+                        "feature"
+                    ]
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "task.MyTask": {
+            "type": "object",
+            "properties": {
+                "due_date": {
+                    "type": "string",
+                    "example": "2026-10-31"
+                },
+                "estimate_minutes": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "overdue": {
+                    "type": "boolean"
+                },
+                "project_key": {
+                    "type": "string"
+                },
+                "project_name": {
+                    "type": "string"
+                },
+                "spent_minutes": {
+                    "type": "integer"
+                },
+                "sprint_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "task.Page": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.ListItem"
+                    }
+                },
+                "next_cursor": {
                     "type": "string"
                 }
             }
