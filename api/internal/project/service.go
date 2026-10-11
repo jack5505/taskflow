@@ -309,8 +309,8 @@ func (s *Service) Update(ctx context.Context, a *Access, in UpdateInput) (*Proje
 			}
 			updates["is_archived"] = *in.IsArchived
 			if *in.IsArchived {
-				// Остановку запущенных таймеров при архивации (§3.2) добавит задача таймера (#33).
-				if err := events.Publish(tx, events.ProjectArchived, map[string]any{"project_id": p.ID, "key": p.Key}); err != nil {
+				// at — момент архивации: по нему воркер останавливает таймеры проекта (§3.2, §6.4).
+				if err := events.Publish(tx, events.ProjectArchived, map[string]any{"project_id": p.ID, "key": p.Key, "at": s.now()}); err != nil {
 					return err
 				}
 			}
@@ -384,7 +384,7 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 			EntityID: p.ID.String(), Old: map[string]any{"telegram_chat_id": p.TelegramChatID}}); err != nil {
 			return err
 		}
-		return events.Publish(tx, events.ProjectDeleted, map[string]any{"project_id": p.ID, "key": p.Key})
+		return events.Publish(tx, events.ProjectDeleted, map[string]any{"project_id": p.ID, "key": p.Key, "at": s.now()})
 	})
 }
 

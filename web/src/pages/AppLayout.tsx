@@ -1,7 +1,10 @@
 import { useMutation } from "@tanstack/react-query";
 import { Link, Outlet } from "react-router";
+import { NotificationBell } from "../notifications/NotificationBell";
+import { HeaderTimer } from "../timer/HeaderTimer";
 import { logout as logoutRequest } from "../api";
 import { useMe } from "../auth/hooks";
+import { CreateTask } from "../task/CreateTask";
 
 /** Рамка закрытой части: шапка с именем пользователя и выходом. */
 export function AppLayout() {
@@ -18,7 +21,12 @@ export function AppLayout() {
         <Link to="/" className="brand">
           TaskFlow
         </Link>
+        <div className="topbar-tools">
+          <HeaderTimer />
+          <NotificationBell />
+        </div>
         <div className="topbar-user">
+          <CreateTask />
           <span>{me.data?.display_name || me.data?.email || ""}</span>
           <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>
             Выйти

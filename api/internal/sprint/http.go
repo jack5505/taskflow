@@ -33,6 +33,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.DELETE("/:id", h.delete)
 	g.POST("/:id/start", h.start)
 	g.POST("/:id/close", h.close)
+	g.GET("/:id/report", h.report)
 }
 
 // request — поля спринта; null у goal и дат очищает их.
@@ -286,4 +287,30 @@ func (h *Handlers) close(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, closeResponse{Sprint: *v, Summary: *sum})
+}
+
+// report — отчёт по спринту.
+//
+// @Summary      Отчёт по спринту
+// @Description  Участник проекта (§5.6, §9.2); только active и closed, у planned — 409 INVALID_TRANSITION (details.reason = planned). Объём на старте (без оценки: without_estimate) и сейчас (у завершённого — на момент закрытия), задачи, добавленные и убранные после старта, списанное время по исполнителям, берндаун: точка на каждый день спринта из ежедневных снимков (remaining_hours = null — снимка за день нет) и идеальная прямая от объёма на старте до нуля.
+// @Tags         sprints
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      string  true  "id спринта"
+// @Success      200  {object}  Report
+// @Failure      401  {object}  apierr.Response
+// @Failure      404  {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409  {object}  apierr.Response  "INVALID_TRANSITION"
+// @Router       /api/v1/sprints/{id}/report [get]
+func (h *Handlers) report(c *gin.Context) {
+	sid, ok := id(c)
+	if !ok {
+		return
+	}
+	r, err := h.svc.Report(c.Request.Context(), auth.CurrentUser(c), sid)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, r)
 }

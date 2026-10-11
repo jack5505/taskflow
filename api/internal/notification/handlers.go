@@ -56,6 +56,8 @@ func Register(d *events.Dispatcher, db *gorm.DB) {
 	d.On(events.CommentCreated, "notification", commentCreated(db))
 	d.On(events.MemberAdded, "notification", member(TypeMemberAdded))
 	d.On(events.MemberRemoved, "notification", member(TypeMemberRemoved))
+	d.On(events.TimerAutoStopped, "notification", timerEvent(db, TypeTimerStopped))
+	d.On(events.TimerTrimmed, "notification", timerEvent(db, TypeTimerTrimmed))
 	// Смена роли в колокольчик не идёт: §7.7 называет только добавление и исключение
 	// (о смене роли — личное сообщение бота §8.7).
 }
@@ -139,4 +141,22 @@ func notifyTaskPeople(ctx context.Context, db *gorm.DB, projectID, taskID, repor
 		}
 	}
 	return nil
+}
+
+// timerEvent — §7.7 «автоостановка таймера и обрезание записи по дневному лимиту»: владельцу
+// таймера, весь payload события — в уведомление (ключ, минуты, дата).
+func timerEvent(db *gorm.DB, typ string) events.Handler {
+	return func(ctx context.Context, env events.Envelope) error {
+		var data map[string]any
+		eventID, err := decode(env, &data)
+		if err != nil {
+			return err
+		}
+		userID, err1 := uuid.Parse(fmt.Sprint(data["user_id"]))
+		taskID, err2 := uuid.Parse(fmt.Sprint(data["task_id"]))
+		if err1 != nil || err2 != nil {
+			return fmt.Errorf("notification: %s: нет user_id или task_id", env.Type)
+		}
+		return Create(ctx, db, New{UserID: userID, TaskID: &taskID, Type: typ, Payload: data, EventID: &eventID})
+	}
 }

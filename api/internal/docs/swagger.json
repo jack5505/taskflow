@@ -724,6 +724,43 @@
                 }
             }
         },
+        "/api/v1/me/timer/stop": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Запись времени source = timer, длительность округляется вверх до минуты; меньше минуты — записи нет. Через полночь по поясу пользователя — две записи на разные даты.\nЗапись сверх дневного лимита 24 часа обрезается до остатка (trimmed, событие timer.trimmed), остатка нет — записи нет (§6.4).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "timer"
+                ],
+                "summary": "Остановить таймер",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.TimerStop"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: таймер не запущен",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ping": {
             "get": {
                 "produces": [
@@ -2045,6 +2082,58 @@
                 }
             }
         },
+        "/api/v1/sprints/{id}/report": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Участник проекта (§5.6, §9.2); только active и closed, у planned — 409 INVALID_TRANSITION (details.reason = planned). Объём на старте (без оценки: without_estimate) и сейчас (у завершённого — на момент закрытия), задачи, добавленные и убранные после старта, списанное время по исполнителям, берндаун: точка на каждый день спринта из ежедневных снимков (remaining_hours = null — снимка за день нет) и идеальная прямая от объёма на старте до нуля.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sprints"
+                ],
+                "summary": "Отчёт по спринту",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id спринта",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sprint.Report"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "INVALID_TRANSITION",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sprints/{id}/start": {
             "post": {
                 "security": [
@@ -2743,6 +2832,64 @@
                     },
                     "409": {
                         "description": "TASK_ALREADY_TAKEN, INVALID_TRANSITION, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_key}/timer/start": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Исполнитель задачи в статусе in_progress (§6.4). У пользователя один таймер: запущенный на другой задаче останавливается с записью времени (поле stopped). Повторный старт на той же задаче — 409 TIMER_ALREADY_RUNNING (в details — timer).\nТаймер останавливается сам: при уходе задачи из in_progress, смене исполнителя, удалении задачи, деактивации пользователя, архивации проекта и через 12 часов (timer.auto_stopped).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "timer"
+                ],
+                "summary": "Запустить таймер",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.TimerStart"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не исполнитель задачи",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "TIMER_ALREADY_RUNNING, INVALID_TRANSITION: задача не в работе, PROJECT_ARCHIVED",
                         "schema": {
                             "$ref": "#/definitions/apierr.Response"
                         }
@@ -3486,7 +3633,12 @@
                     "type": "string"
                 },
                 "timer": {
-                    "type": "object"
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/task.TimerView"
+                        }
+                    ],
+                    "x-nullable": true
                 },
                 "timezone": {
                     "type": "string"
@@ -3941,6 +4093,112 @@
                 }
             }
         },
+        "sprint.Change": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "by": {
+                    "description": "null — система",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "key": {
+                    "type": "string"
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "sprint.Point": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "example": "2026-10-13"
+                },
+                "done_tasks": {
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "ideal_hours": {
+                    "type": "number",
+                    "example": 36
+                },
+                "open_estimate_minutes": {
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "open_tasks": {
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "remaining_hours": {
+                    "type": "number",
+                    "x-nullable": true,
+                    "example": 30.5
+                }
+            }
+        },
+        "sprint.Report": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "description": "Added, Removed — задачи, добавленные и убранные после старта (журнал спринта §5.3).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Change"
+                    }
+                },
+                "burndown": {
+                    "description": "Burndown — по точке на каждый день спринта, от start_date до end_date включительно.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Point"
+                    }
+                },
+                "current": {
+                    "description": "Current — задачи и сумма оценок сейчас; у завершённого — на момент закрытия.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/sprint.Totals"
+                        }
+                    ]
+                },
+                "removed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Change"
+                    }
+                },
+                "spent": {
+                    "description": "Spent — списанное время по задачам спринта с разбивкой по исполнителям, SpentMinutes — итог.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sprint.Spent"
+                    }
+                },
+                "spent_minutes": {
+                    "type": "integer"
+                },
+                "sprint": {
+                    "$ref": "#/definitions/sprint.View"
+                },
+                "start": {
+                    "description": "Start — объём на старте (§5.2), не меняется.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/sprint.Scope"
+                        }
+                    ]
+                }
+            }
+        },
         "sprint.Scope": {
             "type": "object",
             "properties": {
@@ -3952,6 +4210,24 @@
                 },
                 "without_estimate": {
                     "type": "integer"
+                }
+            }
+        },
+        "sprint.Spent": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "hours": {
+                    "type": "number",
+                    "example": 2.5
+                },
+                "minutes": {
+                    "type": "integer"
+                },
+                "user_id": {
+                    "type": "string"
                 }
             }
         },
@@ -3977,6 +4253,17 @@
                     "type": "integer"
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "sprint.Totals": {
+            "type": "object",
+            "properties": {
+                "estimate_minutes": {
+                    "type": "integer"
+                },
+                "tasks": {
                     "type": "integer"
                 }
             }
@@ -4447,6 +4734,68 @@
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "task.TimerStart": {
+            "type": "object",
+            "properties": {
+                "stopped": {
+                    "$ref": "#/definitions/task.TimerStop"
+                },
+                "timer": {
+                    "$ref": "#/definitions/task.TimerView"
+                }
+            }
+        },
+        "task.TimerStop": {
+            "type": "object",
+            "properties": {
+                "auto_stopped": {
+                    "type": "boolean"
+                },
+                "duration": {
+                    "type": "string",
+                    "example": "47m"
+                },
+                "minutes": {
+                    "type": "integer",
+                    "example": 47
+                },
+                "task_key": {
+                    "type": "string",
+                    "example": "TM-42"
+                },
+                "trimmed": {
+                    "type": "boolean"
+                },
+                "worklogs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/task.WorklogView"
+                    }
+                }
+            }
+        },
+        "task.TimerView": {
+            "type": "object",
+            "properties": {
+                "elapsed_seconds": {
+                    "type": "integer",
+                    "example": 2820
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "task_key": {
+                    "type": "string",
+                    "example": "TM-42"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
