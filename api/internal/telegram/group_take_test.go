@@ -56,7 +56,7 @@ func (b *takeBot) press(from int64, chat models.Chat, data, id string) {
 // answers — ответы на нажатия кнопок: id нажатия → текст и всплывающее ли окно.
 func (b *takeBot) answers() map[string][2]string {
 	out := map[string][2]string{}
-	for _, c := range b.env.tg.Calls("answerCallbackQuery") {
+	for _, c := range b.tg.Calls("answerCallbackQuery") {
 		out[c.Params["callback_query_id"]] = [2]string{c.Params["text"], c.Params["show_alert"]}
 	}
 	return out
