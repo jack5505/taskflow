@@ -305,6 +305,7 @@ export interface TaskCreateRequest {
 }
 
 export interface TaskMoveRequest {
+  /** @format uuid */
   after_task_id?: string | null;
   /** @format uuid */
   sprint_id?: string | null;

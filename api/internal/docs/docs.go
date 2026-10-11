@@ -2775,6 +2775,7 @@ const docTemplate = `{
             "properties": {
                 "after_task_id": {
                     "type": "string",
+                    "format": "uuid",
                     "x-nullable": true
                 },
                 "sprint_id": {

@@ -541,6 +541,7 @@ definitions:
   task.moveRequest:
     properties:
       after_task_id:
+        format: uuid
         type: string
         x-nullable: true
       sprint_id:
