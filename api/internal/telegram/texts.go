@@ -45,6 +45,15 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "cmd_status_done"}}Готово{{end}}
 {{define "cmd_status_cancelled"}}Отменена{{end}}
 
+{{- /* Создание задачи /new, §8.5 */}}
+{{define "cmd_new_usage"}}Формат: /new [ключ проекта] <название>{{end}}
+{{define "cmd_new_created"}}Создана задача {{.Key}} «{{.Title}}»{{end}}
+{{define "cmd_new_not_member"}}Вы не участник проекта {{.}}{{end}}
+{{define "cmd_new_no_projects"}}{{if .}}У вас нет активных проектов{{else}}Все проекты группы в архиве{{end}}{{end}}
+{{define "cmd_new_title_invalid"}}Название задачи — от 1 до 200 символов{{end}}
+{{define "cmd_new_choose"}}{{if .Private}}Укажите проект: /new {{index .Keys 0}} <название>. Ваши проекты: {{else}}К группе подключено несколько проектов, укажите ключ: /new {{index .Keys 0}} <название>. Проекты группы: {{end}}
+{{- range $i, $k := .Keys}}{{if $i}}, {{end}}{{$k}}{{end}}{{end}}
+
 {{- /* /help, меню бота, неизвестные команды, архивный проект, §8.5 */}}
 {{define "cmd_help_private"}}Команды в личном чате:{{range .Commands}}
 /{{.Name}}{{if .Args}} {{.Args}}{{end}} — {{.Description}}{{end}}
