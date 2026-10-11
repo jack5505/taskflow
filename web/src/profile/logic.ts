@@ -1,6 +1,7 @@
 // Логика профиля (ТЗ §7.8): что отправить в PATCH /me, личные уведомления §8.7, код привязки
 // Telegram §8.1. Проверки здесь — только подсказки до запроса, правила проверяет сервер.
 import type { MeProfile, MeUpdate } from "../api/client";
+import { newPasswordError } from "../lib/password";
 
 /** Личные уведомления §8.7 — ключи notification_settings из API (api/internal/user/notifications.go). */
 export const PERSONAL_EVENTS: { key: string; label: string }[] = [
@@ -96,4 +97,28 @@ export function secondsLeft(expiresAt: string, now: number): number {
 export function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Форма смены пароля (§7.8): текущий, новый и повтор нового. */
+export interface PasswordChangeForm {
+  current: string;
+  next: string;
+  repeat: string;
+}
+
+/** Ошибки формы смены пароля до запроса (новый — по правилам §7.1): по полям, пустой объект — можно отправлять. */
+export function passwordChangeErrors(f: PasswordChangeForm): Partial<Record<keyof PasswordChangeForm, string>> {
+  const out: Partial<Record<keyof PasswordChangeForm, string>> = {};
+  if (!f.current) out.current = "Введите текущий пароль";
+  const next = newPasswordError(f.next);
+  if (next) out.next = next;
+  if (f.repeat !== f.next) out.repeat = "Пароли не совпадают";
+  return out;
+}
+
+/** Сколько ждать после блокировки (details.retry_after_seconds из 429): «через 15 мин»; нет срока — пусто. */
+export function retryAfterText(details: Record<string, unknown> | undefined): string {
+  const s = Number(details?.retry_after_seconds);
+  if (!Number.isFinite(s) || s <= 0) return "";
+  return `Попробуйте через ${Math.ceil(s / 60)} мин.`;
 }

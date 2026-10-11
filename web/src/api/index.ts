@@ -91,4 +91,14 @@ export async function logoutAll(): Promise<void> {
   signOut("logout");
 }
 
+/**
+ * Смена пароля в профиле (§7.8, §9.1): сервер отзывает все сессии, кроме той, чей refresh-токен
+ * пришёл в cookie. Сначала дожидаемся идущего обновления токена: иначе cookie могла бы смениться
+ * уже после того, как сервер решил, какую сессию оставить, и эта вкладка вышла бы из системы.
+ */
+export async function changePassword(current: string, next: string): Promise<void> {
+  await auth.idle();
+  await api.api.v1AuthPasswordChangeCreate({ current_password: current, new_password: next });
+}
+
 export type { HttpResponse, RequestParams } from "./client";
