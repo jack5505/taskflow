@@ -32,3 +32,4 @@ api/internal/web/dist/*
 /deploy/rclone.conf
 .deploy.lock
 .deployed
+loadtest/summary.txt

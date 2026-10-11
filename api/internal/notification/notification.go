@@ -31,6 +31,7 @@ const (
 	TypeDeactivated   = "user_deactivated"   // менеджеру: участник деактивирован, его задачи освобождены (§3.1)
 	TypeTimerStopped  = "timer_auto_stopped" // таймер остановлен на отметке 12 часов (§6.4)
 	TypeTimerTrimmed  = "worklog_trimmed"    // запись таймера обрезана по дневному лимиту (§6.4)
+	TypeDue           = "due"                // срок завтра или просрочен (§8.7); вид — payload.kind, создаёт DueReminders
 )
 
 // Retention — §3.8: уведомления хранятся 30 дней.

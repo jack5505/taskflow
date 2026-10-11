@@ -35,6 +35,15 @@ describe("describeNotification", () => {
     ).toEqual({ text: "Новый комментарий к задаче TM-42 «Отчёт»", detail: "Готово, смотрите", link: "/tasks/TM-42" });
   });
 
+  it("срок завтра и просрочка (§7.7)", () => {
+    expect(
+      describeNotification({ type: "due", payload: { kind: "due_tomorrow", key: "TM-3", title: "Отчёт", due_date: "2026-10-12" } }),
+    ).toEqual({ text: "Срок задачи TM-3 «Отчёт» — завтра", detail: "Срок 12.10.2026", link: "/tasks/TM-3" });
+    expect(
+      describeNotification({ type: "due", payload: { kind: "overdue", key: "TM-3", title: "Отчёт", due_date: "2026-10-12" } }),
+    ).toEqual({ text: "Срок задачи TM-3 «Отчёт» просрочен", detail: "Срок 12.10.2026", link: "/tasks/TM-3" });
+  });
+
   it("удаление задачи — без ссылки", () => {
     expect(describeNotification({ type: "task_deleted", payload: { key: "TM-1", title: "Старое" } })).toEqual({
       text: "Задача TM-1 «Старое» удалена",

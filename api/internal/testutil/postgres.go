@@ -4,6 +4,8 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -51,6 +53,41 @@ func SharedDB(t *testing.T) *gorm.DB {
 	}
 	t.Cleanup(func() { _ = db.Close(g) })
 	return g
+}
+
+// TempDB создаёт отдельную базу в общем контейнере пакета с применёнными миграциями и удаляет её
+// в конце теста — для объёмных данных (генератор нагрузки, отчёт на 1 000 000 записей), которые не
+// должны мешать остальным тестам пакета. Возвращает пул GORM и DSN базы.
+func TempDB(t *testing.T) (*gorm.DB, string) {
+	t.Helper()
+	shared := SharedDB(t)
+	name := "tmp_" + strconv.FormatInt(Next(), 10) + "_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if err := shared.Exec(`CREATE DATABASE ` + name).Error; err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	// Удаление — сразу после создания: база не должна остаться, даже если миграции упадут.
+	var g *gorm.DB
+	t.Cleanup(func() {
+		if g != nil {
+			_ = db.Close(g)
+		}
+		_ = shared.Exec(`DROP DATABASE ` + name + ` WITH (FORCE)`).Error
+	})
+	u, err := url.Parse(SharedDSN(t))
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	u.Path = "/" + name
+	dsn := u.String()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := db.Migrate(ctx, dsn, migrations.FS); err != nil {
+		t.Fatalf("migrate %s: %v", name, err)
+	}
+	if g, err = openDB(dsn); err != nil {
+		t.Fatalf("open %s: %v", name, err)
+	}
+	return g, dsn
 }
 
 // FreshDSN поднимает отдельный пустой контейнер без миграций — для тестов самих миграций.

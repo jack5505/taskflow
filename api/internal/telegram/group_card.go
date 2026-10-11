@@ -245,8 +245,8 @@ func (c *Cards) view(r *cardRow) cardView {
 func (c *Cards) keyboard(r *cardRow) *models.InlineKeyboardMarkup {
 	var row []models.InlineKeyboardButton
 	if r.Status == "todo" && r.AssigneeID == nil {
-		row = append(row, models.InlineKeyboardButton{Text: Text("button_take", nil), CallbackData: ActionTake + ":" + r.ID.String()})
+		row = append(row, models.InlineKeyboardButton{Text: Text("btn_take", nil), CallbackData: ActionTake + ":" + r.ID.String()})
 	}
-	row = append(row, models.InlineKeyboardButton{Text: Text("button_open", nil), URL: c.baseURL + "/tasks/" + r.Key})
+	row = append(row, models.InlineKeyboardButton{Text: Text("btn_open", nil), URL: c.baseURL + "/tasks/" + r.Key})
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{row}}
 }
