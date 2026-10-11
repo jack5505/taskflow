@@ -115,6 +115,7 @@ type History struct {
 	OldValue  *events.JSON `gorm:"type:jsonb" json:"old_value"`
 	NewValue  *events.JSON `gorm:"type:jsonb" json:"new_value"`
 	Source    string       `json:"source" enums:"web,telegram,api"`
+	Note      *string      `json:"note,omitempty"`
 	CreatedAt time.Time    `json:"created_at"`
 }
 
@@ -129,12 +130,13 @@ type HistoryView struct {
 	OldValue  any        `json:"old_value"`
 	NewValue  any        `json:"new_value"`
 	Source    string     `json:"source" enums:"web,telegram,api"`
+	Note      *string    `json:"note,omitempty" example:"снят при деактивации"`
 	CreatedAt time.Time  `json:"created_at"`
 }
 
 // MarshalJSON отдаёт запись как HistoryView.
 func (h History) MarshalJSON() ([]byte, error) {
-	v := HistoryView{ID: h.ID, UserID: h.UserID, Field: h.Field, Source: h.Source, CreatedAt: h.CreatedAt}
+	v := HistoryView{ID: h.ID, UserID: h.UserID, Field: h.Field, Source: h.Source, Note: h.Note, CreatedAt: h.CreatedAt}
 	if h.OldValue != nil {
 		v.OldValue = json.RawMessage(*h.OldValue)
 	}
@@ -143,3 +145,14 @@ func (h History) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(v)
 }
+
+// Comment — строка comments (§3.6).
+type Comment struct {
+	model.Base
+	TaskID   uuid.UUID `gorm:"type:uuid" json:"task_id"`
+	AuthorID uuid.UUID `gorm:"type:uuid" json:"author_id"`
+	Body     string    `json:"body"`
+	Source   string    `json:"source" enums:"web,telegram"`
+}
+
+func (Comment) TableName() string { return "comments" }

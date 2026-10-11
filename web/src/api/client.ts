@@ -197,6 +197,8 @@ export interface TaskHistoryView {
   field?: string;
   id?: string;
   new_value?: any;
+  /** @example "снят при деактивации" */
+  note?: string;
   old_value?: any;
   source?: "web" | "telegram" | "api";
   user_id?: string;
@@ -251,6 +253,13 @@ export interface TaskCreateRequest {
   /** @maxLength 200 */
   title: string;
   type?: "task" | "bug" | "feature";
+}
+
+export interface TaskTransitionRequest {
+  assignee_id?: string;
+  /** @maxLength 5000 */
+  comment?: string;
+  to: "todo" | "in_progress" | "review" | "done" | "cancelled";
 }
 
 export interface UserUser {
@@ -1054,6 +1063,48 @@ export class Api<
         path: `/api/v1/tasks/${taskKey}/history`,
         method: "GET",
         secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Назначение себя и переход todo→in_progress одной транзакцией с блокировкой строки задачи (§8.4): из одновременных нажатий проходит одно. Задача уже у другого — 409 TASK_ALREADY_TAKEN (details.assignee); закрытая — 409 INVALID_TRANSITION. Повторный запрос того же исполнителя — 200 без изменений.
+     *
+     * @tags tasks
+     * @name V1TasksTakeCreate
+     * @summary Взять в работу
+     * @request POST:/api/v1/tasks/{task_key}/take
+     * @secure
+     */
+    v1TasksTakeCreate: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskTask, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/take`,
+        method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Переходы и права — §4: todo→in_progress (исполнитель; любой участник, если исполнителя нет — он им становится; менеджер), in_progress→todo (исполнитель, менеджер; исполнитель очищается), in_progress→review (исполнитель, менеджер), review→in_progress (автор, менеджер; comment от 5 символов), review→done (автор, если он не исполнитель; менеджер), done→in_progress (менеджер; если исполнитель деактивирован — assignee_id; из закрытого спринта — в активный или бэклог), todo/in_progress/review→cancelled (менеджер; comment обязателен), cancelled→todo (менеджер; исполнитель и спринт очищаются). Иной переход — 409 INVALID_TRANSITION.
+     *
+     * @tags tasks
+     * @name V1TasksTransitionCreate
+     * @summary Сменить статус
+     * @request POST:/api/v1/tasks/{task_key}/transition
+     * @secure
+     */
+    v1TasksTransitionCreate: (
+      taskKey: string,
+      body: TaskTransitionRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskTask, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/transition`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),

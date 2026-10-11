@@ -66,7 +66,7 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 			return audit.Write(tx, audit.Record{Action: audit.UserCreated, EntityType: "user", EntityID: nu.ID.String(),
 				New: map[string]any{"email": nu.Email, "display_name": nu.DisplayName, "is_system_admin": true}})
 		}
-		found := tx.Raw(`SELECT * FROM users WHERE email = ? FOR UPDATE`, email).Scan(&u)
+		found := tx.Raw(`SELECT * FROM users WHERE email = ? FOR NO KEY UPDATE`, email).Scan(&u)
 		if found.Error != nil {
 			return fmt.Errorf("auth: find admin: %w", found.Error)
 		}

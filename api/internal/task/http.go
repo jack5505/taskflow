@@ -27,6 +27,8 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	t := api.Group("/tasks", h.requireAuth)
 	t.GET("/:task_key", h.get)
 	t.GET("/:task_key/history", h.history)
+	t.POST("/:task_key/transition", h.transition)
+	t.POST("/:task_key/take", h.take)
 }
 
 // createRequest — ограничения §3.3 (сервис проверяет их ещё раз: бот вызывает его напрямую).
@@ -121,4 +123,62 @@ func (h *Handlers) history(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, list)
+}
+
+type transitionRequest struct {
+	To         string     `json:"to" binding:"required,oneof=todo in_progress review done cancelled" enums:"todo,in_progress,review,done,cancelled"`
+	Comment    string     `json:"comment" binding:"max=5000"`
+	AssigneeID *uuid.UUID `json:"assignee_id"`
+}
+
+// transition — смена статуса по §4.
+//
+// @Summary      Сменить статус
+// @Description  Переходы и права — §4: todo→in_progress (исполнитель; любой участник, если исполнителя нет — он им становится; менеджер), in_progress→todo (исполнитель, менеджер; исполнитель очищается), in_progress→review (исполнитель, менеджер), review→in_progress (автор, менеджер; comment от 5 символов), review→done (автор, если он не исполнитель; менеджер), done→in_progress (менеджер; если исполнитель деактивирован — assignee_id; из закрытого спринта — в активный или бэклог), todo/in_progress/review→cancelled (менеджер; comment обязателен), cancelled→todo (менеджер; исполнитель и спринт очищаются). Иной переход — 409 INVALID_TRANSITION.
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string             true  "ключ задачи"
+// @Param        body      body      transitionRequest  true  "новый статус"
+// @Success      200       {object}  Task
+// @Failure      400       {object}  apierr.Response  "VALIDATION_FAILED: нет причины, нужен активный исполнитель"
+// @Failure      401       {object}  apierr.Response
+// @Failure      403       {object}  apierr.Response  "FORBIDDEN: переход не по правам §4"
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409       {object}  apierr.Response  "INVALID_TRANSITION, PROJECT_ARCHIVED"
+// @Router       /api/v1/tasks/{task_key}/transition [post]
+func (h *Handlers) transition(c *gin.Context) {
+	var req transitionRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	t, err := h.svc.Transition(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"), TransitionInput(req))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, t)
+}
+
+// take — взять задачу себе.
+//
+// @Summary      Взять в работу
+// @Description  Назначение себя и переход todo→in_progress одной транзакцией с блокировкой строки задачи (§8.4): из одновременных нажатий проходит одно. Задача уже у другого — 409 TASK_ALREADY_TAKEN (details.assignee); закрытая — 409 INVALID_TRANSITION. Повторный запрос того же исполнителя — 200 без изменений.
+// @Tags         tasks
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string  true  "ключ задачи"
+// @Success      200       {object}  Task
+// @Failure      401       {object}  apierr.Response
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409       {object}  apierr.Response  "TASK_ALREADY_TAKEN, INVALID_TRANSITION, PROJECT_ARCHIVED"
+// @Router       /api/v1/tasks/{task_key}/take [post]
+func (h *Handlers) take(c *gin.Context) {
+	t, err := h.svc.Take(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, t)
 }

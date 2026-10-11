@@ -1,0 +1,2 @@
+ALTER TABLE task_history DROP COLUMN IF EXISTS note;
+DROP TABLE IF EXISTS comments;

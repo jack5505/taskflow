@@ -311,6 +311,9 @@ definitions:
       id:
         type: string
       new_value: {}
+      note:
+        example: снят при деактивации
+        type: string
       old_value: {}
       source:
         enum:
@@ -429,6 +432,24 @@ definitions:
         type: string
     required:
     - title
+    type: object
+  task.transitionRequest:
+    properties:
+      assignee_id:
+        type: string
+      comment:
+        maxLength: 5000
+        type: string
+      to:
+        enum:
+        - todo
+        - in_progress
+        - review
+        - done
+        - cancelled
+        type: string
+    required:
+    - to
     type: object
   user.User:
     properties:
@@ -1297,6 +1318,98 @@ paths:
       security:
       - BearerAuth: []
       summary: История задачи
+      tags:
+      - tasks
+  /api/v1/tasks/{task_key}/take:
+    post:
+      description: 'Назначение себя и переход todo→in_progress одной транзакцией с
+        блокировкой строки задачи (§8.4): из одновременных нажатий проходит одно.
+        Задача уже у другого — 409 TASK_ALREADY_TAKEN (details.assignee); закрытая
+        — 409 INVALID_TRANSITION. Повторный запрос того же исполнителя — 200 без изменений.'
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.Task'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: TASK_ALREADY_TAKEN, INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Взять в работу
+      tags:
+      - tasks
+  /api/v1/tasks/{task_key}/transition:
+    post:
+      consumes:
+      - application/json
+      description: 'Переходы и права — §4: todo→in_progress (исполнитель; любой участник,
+        если исполнителя нет — он им становится; менеджер), in_progress→todo (исполнитель,
+        менеджер; исполнитель очищается), in_progress→review (исполнитель, менеджер),
+        review→in_progress (автор, менеджер; comment от 5 символов), review→done (автор,
+        если он не исполнитель; менеджер), done→in_progress (менеджер; если исполнитель
+        деактивирован — assignee_id; из закрытого спринта — в активный или бэклог),
+        todo/in_progress/review→cancelled (менеджер; comment обязателен), cancelled→todo
+        (менеджер; исполнитель и спринт очищаются). Иной переход — 409 INVALID_TRANSITION.'
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      - description: новый статус
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.transitionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.Task'
+        "400":
+          description: 'VALIDATION_FAILED: нет причины, нужен активный исполнитель'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: переход не по правам §4'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Сменить статус
       tags:
       - tasks
   /api/v1/users:
