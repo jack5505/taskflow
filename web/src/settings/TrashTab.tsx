@@ -25,6 +25,8 @@ export function TrashTab({ projectKey, readOnly }: { projectKey: string; readOnl
       (await api.api.v1ProjectsTrashList(projectKey, { cursor: pageParam || undefined }, { signal })).data,
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor || undefined,
+    // Не перечитывать все загруженные страницы на каждый фокус окна; после восстановления — сброс.
+    staleTime: 60_000,
   });
   const rows = trash.data?.pages.flatMap((p) => p.items ?? []) ?? [];
 

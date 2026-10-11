@@ -12,13 +12,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
-
-var errTrashAdminOnly = apierr.Forbidden("Корзину видит только администратор системы")
 
 // UserRef — пользователь в ответе: id и имя.
 type UserRef struct {
@@ -30,7 +27,7 @@ type UserRef struct {
 // удалил; deleted_by — null, если удаление записано без пользователя.
 type TrashItem struct {
 	Task
-	DeletedBy *UserRef `json:"deleted_by"`
+	DeletedBy *UserRef `json:"deleted_by" extensions:"x-nullable"`
 }
 
 type trashRow struct {
@@ -61,13 +58,13 @@ func (s *Service) Trash(ctx context.Context, u *user.User, key string, limit int
 		if _, err := s.projects.Access(ctx, u, key); err != nil {
 			return nil, err
 		}
-		return nil, errTrashAdminOnly
+		return nil, errDeletedAdminOnly // то же правило §2, что у include_deleted
 	}
 	if limit == 0 {
 		limit = 50
 	}
 	if limit < 1 || limit > MaxLimit {
-		return nil, fieldError("limit", "от 1 до 200")
+		return nil, fieldError("limit", "целое число от 1 до 200")
 	}
 	where := []string{"t.project_id = ?", "t.deleted_at IS NOT NULL"}
 	args := []any{projectID}
@@ -152,7 +149,7 @@ func (h *Handlers) trash(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		var err error
 		if limit, err = strconv.Atoi(v); err != nil {
-			limit = -1 // сервис ответит 400 по limit после проверки прав: чужой проект не раскрывается
+			limit = -1 // 400 по limit — в сервисе, после проверки прав: чужой проект не раскрывается
 		}
 	}
 	page, err := h.svc.Trash(c.Request.Context(), auth.CurrentUser(c), c.Param("key"), limit, c.Query("cursor"))

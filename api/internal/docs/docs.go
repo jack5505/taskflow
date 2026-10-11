@@ -4888,7 +4888,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "deleted_by": {
-                    "$ref": "#/definitions/task.UserRef"
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/task.UserRef"
+                        }
+                    ],
+                    "x-nullable": true
                 },
                 "description": {
                     "type": "string"

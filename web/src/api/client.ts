@@ -532,7 +532,7 @@ export interface TaskTrashItem {
   completed_at?: string;
   created_at?: string;
   deleted_at?: string;
-  deleted_by?: TaskUserRef;
+  deleted_by?: TaskUserRef | null;
   description?: string;
   /** @example "2026-10-31" */
   due_date?: string;
