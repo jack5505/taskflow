@@ -63,7 +63,8 @@ func (rt *Router) menuFor(private bool) []helpLine {
 }
 
 // helpCommand — /help: команды, доступные в этом типе чата (§8.5). Работает и без привязки
-// (§8.1): тогда после списка — подсказка, как привязать аккаунт.
+// (§8.1): тогда после списка — подсказка, как привязать аккаунт, а в группе ответ удаляется
+// через 30 секунд, как и единый ответ непривязанному: посторонние не засоряют чат и лимит группы.
 func helpCommand(rt *Router) HandlerFunc {
 	return func(ctx context.Context, r *Request) error {
 		name := "cmd_help_group"
@@ -77,6 +78,9 @@ func helpCommand(rt *Router) HandlerFunc {
 		}{Commands: rt.menuFor(r.Private()), Unlinked: r.User == nil}
 		for _, c := range data.Commands {
 			data.Keyed = data.Keyed || strings.HasPrefix(c.Args, "<ключ>")
+		}
+		if data.Unlinked {
+			return r.ReplyTemp(ctx, Text(name, data))
 		}
 		return r.Reply(ctx, Text(name, data))
 	}

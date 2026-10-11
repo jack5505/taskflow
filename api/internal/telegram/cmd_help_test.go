@@ -156,14 +156,14 @@ func TestHelpUnlinked(t *testing.T) {
 		"/my — Мои открытые задачи",
 		"/help — Список команд",
 		"Ключ задачи пишется вместе с ключом проекта: TM-42.",
-		"Аккаунт не привязан: в профиле нажмите «Привязать Telegram» и откройте ссылку или отправьте сюда /start <код>.",
+		"Аккаунт не привязан: остальные команды заработают после привязки. Чтобы привязать аккаунт, откройте профиль в веб-интерфейсе, нажмите «Привязать Telegram» и перейдите по ссылке или отправьте сюда /start <код>.",
 	}, "\n")
 
 	require.Equal(t, []string{privateHelp}, b.say(t, stranger, "/help"))
 	require.Equal(t, []string{notLinked}, b.say(t, stranger, "/take TM-1"))
 	require.Equal(t, []string{notLinked}, b.say(t, stranger, "/my"))
 
-	// В группе /help — обычный ответ на сообщение, не удаляемый через 30 секунд.
+	// В группе /help непривязанного — ответ на сообщение, который бот удаляет через 30 секунд.
 	upd := msgUpdate(-100700, models.ChatTypeSupergroup, "/help@TaskBot")
 	upd.Message.From.ID = b.tg[stranger.ID]
 	b.p.Handle(context.Background(), upd, time.Now())
@@ -174,9 +174,10 @@ func TestHelpUnlinked(t *testing.T) {
 		"/take <ключ> — Взять задачу в работу",
 		"/help — Список команд",
 		"Если к группе подключён один проект, ключ проекта можно не писать: TM-42 или 42.",
-		"Аккаунт не привязан: в профиле нажмите «Привязать Telegram» и отправьте боту в личный чат /start <код>.",
+		"Аккаунт не привязан: остальные команды заработают после привязки. Чтобы привязать аккаунт, откройте профиль в веб-интерфейсе, нажмите «Привязать Telegram» и перейдите по ссылке.",
 	}, "\n"), msgs[0].Text)
-	require.Zero(t, msgs[0].DeleteAfter)
+	require.Equal(t, 30, msgs[0].DeleteAfter)
+	require.NotZero(t, msgs[0].ReplyTo)
 	require.Equal(t, []string{notLinked}, b.sayIn(t, stranger, -100700, models.ChatTypeSupergroup, "/take TM-1"))
 
 	// §8.1 п. 6: после /unlink /help по-прежнему отвечает — уже с подсказкой о привязке.
