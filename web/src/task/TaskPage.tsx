@@ -18,6 +18,7 @@ import {
 import { statusLabel } from "../lib/status";
 import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
+import { Attachments } from "./Attachments";
 import { Comments } from "./Comments";
 import { commentsQueryKey, historyQueryKey, taskQueryKey } from "./keys";
 import { ConflictDialog, type Conflict } from "./ConflictDialog";
@@ -412,8 +413,11 @@ export function TaskPage() {
               />
             )}
             {tab === "history" && <History taskKey={key} ctx={ctx} />}
-            {/* API вложений и записей времени ещё нет — вкладки без запросов. */}
-            {(tab === "attachments" || tab === "worklog") && <p className="muted">Скоро</p>}
+            {tab === "attachments" && (
+              <Attachments taskKey={key} actor={actor} canWrite={perms.comment} archived={readOnly} timeZone={timeZone} />
+            )}
+            {/* API записей времени ещё нет — вкладка без запросов. */}
+            {tab === "worklog" && <p className="muted">Скоро</p>}
           </div>
         </div>
 

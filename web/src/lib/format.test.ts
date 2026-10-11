@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDate, formatDateTime, formatTime } from "./format";
+import { formatBytes, formatDate, formatDateTime, formatTime } from "./format";
 
 describe("formatDate", () => {
   it.each([
@@ -55,5 +55,23 @@ describe("formatDateTime", () => {
 
   it("пустое значение — пустая строка", () => {
     expect(formatDateTime(null, "UTC")).toBe("");
+  });
+});
+
+describe("formatBytes", () => {
+  it.each([
+    [0, "0 Б"],
+    [512, "512 Б"],
+    [1024, "1 КБ"],
+    [1536, "1,5 КБ"],
+    [12 * 1024 * 1024, "12 МБ"],
+    [50 * 1024 * 1024, "50 МБ"],
+    [3.25 * 1024 * 1024 * 1024, "3,3 ГБ"],
+  ])("%i → %s", (n, want) => {
+    expect(formatBytes(n)).toBe(want);
+  });
+  it("пустое — пустая строка", () => {
+    expect(formatBytes(undefined)).toBe("");
+    expect(formatBytes(-1)).toBe("");
   });
 });

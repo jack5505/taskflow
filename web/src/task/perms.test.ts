@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TaskTask } from "../api/client";
 import type { Actor } from "../board/transitions";
-import { canManageComment, taskPerms } from "./perms";
+import { canManageComment, isPreviewable, taskPerms } from "./perms";
 
 const manager: Actor = { userId: "m", manager: true, member: true };
 const member: Actor = { userId: "u", manager: false, member: true };
@@ -79,5 +79,12 @@ describe("canManageComment", () => {
     expect(canManageComment("other", manager, false)).toBe(true);
     expect(canManageComment("u", member, true)).toBe(false);
     expect(canManageComment(undefined, member, false)).toBe(false);
+  });
+});
+
+describe("isPreviewable", () => {
+  it("растровые картинки — превью; SVG и прочее — нет", () => {
+    expect(["image/png", "image/jpeg", "image/gif", "image/webp"].every(isPreviewable)).toBe(true);
+    expect(["image/svg+xml", "application/pdf", "text/html", "", undefined].some(isPreviewable)).toBe(false);
   });
 });

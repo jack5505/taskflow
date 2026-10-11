@@ -64,3 +64,14 @@ export function canManageComment(authorId: string | undefined, actor: Actor | nu
   if (!actor || archived) return false;
   return actor.manager || (!!authorId && authorId === actor.userId);
 }
+
+/** Вложение удаляет автор файла или менеджер (§3.9) — то же правило, что для комментария. */
+export const canManageAttachment = canManageComment;
+
+/** Лимит вложения (§3.9). */
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
+/** Картинка — показываем превью; остальное только скачивание (§7.5). */
+export function isPreviewable(mime: string | undefined): boolean {
+  return /^image\/(png|jpe?g|gif|webp|bmp|avif)$/i.test(mime ?? "");
+}
