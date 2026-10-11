@@ -6,7 +6,8 @@ import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { PasswordSetPage } from "./pages/PasswordSetPage";
-import { BacklogPage } from "./pages/BacklogPage";
+import { BacklogPage } from "./backlog/BacklogPage";
+import { SprintArchivePage } from "./backlog/SprintArchivePage";
 import { BoardPage } from "./board/BoardPage";
 import { SettingsPage } from "./settings/SettingsPage";
 
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
           { path: "/projects/:key", element: <BoardPage /> },
           { path: "/projects/:key/backlog", element: <BacklogPage /> },
           { path: "/projects/:key/settings", element: <SettingsPage /> },
+          { path: "/projects/:key/backlog/archive", element: <SprintArchivePage /> },
           // Карточка с Markdown (marked + DOMPurify) — отдельным чанком: на остальных экранах не нужна.
           { path: "/tasks/:key", lazy: async () => ({ Component: (await import("./task/TaskPage")).TaskPage }) },
         ],
