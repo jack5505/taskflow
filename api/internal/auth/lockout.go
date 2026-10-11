@@ -11,8 +11,9 @@ import (
 
 // Блокировка входа (ТЗ §10.3): после maxFailures неудачных попыток по одному email
 // вход закрыт на lockoutWindow, даже с верным паролем. Счётчик живёт в Redis, попытка
-// засчитывается до проверки пароля (take) и сбрасывается верным паролем. Те же правила — у ввода текущего пароля при его смене
-// в профиле, но со своим счётчиком по id пользователя (см. ChangePassword).
+// засчитывается до проверки пароля (take) и сбрасывается верным паролем. Те же правила —
+// у ввода текущего пароля при его смене в профиле, но со своим счётчиком по id
+// пользователя (см. ChangePassword).
 const (
 	maxFailures   = 10
 	lockoutWindow = 15 * time.Minute
@@ -68,7 +69,25 @@ func (l lockout) take(ctx context.Context, id string) (n int64, locked bool, wai
 		return n, false, 0, nil
 	}
 	locked, wait, err = l.wait(ctx, id)
+	if err == nil && !locked {
+		// Ключ истёк между INCR и TTL: эта попытка ушла в старый счётчик — засчитываем заново.
+		return l.take(ctx, id)
+	}
 	return n, locked, wait, err
+}
+
+// releaseScript — DECR только существующего ключа: у пропавшего DECR создал бы «-1» без срока.
+var releaseScript = redis.NewScript(`if redis.call("EXISTS", KEYS[1]) == 1 then return redis.call("DECR", KEYS[1]) end return 0`)
+
+// release возвращает попытку, взятую take, когда пароль так и не проверен (сбой базы) или
+// оказался верным, но войти нельзя (пользователь деактивирован): это не неудача.
+// Записи после вердикта — без отмены контекста: разрыв соединения клиентом не должен
+// ни сохранять попытку, ни терять неудачу.
+func (l lockout) release(ctx context.Context, id string) error {
+	if err := releaseScript.Run(context.WithoutCancel(ctx), l.rdb, []string{l.key(id)}).Err(); err != nil {
+		return fmt.Errorf("lockout release: %w", err)
+	}
+	return nil
 }
 
 // takeFailed — неверный пароль после take: с maxFailures-й неудачи блокировка держится ровно lockoutWindow.
@@ -76,12 +95,12 @@ func (l lockout) takeFailed(ctx context.Context, id string, n int64) error {
 	if n < maxFailures {
 		return nil
 	}
-	if err := l.rdb.Expire(ctx, l.key(id), lockoutWindow).Err(); err != nil {
+	if err := l.rdb.Expire(context.WithoutCancel(ctx), l.key(id), lockoutWindow).Err(); err != nil {
 		return fmt.Errorf("lockout expire: %w", err)
 	}
 	return nil
 }
 
 func (l lockout) reset(ctx context.Context, id string) error {
-	return l.rdb.Del(ctx, l.key(id)).Err()
+	return l.rdb.Del(context.WithoutCancel(ctx), l.key(id)).Err()
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
@@ -141,15 +142,47 @@ func TestLockoutUnderConcurrency(t *testing.T) {
 	require.ErrorIs(t, err, auth.ErrLocked)
 }
 
-// Верный пароль деактивированного пользователя — не неудача: попытки не копятся в блокировку.
-func TestInactiveCorrectPasswordDoesNotLock(t *testing.T) {
+// Верный пароль деактивированного пользователя — не неудача: такие попытки не копятся в блокировку,
+// но и накопленные неудачи не сбрасывают.
+func TestInactiveCorrectPasswordDoesNotLockOrReset(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
+	for i := 0; i < 9; i++ {
+		_, _ = f.svc.Login(ctx, f.u.Email, "wrong", "")
+	}
 	require.NoError(t, f.db.Model(f.u).Update("is_active", false).Error)
 	for i := 0; i < 12; i++ {
 		_, err := f.svc.Login(ctx, f.u.Email, password, "")
 		require.ErrorIs(t, err, auth.ErrUserInactive, "попытка %d", i+1)
 	}
+	require.NoError(t, f.db.Model(f.u).Update("is_active", true).Error)
+	_, err := f.svc.Login(ctx, f.u.Email, "wrong", "")
+	require.ErrorIs(t, err, auth.ErrBadCredentials, "десятая неудача")
+	_, err = f.svc.Login(ctx, f.u.Email, password, "")
+	require.ErrorIs(t, err, auth.ErrLocked, "девять прежних неудач сохранились")
+}
+
+// Сбой базы до проверки пароля — не неудача: попытка возвращается, вход не блокируется.
+func TestLoginDatabaseErrorDoesNotCount(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	broken, err := gorm.Open(postgres.Open(testutil.SharedDSN(t)), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := broken.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	rdb := queue.NewRedis(testutil.SharedRedisAddr(t))
+	t.Cleanup(func() { _ = rdb.Close() })
+	cfg := &config.Config{JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: time.Hour}
+	down := auth.NewService(cfg, broken, rdb)
+
+	for i := 0; i < 15; i++ {
+		_, err := down.Login(ctx, f.u.Email, password, "")
+		require.Error(t, err)
+		require.NotErrorIs(t, err, auth.ErrLocked, "попытка %d", i+1)
+	}
+	_, err = f.svc.Login(ctx, f.u.Email, password, "")
+	require.NoError(t, err)
 }
 
 // Успешный вход сбрасывает счётчик: 9 неудач, успех, снова 9 неудач — блокировки нет.

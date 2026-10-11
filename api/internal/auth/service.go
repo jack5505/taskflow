@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -115,20 +116,28 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 		CheckPassword(dummyHash(), password)
 		return nil, s.failed(ctx, email, n)
 	case err != nil:
+		s.release(ctx, s.lock, email) // пароль не проверен — попытка не в счёт
 		return nil, fmt.Errorf("auth: find user: %w", err)
 	}
 	if !CheckPassword(u.PasswordHash, password) {
 		return nil, s.failed(ctx, email, n)
 	}
-	// Пароль верный — это не неудача, даже если пользователь деактивирован: попытку,
-	// засчитанную take, снимаем вместе со счётчиком.
+	if !u.IsActive {
+		// Пароль верный — не неудача: снимаем только эту попытку, накопленные неудачи остаются.
+		s.release(ctx, s.lock, email)
+		return nil, ErrUserInactive
+	}
 	if err := s.lock.reset(ctx, email); err != nil {
 		return nil, err
 	}
-	if !u.IsActive {
-		return nil, ErrUserInactive
-	}
 	return s.issue(ctx, &u, userAgent)
+}
+
+// release возвращает попытку, взятую take; сбой Redis только в лог — попытка истечёт с окном.
+func (s *Service) release(ctx context.Context, l lockout, id string) {
+	if err := l.release(ctx, id); err != nil {
+		slog.Warn("auth: lockout release", "err", err)
+	}
 }
 
 // failed — неверный email или пароль: попытка уже засчитана take, с maxFailures-й неудачи
