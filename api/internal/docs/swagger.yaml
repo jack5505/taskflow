@@ -353,6 +353,74 @@ definitions:
         maxLength: 64
         type: string
     type: object
+  sprint.Scope:
+    properties:
+      estimate_minutes:
+        type: integer
+      tasks:
+        type: integer
+      without_estimate:
+        type: integer
+    type: object
+  sprint.View:
+    properties:
+      closed_at:
+        type: string
+      created_at:
+        type: string
+      end_date:
+        example: "2026-10-24"
+        type: string
+      estimate_minutes:
+        type: integer
+      goal:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      overdue:
+        type: boolean
+      project_id:
+        type: string
+      start_date:
+        example: "2026-10-13"
+        type: string
+      state:
+        enum:
+        - planned
+        - active
+        - closed
+        type: string
+      tasks_count:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  sprint.request:
+    properties:
+      end_date:
+        example: "2026-10-24"
+        type: string
+        x-nullable: true
+      goal:
+        type: string
+        x-nullable: true
+      name:
+        maxLength: 300
+        type: string
+      start_date:
+        example: "2026-10-13"
+        type: string
+        x-nullable: true
+    type: object
+  sprint.startResponse:
+    properties:
+      scope:
+        $ref: '#/definitions/sprint.Scope'
+      sprint:
+        $ref: '#/definitions/sprint.View'
+    type: object
   task.AttachmentView:
     properties:
       author_id:
@@ -1687,6 +1755,89 @@ paths:
       summary: Восстановить проект
       tags:
       - projects
+  /api/v1/projects/{key}/sprints:
+    get:
+      description: 'Участник проекта. Порядок: активный, запланированные по дате начала,
+        завершённые (новые первыми). tasks_count и estimate_minutes — итог секции
+        (§7.4), overdue — активный спринт после end_date (§5.3).'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/sprint.View'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Спринты проекта
+      tags:
+      - sprints
+    post:
+      consumes:
+      - application/json
+      description: Менеджер (§2, §5.1). Состояние planned; без названия — «Спринт
+        N»; даты необязательны до запуска, end_date позже start_date и не дальше 42
+        дней.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: спринт
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/sprint.request'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/sprint.View'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Создать спринт
+      tags:
+      - sprints
   /api/v1/projects/{key}/tasks:
     get:
       description: 'Фильтры (повторяемые или через запятую): status, type, priority;
@@ -1835,6 +1986,158 @@ paths:
       summary: Создать задачу
       tags:
       - tasks
+  /api/v1/sprints/{id}:
+    delete:
+      description: Менеджер; только planned (§5.5), его задачи возвращаются в бэклог.
+        Иначе — 409 INVALID_TRANSITION.
+      parameters:
+      - description: id спринта
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: FORBIDDEN
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Удалить спринт
+      tags:
+      - sprints
+    get:
+      parameters:
+      - description: id спринта
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sprint.View'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Спринт
+      tags:
+      - sprints
+    patch:
+      consumes:
+      - application/json
+      description: Менеджер. Меняются только переданные поля; null очищает цель и
+        даты (у активного даты обязательны). Завершённый спринт не изменяется — 409
+        INVALID_TRANSITION (details.reason = closed).
+      parameters:
+      - description: id спринта
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: поля
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/sprint.request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sprint.View'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: FORBIDDEN
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Изменить спринт
+      tags:
+      - sprints
+  /api/v1/sprints/{id}/start:
+    post:
+      description: 'Менеджер (§5.2). Под блокировкой проекта: в проекте нет активного
+        (иначе 409 SPRINT_ALREADY_ACTIVE), даты заполнены, end позже start, не больше
+        42 дней, в спринте есть задачи (иначе 409 INVALID_TRANSITION, details.reason:
+        dates | empty | not_planned). Фиксирует объём на старте: задачи, сумма оценок,
+        сколько без оценки.'
+      parameters:
+      - description: id спринта
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sprint.startResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: FORBIDDEN
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: SPRINT_ALREADY_ACTIVE, INVALID_TRANSITION, PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Запустить спринт
+      tags:
+      - sprints
   /api/v1/tasks/{task_key}:
     delete:
       description: 'Мягкое удаление (§4): задача пропадает с доски, из бэклога, поиска
