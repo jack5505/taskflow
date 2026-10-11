@@ -95,8 +95,14 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		telegram.RegisterGroupEvents(rt, d, telegram.NewGroupEvents(g, rdb, telegram.NewQueue(client)))
 		telegram.RegisterPersonal(rt, d, g, tasks, rdb, client, cfg.BaseURL)
 		telegram.RegisterTake(rt, telegram.NewTaskCommands(g, tasks, projects, groups))
+		telegram.RegisterHelp(rt)
 		telegram.Mount(mux, b, rt, rdb, client)
 		digest = telegram.NewDigest(g, client, cfg.BaseURL)
+		go func() { // меню отдельно для личных чатов и групп (§8.5); недоступный Telegram не держит старт
+			if err := telegram.SetMyCommands(ctx, b, rt); err != nil && ctx.Err() == nil {
+				slog.Error("telegram: commands menu", "err", err)
+			}
+		}()
 	}
 
 	srv := queue.NewServer(cfg.RedisAddr, 10)
