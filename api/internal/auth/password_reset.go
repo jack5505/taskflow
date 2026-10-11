@@ -131,17 +131,15 @@ func (s *Service) passwordLink(ctx context.Context, userID uuid.UUID) (string, e
 }
 
 // SetPassword задаёт пароль по токену из ссылки. Гасятся все неиспользованные ссылки
-// пользователя, отзываются все сессии (§9.1: смена пароля), сбрасывается счётчик неудачных входов.
+// пользователя, отзываются все сессии (§9.1: смена пароля), сбрасываются счётчики неудачных входов
+// и неверного текущего пароля при смене в профиле.
 // bcrypt считается только после проверки токена: открытый эндпоинт не должен тратить CPU на мусор.
 func (s *Service) SetPassword(ctx context.Context, token, password string) error {
-	if utf8.RuneCountInString(password) < MinPasswordLength {
-		return passwordFieldError("не короче 10 символов")
-	}
-	if len(password) > MaxPasswordBytes {
-		return passwordFieldError("не длиннее 72 байт")
+	if err := validatePassword("password", password); err != nil {
+		return err
 	}
 
-	var email string
+	var email, userID string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var pt PasswordToken
 		res := tx.Raw(`SELECT id, user_id, token_hash, expires_at, used_at, created_at
@@ -175,20 +173,34 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 			Update("revoked_at", now).Error; err != nil {
 			return fmt.Errorf("auth: revoke sessions: %w", err)
 		}
-		email = u.Email
+		email, userID = u.Email, u.ID.String()
 		return nil
 	})
 	if err != nil {
 		return err
 	}
+	// Пароль уже сменён; при сбое Redis блокировки истекут сами.
 	if err := s.lock.reset(ctx, email); err != nil {
-		// Пароль уже сменён; блокировка истечёт сама.
 		slog.Warn("auth: lockout reset after password set", "err", err)
+	}
+	if err := s.pwLock.reset(ctx, userID); err != nil {
+		slog.Warn("auth: pwchange lockout reset after password set", "err", err)
 	}
 	return nil
 }
 
-func passwordFieldError(reason string) error {
+// validatePassword — правила нового пароля (§7.1) для установки по ссылке и смены в профиле;
+// нарушение — 400 VALIDATION_FAILED у поля field.
+func validatePassword(field, password string) error {
+	reason := ""
+	switch {
+	case utf8.RuneCountInString(password) < MinPasswordLength:
+		reason = "не короче 10 символов"
+	case len(password) > MaxPasswordBytes:
+		reason = "не длиннее 72 байт"
+	default:
+		return nil
+	}
 	return apierr.BadRequest(apierr.CodeValidation, "Некорректные данные запроса").
-		With("fields", []apierr.FieldError{{Field: "password", Reason: reason}})
+		With("fields", []apierr.FieldError{{Field: field, Reason: reason}})
 }

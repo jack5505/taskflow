@@ -7,7 +7,9 @@ import {
   formatCountdown,
   isKnownTimeZone,
   linkCodeFrom,
+  passwordChangeErrors,
   profileChanges,
+  retryAfterText,
   secondsLeft,
   telegramAccount,
 } from "./logic";
@@ -113,5 +115,33 @@ describe("Telegram (§8.1)", () => {
     expect(formatCountdown(65)).toBe("1:05");
     expect(formatCountdown(0)).toBe("0:00");
     expect(formatCountdown(-3)).toBe("0:00");
+  });
+});
+
+describe("смена пароля (§7.8)", () => {
+  const ok = { current: "старый пароль", next: "новый пароль 1", repeat: "новый пароль 1" };
+
+  it("верная форма — без ошибок", () => {
+    expect(passwordChangeErrors(ok)).toEqual({});
+  });
+
+  it("пустой текущий, короткий новый, несовпадающий повтор", () => {
+    expect(passwordChangeErrors({ current: "", next: "short", repeat: "other" })).toEqual({
+      current: "Введите текущий пароль",
+      next: "Пароль должен быть не короче 10 символов",
+      repeat: "Пароли не совпадают",
+    });
+  });
+
+  it("новый — по правилам §7.1, предел 72 байта", () => {
+    const long = "пароль".repeat(7); // 42 символа, 84 байта
+    expect(passwordChangeErrors({ ...ok, next: long, repeat: long }).next).toMatch(/72 байт/);
+  });
+
+  it("срок блокировки из details.retry_after_seconds", () => {
+    expect(retryAfterText({ retry_after_seconds: 899 })).toBe("Попробуйте через 15 мин.");
+    expect(retryAfterText({ retry_after_seconds: 30 })).toBe("Попробуйте через 1 мин.");
+    expect(retryAfterText({})).toBe("");
+    expect(retryAfterText(undefined)).toBe("");
   });
 });

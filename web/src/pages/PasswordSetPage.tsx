@@ -4,8 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { api } from "../api";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { signOut } from "../auth/session";
-
-const MIN_PASSWORD = 10; // ТЗ §7.1
+import { MIN_PASSWORD, newPasswordError } from "../lib/password";
 
 // Установка пароля по ссылке из письма /password-set?token=… (ТЗ §7.1, §9.1): и для нового
 // пользователя, и для восстановления. Ссылка одноразовая, действует 24 часа.
@@ -41,8 +40,9 @@ export function PasswordSetPage() {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (password.length < MIN_PASSWORD) {
-      setLocalError(`Пароль должен быть не короче ${MIN_PASSWORD} символов`);
+    const tooWeak = newPasswordError(password);
+    if (tooWeak) {
+      setLocalError(tooWeak);
       return;
     }
     if (password !== repeat) {

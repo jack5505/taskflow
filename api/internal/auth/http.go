@@ -47,6 +47,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.POST("/logout-all", h.RequireAuth(), h.logoutAll)
 	g.POST("/password-reset", h.passwordReset)
 	g.POST("/password-set", h.passwordSet)
+	g.POST("/password-change", h.RequireAuth(), h.passwordChange)
 }
 
 type loginRequest struct {
@@ -205,6 +206,39 @@ func (h *Handlers) passwordSet(c *gin.Context) {
 		return
 	}
 	if err := h.svc.SetPassword(c.Request.Context(), req.Token, req.Password); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+type passwordChangeRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required,max=200"`
+	NewPassword     string `json:"new_password" binding:"required,max=200"`
+}
+
+// passwordChange — смена пароля в профиле с вводом текущего (ТЗ §7.8, §9.1).
+//
+// @Summary      Сменить пароль
+// @Description  Новый пароль — по тем же правилам, что при установке: не короче 10 символов и не длиннее 72 байт. После смены отзываются все сессии пользователя, кроме текущей — той, чей refresh-токен пришёл в cookie refresh_token (без cookie отзываются все). Неверный текущий пароль засчитывается в счётчик: после 10 неудач за 15 минут смена пароля закрыта на 15 минут, даже с верным.
+// @Tags         auth
+// @Accept       json
+// @Security     BearerAuth
+// @Param        body  body  passwordChangeRequest  true  "текущий и новый пароль"
+// @Success      204
+// @Failure      400  {object}  apierr.Response  "VALIDATION_FAILED: details.fields[current_password] — неверный текущий пароль, details.fields[new_password] — новый не подходит по правилам"
+// @Failure      401  {object}  apierr.Response
+// @Failure      429  {object}  apierr.Response  "RATE_LIMITED: слишком много неверных попыток, details.retry_after_seconds"
+// @Router       /api/v1/auth/password-change [post]
+func (h *Handlers) passwordChange(c *gin.Context) {
+	var req passwordChangeRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	// Cookie с refresh-токеном приходит сюда (её Path — /api/v1/auth) и определяет текущую сессию.
+	// CSRF-заголовок не нужен: запрос авторизует Bearer-токен, а не cookie.
+	keep, _ := c.Cookie(RefreshCookie)
+	if err := h.svc.ChangePassword(c.Request.Context(), CurrentUser(c), req.CurrentPassword, req.NewPassword, keep); err != nil {
 		httpserver.Abort(c, err)
 		return
 	}

@@ -3,14 +3,17 @@ import type { MeProfile } from "../api/client";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { timeZones } from "../projects/logic";
-import { useLogoutAll, usePasswordLink, useUpdateMe } from "./hooks";
+import { useLogoutAll, usePasswordChange, usePasswordLink, useUpdateMe } from "./hooks";
+import { MIN_PASSWORD } from "../lib/password";
 import {
   PERSONAL_EVENTS,
   changedNotifications,
   displayNameError,
   effectiveNotifications,
   isKnownTimeZone,
+  passwordChangeErrors,
   profileChanges,
+  retryAfterText,
 } from "./logic";
 import { TelegramBlock } from "./TelegramBlock";
 
@@ -129,43 +132,18 @@ function AccountForm({ me }: { me: MeProfile }) {
 }
 
 /**
- * Пароль и сессии (§7.8, §9.1). Пароль меняется по ссылке из письма (в API нет смены с вводом
- * текущего); после установки нового пароля сервер отзывает все сессии. «Выйти везде» отзывает
- * сессии сразу, в том числе эту.
+ * Пароль и сеансы (§7.8, §9.1). Смена пароля — с вводом текущего: после неё сервер отзывает все
+ * остальные сессии, эта остаётся. Забытый текущий пароль — ссылка на почту, как при восстановлении.
+ * «Выйти везде» отзывает сессии сразу, в том числе эту.
  */
 function SecurityBlock({ me }: { me: MeProfile }) {
-  const password = usePasswordLink();
   const logoutAll = useLogoutAll();
-  const email = me.email ?? "";
-
-  const passwordError = password.isError
-    ? (fieldErrors(parseApiError(password.error)).find((f) => f.field === "email")?.reason ??
-      errorText(password.error, "Не удалось отправить письмо, попробуйте ещё раз"))
-    : "";
-
   return (
     <section className="panel">
       <h3>Пароль и сеансы</h3>
-      {password.isSuccess ? (
-        <p className="notice">
-          Письмо со ссылкой отправлено на {email}. Ссылка действует 24 часа; после установки нового пароля потребуется
-          войти заново на всех устройствах. Если письма нет, проверьте спам и повторите не раньше чем через минуту.
-        </p>
-      ) : (
-        <p className="muted">Для смены пароля пришлём на {email} ссылку, по которой задаётся новый пароль.</p>
-      )}
-      {passwordError && <p role="alert">{passwordError}</p>}
+      <PasswordChangeForm email={me.email ?? ""} />
       {logoutAll.isError && <p role="alert">{errorText(logoutAll.error, "Не удалось выйти на всех устройствах")}</p>}
       <div className="actions">
-        <button
-          type="button"
-          disabled={password.isPending || !email}
-          onClick={() =>
-            window.confirm(`Отправить ссылку для смены пароля на ${email}?`) && password.mutate(email)
-          }
-        >
-          {password.isPending ? "Отправляем…" : "Сменить пароль"}
-        </button>
         <button
           type="button"
           className="danger"
@@ -179,6 +157,103 @@ function SecurityBlock({ me }: { me: MeProfile }) {
         </button>
       </div>
     </section>
+  );
+}
+
+const emptyPasswords = { current: "", next: "", repeat: "" };
+
+function PasswordChangeForm({ email }: { email: string }) {
+  const [form, setForm] = useState(emptyPasswords);
+  const [touched, setTouched] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const change = usePasswordChange();
+  const link = usePasswordLink();
+
+  const apiError = parseApiError(change.error);
+  const fields = fieldErrors(apiError);
+  const local = touched ? passwordChangeErrors(form) : {};
+  const serverCurrent = fields.find((f) => f.field === "current_password")?.reason;
+  const serverNext = fields.find((f) => f.field === "new_password")?.reason;
+  const errors = { current: local.current || serverCurrent, next: local.next || serverNext, repeat: local.repeat };
+  // Ошибка без поля формы (429, сеть, иное поле) — общей строкой, чтобы отказ не пропал молча.
+  const generalError =
+    change.isError && !serverCurrent && !serverNext
+      ? [errorText(change.error), apiError?.status === 429 ? retryAfterText(apiError.details) : ""].filter(Boolean).join(" ")
+      : "";
+  const linkError = link.isError
+    ? (fieldErrors(parseApiError(link.error)).find((f) => f.field === "email")?.reason ??
+      errorText(link.error, "Не удалось отправить письмо, попробуйте ещё раз"))
+    : "";
+
+  const edit = (key: keyof typeof form, v: string) => {
+    setForm({ ...form, [key]: v });
+    setSaved(false);
+    if (change.isError) change.reset();
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setTouched(true);
+    if (Object.keys(passwordChangeErrors(form)).length > 0) return;
+    change.mutate(
+      { current: form.current, next: form.next },
+      {
+        onSuccess: () => {
+          setForm(emptyPasswords);
+          setTouched(false);
+          setSaved(true);
+        },
+      },
+    );
+  };
+
+  const input = (key: keyof typeof form, label: string, autoComplete: string) => (
+    <label>
+      {label}
+      <input
+        type="password"
+        autoComplete={autoComplete}
+        value={form[key]}
+        onChange={(e) => edit(key, e.target.value)}
+        aria-invalid={errors[key] ? true : undefined}
+      />
+      {errors[key] && <span role="alert">{errors[key]}</span>}
+    </label>
+  );
+
+  return (
+    <form className="form" onSubmit={submit} noValidate aria-label="Смена пароля">
+      {input("current", "Текущий пароль", "current-password")}
+      {input("next", "Новый пароль", "new-password")}
+      {input("repeat", "Повторите новый пароль", "new-password")}
+      <span className="hint">
+        Не короче {MIN_PASSWORD} символов. После смены пароля остальные сеансы завершатся, этот останется.
+      </span>
+      {generalError && <p role="alert">{generalError}</p>}
+      {saved && <p className="notice">Пароль изменён. Остальные сеансы завершены.</p>}
+      <div className="actions">
+        <button type="submit" className="primary" disabled={change.isPending}>
+          {change.isPending ? "Сохраняем…" : "Сменить пароль"}
+        </button>
+        <button
+          type="button"
+          className="link"
+          disabled={link.isPending || !email}
+          onClick={() =>
+            window.confirm(`Отправить ссылку для установки нового пароля на ${email}?`) && link.mutate(email)
+          }
+        >
+          Забыли текущий пароль?
+        </button>
+      </div>
+      {link.isSuccess && (
+        <p className="notice">
+          Письмо со ссылкой отправлено на {email}. Ссылка действует 24 часа; после установки нового пароля потребуется
+          войти заново на всех устройствах. Если письма нет, проверьте спам и повторите не раньше чем через минуту.
+        </p>
+      )}
+      {linkError && <p role="alert">{linkError}</p>}
+    </form>
   );
 }
 
