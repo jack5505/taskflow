@@ -270,3 +270,14 @@ func CurrentUser(c *gin.Context) *user.User {
 	}
 	return nil
 }
+
+// RequireSystemAdmin — middleware после RequireAuth: только администратор системы (§2).
+func RequireSystemAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if u := CurrentUser(c); u == nil || !u.IsSystemAdmin {
+			httpserver.Abort(c, apierr.Forbidden("Доступно только администратору системы"))
+			return
+		}
+		c.Next()
+	}
+}

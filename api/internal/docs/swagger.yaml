@@ -88,6 +88,38 @@ definitions:
       updated_at:
         type: string
     type: object
+  users.createRequest:
+    properties:
+      display_name:
+        description: 1–80 после обрезки пробелов проверяет сервис
+        maxLength: 200
+        type: string
+      email:
+        maxLength: 254
+        type: string
+      is_system_admin:
+        type: boolean
+      timezone:
+        example: Europe/Moscow
+        maxLength: 64
+        type: string
+    required:
+    - display_name
+    - email
+    type: object
+  users.updateRequest:
+    properties:
+      display_name:
+        maxLength: 200
+        type: string
+      is_active:
+        type: boolean
+      is_system_admin:
+        type: boolean
+      timezone:
+        maxLength: 64
+        type: string
+    type: object
 info:
   contact: {}
   description: Система управления задачами и временем с Telegram-ботом. Единый формат
@@ -254,6 +286,122 @@ paths:
       summary: Проверка связи
       tags:
       - system
+  /api/v1/users:
+    get:
+      description: Администратору — все пользователи целиком (user.User). Менеджеру
+        проекта — только активные и только id, email, display_name (user.Brief) —
+        для добавления в проект.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: администратору; менеджеру — массив user.Brief
+          schema:
+            items:
+              $ref: '#/definitions/user.User'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор и не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Пользователи
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: Пользователь создаётся без пароля, на email уходит письмо со ссылкой
+        установки пароля (ТЗ §7.1). timezone по умолчанию Europe/Moscow.
+      parameters:
+      - description: пользователь
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/users.createRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/user.User'
+        "400":
+          description: VALIDATION_FAILED, в том числе email уже используется
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор системы'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Создать пользователя
+      tags:
+      - users
+  /api/v1/users/{id}:
+    patch:
+      consumes:
+      - application/json
+      description: 'Меняются только переданные поля. Последнего активного администратора
+        системы нельзя деактивировать или лишить флага (400, поле is_active / is_system_admin).
+        is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram
+        снимается; если пользователь — единственный активный менеджер проекта, 409
+        LAST_MANAGER со списком проектов в details.projects.'
+      parameters:
+      - description: id пользователя
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: поля для изменения
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/users.updateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.User'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор системы'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: LAST_MANAGER
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Изменить пользователя
+      tags:
+      - users
   /health:
     get:
       description: Проверяет PostgreSQL и Redis. 200 — всё доступно, 503 — есть недоступный

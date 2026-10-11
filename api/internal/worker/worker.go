@@ -50,6 +50,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	mux := d.Mux()
 	mux.Handle(mail.TaskType, mail.Handler(smtp))
 	mux.Handle(auth.TaskPasswordReset, auth.PasswordResetHandler(authSvc))
+	mux.Handle(auth.TaskPasswordInvite, auth.PasswordInviteHandler(authSvc))
 
 	srv := queue.NewServer(cfg.RedisAddr, 10)
 	if err := srv.Start(mux); err != nil {

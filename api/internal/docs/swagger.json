@@ -248,6 +248,177 @@
                 }
             }
         },
+        "/api/v1/users": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Администратору — все пользователи целиком (user.User). Менеджеру проекта — только активные и только id, email, display_name (user.Brief) — для добавления в проект.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Пользователи",
+                "responses": {
+                    "200": {
+                        "description": "администратору; менеджеру — массив user.Brief",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/user.User"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не администратор и не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Пользователь создаётся без пароля, на email уходит письмо со ссылкой установки пароля (ТЗ §7.1). timezone по умолчанию Europe/Moscow.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Создать пользователя",
+                "parameters": [
+                    {
+                        "description": "пользователь",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/users.createRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/user.User"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED, в том числе email уже используется",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не администратор системы",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/{id}": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Меняются только переданные поля. Последнего активного администратора системы нельзя деактивировать или лишить флага (400, поле is_active / is_system_admin). is_active=false — деактивация (ТЗ §3.1): сессии отзываются, привязка Telegram снимается; если пользователь — единственный активный менеджер проекта, 409 LAST_MANAGER со списком проектов в details.projects.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Изменить пользователя",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id пользователя",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "поля для изменения",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/users.updateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.User"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не администратор системы",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "LAST_MANAGER",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Проверяет PostgreSQL и Redis. 200 — всё доступно, 503 — есть недоступный компонент.",
@@ -404,6 +575,51 @@
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "users.createRequest": {
+            "type": "object",
+            "required": [
+                "display_name",
+                "email"
+            ],
+            "properties": {
+                "display_name": {
+                    "description": "1–80 после обрезки пробелов проверяет сервис",
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "email": {
+                    "type": "string",
+                    "maxLength": 254
+                },
+                "is_system_admin": {
+                    "type": "boolean"
+                },
+                "timezone": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "example": "Europe/Moscow"
+                }
+            }
+        },
+        "users.updateRequest": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_system_admin": {
+                    "type": "boolean"
+                },
+                "timezone": {
+                    "type": "string",
+                    "maxLength": 64
                 }
             }
         }
