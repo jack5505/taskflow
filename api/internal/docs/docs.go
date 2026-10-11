@@ -3481,6 +3481,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "spent_minutes": {
+                    "type": "integer"
+                },
                 "total": {
                     "type": "integer"
                 }

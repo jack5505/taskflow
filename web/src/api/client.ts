@@ -232,6 +232,7 @@ export interface SprintSummary {
   estimate_minutes?: number;
   moved?: number;
   moved_keys?: string[];
+  spent_minutes?: number;
   total?: number;
 }
 

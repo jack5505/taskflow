@@ -374,6 +374,8 @@ definitions:
         items:
           type: string
         type: array
+      spent_minutes:
+        type: integer
       total:
         type: integer
     type: object
