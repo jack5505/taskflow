@@ -147,6 +147,12 @@ func TestRightsTable(t *testing.T) {
 	var created struct{ Key string }
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	taskPath := "/api/v1/tasks/" + created.Key
+	for who, token := range map[string]string{"manager": w.manager, "member": w.member} {
+		rec := w.do("POST", taskPath+"/restore", token, "")
+		require.Equal(t, http.StatusForbidden, rec.Code, "%s: восстанавливать задачи — только администратор", who)
+	}
+	rec = w.do("DELETE", taskPath, w.member, "")
+	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: удалять задачи — нет")
 
 	// Пользователь без роли в проекте не видит его ни через один маршрут проекта — 404.
 	for _, r := range []row{
