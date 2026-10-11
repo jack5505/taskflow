@@ -30,7 +30,7 @@ API="$CHECK-api"
 REDIS="$CHECK-redis"
 WAIT_SECONDS=${RESTORE_CHECK_WAIT:-120}
 
-# shellcheck disable=SC2329  # вызывается из trap EXIT
+# shellcheck disable=SC2317,SC2329  # вызывается из trap EXIT
 cleanup() {
   docker rm -fv "$API" "$REDIS" "$PG" >/dev/null 2>&1 || true
   docker network rm "$CHECK" >/dev/null 2>&1 || true
