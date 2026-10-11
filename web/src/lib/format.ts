@@ -64,3 +64,18 @@ export function formatDateTime(value: string | Date | null | undefined, timeZone
   const p = parts(value, timeZone);
   return p ? `${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}` : "";
 }
+
+/** Размер файла: «512 Б», «1,5 КБ», «12 МБ». */
+export function formatBytes(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n) || n < 0) return "";
+  const units = ["Б", "КБ", "МБ", "ГБ"];
+  let v = n;
+  let i = 0;
+  // По округлённому значению: 1048575 Б — «1 МБ», а не «1024 КБ».
+  while (Math.round(v) >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  const s = i === 0 || v >= 10 ? String(Math.round(v)) : v.toFixed(1).replace(".", ",").replace(",0", "");
+  return `${s} ${units[i]}`;
+}
