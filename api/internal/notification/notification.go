@@ -24,6 +24,11 @@ const (
 	TypeMemberRemoved = "member_removed"
 	TypeTaskDeleted   = "task_deleted"
 	TypeComment       = "comment"
+	TypeAssigned      = "assigned"           // вас назначили исполнителем
+	TypeStatus        = "status"             // смена статуса вашей задачи (в том числе принята или отменена)
+	TypeRework        = "rework"             // вашу задачу вернули на доработку (с комментарием)
+	TypeReview        = "review_requested"   // задача, где вы автор, отправлена на проверку
+	TypeDeactivated   = "user_deactivated"   // менеджеру: участник деактивирован, его задачи освобождены (§3.1)
 	TypeTimerStopped  = "timer_auto_stopped" // таймер остановлен на отметке 12 часов (§6.4)
 	TypeTimerTrimmed  = "worklog_trimmed"    // запись таймера обрезана по дневному лимиту (§6.4)
 )
