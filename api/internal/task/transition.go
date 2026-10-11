@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -65,12 +66,13 @@ type actor struct {
 }
 
 // Transition — POST /tasks/{key}/transition (§4). Строка задачи блокируется FOR UPDATE.
+// Нового исполнителя (для переоткрытия) блокируем заранее; проверяет его reopen.
 func (s *Service) Transition(ctx context.Context, u *user.User, key string, in TransitionInput) (*Task, error) {
-	var lock []uuid.UUID
+	var pre preLock
 	if in.AssigneeID != nil {
-		lock = append(lock, *in.AssigneeID)
+		pre.users = []uuid.UUID{*in.AssigneeID}
 	}
-	return s.change(ctx, u, key, nil, lock, func(tx *gorm.DB, t *Task, a actor) error {
+	return s.change(ctx, u, key, nil, pre, func(tx *gorm.DB, t *Task, a actor) error {
 		return applyTransition(tx, t, a, in)
 	})
 }
@@ -80,7 +82,7 @@ func (s *Service) Transition(ctx context.Context, u *user.User, key string, in T
 // в том числе менеджеру (переназначить — PATCH). Задачу в работе без исполнителя (например,
 // после деактивации исполнителя) берёт любой участник.
 func (s *Service) Take(ctx context.Context, u *user.User, key string) (*Task, error) {
-	return s.change(ctx, u, key, nil, nil, func(tx *gorm.DB, t *Task, a actor) error {
+	return s.change(ctx, u, key, nil, preLock{}, func(tx *gorm.DB, t *Task, a actor) error {
 		mine := t.AssigneeID != nil && *t.AssigneeID == u.ID
 		switch {
 		case mine && t.Status == StatusInProgress:
@@ -114,17 +116,26 @@ var (
 	errUserBlocked = apierr.Unauthorized("Пользователь деактивирован")
 )
 
-// change — общая часть изменений задачи. Порядок блокировок тот же, что у деактивации
-// («пользователь → задачи → проект»): сначала FOR SHARE строк действующего пользователя и
-// будущих исполнителей (lockUsers), затем FOR UPDATE строки задачи, затем FOR SHARE проекта.
-// Права берутся из строк под блокировкой, а не из снимка при входе. ifMatch — сверка version.
-// После fn — version+1 и сохранение; fn, вернувший errNoChange, ничего не меняет.
-func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch *int, lockUsers []uuid.UUID,
+// preLock — строки, которые change() блокирует FOR SHARE раньше строки задачи: будущие
+// исполнители (деактивация берёт FOR UPDATE пользователя, затем его задачи) и целевые спринты
+// (закрытие спринта блокирует спринт, затем его задачи). Только блокировка — проверяет их fn
+// после проверки прав, чтобы ошибки шли в порядке 404 → 403 → 400.
+type preLock struct {
+	users, sprints []uuid.UUID
+}
+
+// change — общая часть изменений задачи. Порядок блокировок тот же, что у деактивации и закрытия
+// спринта: FOR SHARE строк действующего пользователя и pre, затем FOR UPDATE строки задачи,
+// затем FOR SHARE проекта. Права берутся из строк под блокировкой, а не из снимка при входе.
+// ifMatch — версии из If-Match: nil — без сверки, иначе версия задачи должна быть в списке.
+// После fn — version+1 и сохранение; fn, вернувший errNoChange, ничего не меняет — тогда
+// возвращается задача, какой она была до fn.
+func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch []int, pre preLock,
 	fn func(*gorm.DB, *Task, actor) error) (*Task, error) {
 	if keyRe.FindStringSubmatch(key) == nil {
 		return nil, ErrNotFound
 	}
-	var t Task
+	var t, before Task
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var me []struct {
 			IsSystemAdmin bool
@@ -136,10 +147,11 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		if len(me) == 0 || !me[0].IsActive {
 			return errUserBlocked
 		}
-		for _, id := range lockUsers {
-			if err := lockActiveUser(tx, id); err != nil {
-				return err
-			}
+		if err := lockShare(tx, "users", pre.users); err != nil {
+			return err
+		}
+		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
+			return err
 		}
 		res := tx.Raw(`SELECT * FROM tasks WHERE key = ? AND deleted_at IS NULL FOR UPDATE`, key).Scan(&t)
 		if res.Error != nil {
@@ -167,34 +179,25 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		if err := project.EnsureWritable(&p); err != nil {
 			return err
 		}
-		if ifMatch != nil && *ifMatch != t.Version {
+		if ifMatch != nil && !slices.Contains(ifMatch, t.Version) {
 			// §3.3: чужая правка — 409 с текущим состоянием, чтобы интерфейс показал её.
-			current := t
 			return apierr.Conflict(apierr.CodeVersionConflict, "Задачу уже изменил другой пользователь").
-				With("current", current).With("expected_version", *ifMatch)
+				With("current", t).With("expected_version", ifMatch)
 		}
 		_, source := audit.From(ctx)
 		a := actor{user: u, member: role != "", manager: me[0].IsSystemAdmin || role == project.RoleManager, source: source}
-		before := t.Version
+		before = t
 		if err := fn(tx, &t, a); err != nil {
 			return err
 		}
-		t.Version = before + 1
+		t.Version = before.Version + 1
 		return tx.Model(&t).Select("*").Omit("CreatedAt").Updates(&t).Error
 	})
 	if errors.Is(err, errNoChange) {
-		return s.reload(ctx, key)
+		return &before, nil
 	}
 	if err != nil {
 		return nil, err
-	}
-	return &t, nil
-}
-
-func (s *Service) reload(ctx context.Context, key string) (*Task, error) {
-	var t Task
-	if err := s.db.WithContext(ctx).First(&t, "key = ?", key).Error; err != nil {
-		return nil, fmt.Errorf("task: reload: %w", err)
 	}
 	return &t, nil
 }
@@ -313,7 +316,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 }
 
 // reopen — §4 done → in_progress: исполнитель сохраняется; деактивированного менеджер обязан
-// заменить активным (его строка уже под FOR SHARE — см. Transition). Из закрытого спринта задача
+// заменить активным участником (его строка уже под FOR SHARE — см. Transition). Из закрытого спринта задача
 // переходит в активный, нет активного — в бэклог. Спринт читается без блокировки: закрытие спринта
 // блокирует спринт, затем его задачи — встречная блокировка отсюда дала бы deadlock; в худшем случае
 // задача попадёт в только что закрытый спринт и уйдёт при следующем переносе.
@@ -360,7 +363,7 @@ func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
 // кто действует (by), публикуется task.assigned — уведомление назначенному (§8.7);
 // взятие себе публикуется как переход.
 func setAssignee(tx *gorm.DB, t *Task, id *uuid.UUID, by uuid.UUID) error {
-	if sameID(t.AssigneeID, id) {
+	if samePtr(t.AssigneeID, id) {
 		return nil
 	}
 	if err := writeHistory(tx, t.ID, "assignee_id", t.AssigneeID, id); err != nil {
@@ -377,7 +380,7 @@ func setAssignee(tx *gorm.DB, t *Task, id *uuid.UUID, by uuid.UUID) error {
 
 // moveTo — перенос в секцию (спринт или бэклог) в её конец, с записью в историю.
 func moveTo(tx *gorm.DB, t *Task, sprintID *uuid.UUID) error {
-	if sameID(t.SprintID, sprintID) {
+	if samePtr(t.SprintID, sprintID) {
 		return nil
 	}
 	if err := writeHistory(tx, t.ID, "sprint_id", t.SprintID, sprintID); err != nil {
@@ -389,10 +392,6 @@ func moveTo(tx *gorm.DB, t *Task, sprintID *uuid.UUID) error {
 	}
 	t.SprintID, t.Position = sprintID, pos
 	return nil
-}
-
-func sameID(a, b *uuid.UUID) bool {
-	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
 // alreadyTaken — 409 TASK_ALREADY_TAKEN «Задача TM-42 уже в работе, исполнитель: Иван Петров» (§8.4).

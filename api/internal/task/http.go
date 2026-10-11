@@ -193,12 +193,43 @@ func respond(c *gin.Context, status int, t *Task) {
 	c.JSON(status, t)
 }
 
-// ifMatch — версия из If-Match: 5, "5" или W/"5".
-func ifMatch(c *gin.Context) (int, bool) {
-	v := strings.TrimSpace(c.GetHeader("If-Match"))
-	v = strings.Trim(strings.TrimPrefix(v, "W/"), `"`)
-	n, err := strconv.Atoi(v)
-	return n, err == nil && n >= 1
+func ifMatchError(reason string) error {
+	return apierr.BadRequest(apierr.CodeValidation, "Нужен заголовок If-Match с версией задачи").
+		With("fields", []apierr.FieldError{{Field: "If-Match", Reason: reason}})
+}
+
+// ifMatch — версии из If-Match по RFC 9110 (сильное сравнение): "*" — без сверки (nil),
+// иначе список сильных ETag вида "5", "6". Слабый W/"5" для If-Match не годится.
+func ifMatch(c *gin.Context) ([]int, error) {
+	h := strings.TrimSpace(c.GetHeader("If-Match"))
+	if h == "" {
+		return nil, ifMatchError("версия задачи из ETag карточки")
+	}
+	if h == "*" {
+		return nil, nil
+	}
+	var versions []int
+	for tag := range strings.SplitSeq(h, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if strings.HasPrefix(tag, "W/") {
+			return nil, ifMatchError("нужен сильный ETag, без W/")
+		}
+		if len(tag) < 2 || tag[0] != '"' || tag[len(tag)-1] != '"' {
+			return nil, ifMatchError(`ETag в кавычках, например "5"`)
+		}
+		n, err := strconv.Atoi(tag[1 : len(tag)-1])
+		if err != nil || n < 1 {
+			return nil, ifMatchError("версия задачи из ETag карточки")
+		}
+		versions = append(versions, n)
+	}
+	if len(versions) == 0 {
+		return nil, ifMatchError("версия задачи из ETag карточки")
+	}
+	return versions, nil
 }
 
 // updateRequest — поля PATCH; null очищает необязательное поле.
@@ -212,38 +243,47 @@ type updateRequest struct {
 	EstimateMinutes Opt[int]       `json:"estimate_minutes" swaggertype:"integer" extensions:"x-nullable"`
 	DueDate         Opt[string]    `json:"due_date" swaggertype:"string" example:"2026-10-31" extensions:"x-nullable"`
 	Labels          Opt[[]string]  `json:"labels" swaggertype:"array,string"`
+	Status          Opt[string]    `json:"status" swaggerignore:"true"` // только чтобы отклонить: статус — через /transition
 }
 
 // update — изменение полей задачи.
 //
 // @Summary      Изменить задачу
-// @Description  Меняются только переданные поля, кроме статуса (он — через /transition); null очищает необязательное поле. Заголовок If-Match — version из карточки (ETag); если задачу уже изменили — 409 VERSION_CONFLICT, в details.current актуальная задача. Права (§2): автор, исполнитель или менеджер; исполнитель и спринт — только менеджер; оценку задачи в работе и позже — только менеджер. Исполнителя нельзя менять в закрытой задаче и снимать с задачи в работе (§4).
+// @Description  Меняются только переданные поля; null очищает необязательное поле; поле status — 400 (статус меняется через /transition). Заголовок If-Match — ETag карточки ("5"), список ETag или *; сравнение сильное, W/"5" — 400. Если задачу уже изменили — 409 VERSION_CONFLICT, в details.current актуальная задача. Права (§2): автор, исполнитель или менеджер; исполнитель (активный участник) и спринт (не завершённый) — только менеджер; задачу из завершённого спринта не переносят; оценку задачи, которая была в работе (в том числе потом отменённой), — только менеджер. Исполнителя нельзя менять в закрытой задаче и снимать с задачи в работе (§4).
 // @Tags         tasks
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        task_key  path      string         true  "ключ задачи"
-// @Param        If-Match  header    string         true  "текущая version задачи"
+// @Param        If-Match  header    string         true  "ETag карточки (версия в кавычках), список ETag или *"
 // @Param        body      body      updateRequest  true  "поля для изменения"
 // @Success      200       {object}  Task
-// @Failure      400       {object}  apierr.Response  "VALIDATION_FAILED, в том числе нет If-Match"
+// @Failure      400       {object}  apierr.Response  "VALIDATION_FAILED, в том числе нет If-Match, слабый ETag, передан status"
 // @Failure      401       {object}  apierr.Response
 // @Failure      403       {object}  apierr.Response  "FORBIDDEN"
 // @Failure      404       {object}  apierr.Response  "NOT_FOUND"
 // @Failure      409       {object}  apierr.Response  "VERSION_CONFLICT, PROJECT_ARCHIVED"
 // @Router       /api/v1/tasks/{task_key} [patch]
 func (h *Handlers) update(c *gin.Context) {
-	version, ok := ifMatch(c)
-	if !ok {
-		httpserver.Abort(c, apierr.BadRequest(apierr.CodeValidation, "Нужен заголовок If-Match с версией задачи").
-			With("fields", []apierr.FieldError{{Field: "If-Match", Reason: "версия задачи из ETag карточки"}}))
+	versions, err := ifMatch(c)
+	if err != nil {
+		httpserver.Abort(c, err)
 		return
 	}
 	var req updateRequest
 	if !httpserver.Bind(c, &req) {
 		return
 	}
-	t, err := h.svc.Update(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"), version, UpdateInput(req))
+	if req.Status.Set {
+		httpserver.Abort(c, fieldError("status", "статус меняется через POST /tasks/{key}/transition"))
+		return
+	}
+	in := UpdateInput{
+		Title: req.Title, Description: req.Description, Type: req.Type, Priority: req.Priority,
+		AssigneeID: req.AssigneeID, SprintID: req.SprintID, EstimateMinutes: req.EstimateMinutes,
+		DueDate: req.DueDate, Labels: req.Labels,
+	}
+	t, err := h.svc.Update(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"), versions, in)
 	if err != nil {
 		httpserver.Abort(c, err)
 		return

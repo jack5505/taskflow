@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -74,15 +73,19 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Порядок блокировок: строки пользователя и спринта — раньше строки проекта, как у
 		// деактивации (пользователь → задачи → проект) и закрытия спринта: без deadlock.
+		// Проверяются они после прав — под блокировкой проекта.
+		var pre preLock
 		if in.AssigneeID != nil {
-			if err := lockActiveUser(tx, *in.AssigneeID); err != nil {
-				return err
-			}
+			pre.users = []uuid.UUID{*in.AssigneeID}
 		}
 		if in.SprintID != nil {
-			if err := checkSprint(tx, p.ID, *in.SprintID); err != nil {
-				return err
-			}
+			pre.sprints = []uuid.UUID{*in.SprintID}
+		}
+		if err := lockShare(tx, "users", pre.users); err != nil {
+			return err
+		}
+		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
+			return err
 		}
 		// Номер выдаёт UPDATE строки проекта — он же блокирует проект и отвергает архивный.
 		num, err := project.NextTaskNumber(tx, p.ID)
@@ -99,6 +102,11 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 		}
 		if in.AssigneeID != nil {
 			if err := checkAssignee(tx, p.ID, *in.AssigneeID); err != nil {
+				return err
+			}
+		}
+		if in.SprintID != nil {
+			if err := checkSprint(tx, p.ID, *in.SprintID); err != nil {
 				return err
 			}
 		}
@@ -138,49 +146,35 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 // validate проверяет поля §3.3 и возвращает заготовку задачи.
 func (in CreateInput) validate() (*Task, error) {
 	t := &Task{Type: TypeTask, Priority: PriorityMedium, Status: StatusTodo, Version: 1, Labels: Labels{}}
-	title := strings.TrimSpace(in.Title)
-	if n := utf8.RuneCountInString(title); n < 1 || n > 200 {
-		return nil, fieldError("title", "от 1 до 200 символов")
-	}
-	t.Title = title
-	if in.Description != nil && strings.TrimSpace(*in.Description) != "" {
-		if utf8.RuneCountInString(*in.Description) > 20000 {
-			return nil, fieldError("description", "не длиннее 20 000 символов")
-		}
-		t.Description = in.Description
-	}
-	switch in.Type {
-	case "":
-	case TypeTask, TypeBug, TypeFeature:
-		t.Type = in.Type
-	default:
-		return nil, fieldError("type", "task, bug или feature")
-	}
-	switch in.Priority {
-	case "":
-	case PriorityLow, PriorityMedium, PriorityHigh, PriorityCritical:
-		t.Priority = in.Priority
-	default:
-		return nil, fieldError("priority", "low, medium, high или critical")
-	}
-	if in.EstimateMinutes != nil {
-		if *in.EstimateMinutes < 1 || *in.EstimateMinutes > 60000 {
-			return nil, fieldError("estimate_minutes", "от 1 до 60 000 минут")
-		}
-		t.EstimateMinutes = in.EstimateMinutes
-	}
-	if in.DueDate != nil {
-		d, err := time.Parse(time.DateOnly, *in.DueDate)
-		if err != nil {
-			return nil, fieldError("due_date", "дата ГГГГ-ММ-ДД")
-		}
-		t.DueDate = &Date{d}
-	}
-	labels, err := normalizeLabels(in.Labels)
-	if err != nil {
+	var err error
+	if t.Title, err = validTitle(in.Title); err != nil {
 		return nil, err
 	}
-	t.Labels = labels
+	if t.Description, err = validDescription(in.Description); err != nil {
+		return nil, err
+	}
+	if in.Type != "" {
+		if err := validType(in.Type); err != nil {
+			return nil, err
+		}
+		t.Type = in.Type
+	}
+	if in.Priority != "" {
+		if err := validPriority(in.Priority); err != nil {
+			return nil, err
+		}
+		t.Priority = in.Priority
+	}
+	if err := validEstimate(in.EstimateMinutes); err != nil {
+		return nil, err
+	}
+	t.EstimateMinutes = in.EstimateMinutes
+	if t.DueDate, err = parseDue(in.DueDate); err != nil {
+		return nil, err
+	}
+	if t.Labels, err = normalizeLabels(in.Labels); err != nil {
+		return nil, err
+	}
 	return t, nil
 }
 
@@ -204,21 +198,16 @@ func normalizeLabels(in []string) (Labels, error) {
 	return out, nil
 }
 
-// lockActiveUser — строка пользователя FOR SHARE (деактивация, берущая FOR UPDATE, дождётся)
-// и проверка, что он активен.
-func lockActiveUser(tx *gorm.DB, userID uuid.UUID) error {
+// checkAssignee — исполнитель активен и участник проекта. Строку пользователя вызывающий уже
+// держит FOR SHARE (lockShare), строку проекта — тоже: деактивация и исключение из проекта ждут.
+func checkAssignee(tx *gorm.DB, projectID, userID uuid.UUID) error {
 	var active []bool
-	if err := tx.Raw(`SELECT is_active FROM users WHERE id = ? FOR SHARE`, userID).Scan(&active).Error; err != nil {
+	if err := tx.Raw(`SELECT is_active FROM users WHERE id = ?`, userID).Scan(&active).Error; err != nil {
 		return fmt.Errorf("task: assignee: %w", err)
 	}
 	if len(active) == 0 || !active[0] {
 		return fieldError("assignee_id", "не активный участник проекта")
 	}
-	return nil
-}
-
-// checkAssignee — исполнитель — участник проекта (вызывать под блокировкой строки проекта).
-func checkAssignee(tx *gorm.DB, projectID, userID uuid.UUID) error {
 	role, err := project.RoleIn(tx, projectID, userID)
 	if err != nil {
 		return err
@@ -271,16 +260,23 @@ func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID
 	return last[0] + positionStep, nil
 }
 
-// checkSprint — спринт этого проекта и не завершён; строка FOR SHARE (закрытие спринта дождётся).
-func checkSprint(tx *gorm.DB, projectID, sprintID uuid.UUID) error {
-	return checkSprintLock(tx, projectID, sprintID, " FOR SHARE")
+// lockShare — FOR SHARE строк ids таблицы table (в порядке id). Берётся раньше строки задачи
+// или проекта: так же, как у деактивации пользователя и закрытия спринта, — без deadlock.
+func lockShare(tx *gorm.DB, table string, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	var got []string
+	if err := tx.Raw(`SELECT id::text FROM `+table+` WHERE id IN ? ORDER BY id FOR SHARE`, ids).Scan(&got).Error; err != nil {
+		return fmt.Errorf("task: lock %s: %w", table, err)
+	}
+	return nil
 }
 
-// checkSprintLock — checkSprint с выбором блокировки: "" — когда уже заблокирована строка задачи
-// (закрытие спринта блокирует спринт, затем его задачи — встречная блокировка дала бы deadlock).
-func checkSprintLock(tx *gorm.DB, projectID, sprintID uuid.UUID, lock string) error {
+// checkSprint — спринт этого проекта и не завершён (строку блокирует вызывающий — lockShare).
+func checkSprint(tx *gorm.DB, projectID, sprintID uuid.UUID) error {
 	var states []string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? AND project_id = ?`+lock, sprintID, projectID).
+	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? AND project_id = ?`, sprintID, projectID).
 		Scan(&states).Error; err != nil {
 		return fmt.Errorf("task: sprint check: %w", err)
 	}
@@ -367,8 +363,8 @@ func historySource(s string) string {
 }
 
 func jsonValue(v any) (*events.JSON, error) {
-	if v == nil {
-		return nil, nil
+	if isNil(v) {
+		return nil, nil // «пусто» — SQL NULL, а не JSON null
 	}
 	b, err := json.Marshal(v)
 	if err != nil {

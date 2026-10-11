@@ -1333,19 +1333,22 @@ paths:
     patch:
       consumes:
       - application/json
-      description: 'Меняются только переданные поля, кроме статуса (он — через /transition);
-        null очищает необязательное поле. Заголовок If-Match — version из карточки
-        (ETag); если задачу уже изменили — 409 VERSION_CONFLICT, в details.current
-        актуальная задача. Права (§2): автор, исполнитель или менеджер; исполнитель
-        и спринт — только менеджер; оценку задачи в работе и позже — только менеджер.
-        Исполнителя нельзя менять в закрытой задаче и снимать с задачи в работе (§4).'
+      description: 'Меняются только переданные поля; null очищает необязательное поле;
+        поле status — 400 (статус меняется через /transition). Заголовок If-Match
+        — ETag карточки ("5"), список ETag или *; сравнение сильное, W/"5" — 400.
+        Если задачу уже изменили — 409 VERSION_CONFLICT, в details.current актуальная
+        задача. Права (§2): автор, исполнитель или менеджер; исполнитель (активный
+        участник) и спринт (не завершённый) — только менеджер; задачу из завершённого
+        спринта не переносят; оценку задачи, которая была в работе (в том числе потом
+        отменённой), — только менеджер. Исполнителя нельзя менять в закрытой задаче
+        и снимать с задачи в работе (§4).'
       parameters:
       - description: ключ задачи
         in: path
         name: task_key
         required: true
         type: string
-      - description: текущая version задачи
+      - description: ETag карточки (версия в кавычках), список ETag или *
         in: header
         name: If-Match
         required: true
@@ -1364,7 +1367,8 @@ paths:
           schema:
             $ref: '#/definitions/task.Task'
         "400":
-          description: VALIDATION_FAILED, в том числе нет If-Match
+          description: VALIDATION_FAILED, в том числе нет If-Match, слабый ETag, передан
+            status
           schema:
             $ref: '#/definitions/apierr.Response'
         "401":

@@ -60,20 +60,31 @@ func TestConcurrentPatchVersionConflict(t *testing.T) {
 	current := bodies[conflict]["error"].(map[string]any)["details"].(map[string]any)["current"].(map[string]any)
 	require.Equal(t, bodies[ok]["title"], current["title"], "проигравший видит чужую правку")
 	require.EqualValues(t, 2, current["version"])
+	require.Equal(t, []any{1.0}, bodies[conflict]["error"].(map[string]any)["details"].(map[string]any)["expected_version"])
 	require.Equal(t, bodies[ok]["title"], f.get(t, key).Title, "первая правка не потеряна")
 
 	rec, _ := f.patch(t, f.member, key, "", `{"title":"X"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "без If-Match")
 	require.Contains(t, rec.Body.String(), `"field":"If-Match"`)
-	rec, b := f.patch(t, f.member, key, `W/"2"`, `{"title":"Слабый ETag"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "W/\"2\" тоже понимаем: %v", b)
+	for _, h := range []string{`W/"2"`, `2`, `"x"`, `"1", W/"2"`} {
+		rec, b := f.patch(t, f.member, key, h, `{"title":"Плохой If-Match"}`)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "If-Match %s: %v", h, b)
+		require.Equal(t, "If-Match", field(t, b))
+	}
+	rec, b := f.patch(t, f.member, key, `"1", "2"`, `{"title":"Список ETag"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "версия 2 есть в списке: %v", b)
 	require.Equal(t, `"3"`, rec.Header().Get("ETag"))
+	rec, b = f.patch(t, f.member, key, `"1", "2"`, `{"title":"Устаревший список"}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "версии 3 в списке нет: %v", b)
+	rec, b = f.patch(t, f.member, key, `*`, `{"title":"Без сверки"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "* — без сверки версии: %v", b)
+	require.Equal(t, `"4"`, rec.Header().Get("ETag"))
 }
 
 func TestPatchFieldsAndHistory(t *testing.T) {
 	f := newFixture(t)
 	key := f.create(t, f.member, `{"title":"X","description":"Текст","estimate_minutes":60,"due_date":"2026-10-31","labels":["a"]}`)["key"].(string)
-	rec, b := f.patch(t, f.member, key, "1", `{"title":" Новое ","priority":"critical","type":"bug","description":null,"due_date":null,"estimate_minutes":null,"labels":["b"," b "]}`)
+	rec, b := f.patch(t, f.member, key, `"1"`, `{"title":" Новое ","priority":"critical","type":"bug","description":null,"due_date":null,"estimate_minutes":null,"labels":["b"," b "]}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, "Новое", b["title"])
 	require.Equal(t, "critical", b["priority"])
@@ -88,12 +99,16 @@ func TestPatchFieldsAndHistory(t *testing.T) {
 	require.NoError(t, f.db.Raw(`SELECT field FROM task_history WHERE task_id = ? AND field <> 'status' ORDER BY field`, tk.ID).Scan(&fields).Error)
 	require.Equal(t, []string{"due_date", "estimate_minutes", "priority", "title", "type"}, fields, "описание и метки — не в истории §3.7")
 
-	rec, b = f.patch(t, f.member, key, "2", `{"title":"Новое","labels":["b"]}`)
+	var nulls int64
+	require.NoError(t, f.db.Raw(`SELECT count(*) FROM task_history WHERE task_id = ? AND field IN ('estimate_minutes', 'due_date') AND new_value IS NULL`, tk.ID).Scan(&nulls).Error)
+	require.EqualValues(t, 2, nulls, "очищенное поле — SQL NULL в истории, а не JSON null")
+
+	rec, b = f.patch(t, f.member, key, `"2"`, `{"title":"Новое","labels":["b"]}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.EqualValues(t, 2, b["version"], "без фактических изменений версия не растёт")
 
 	for body, fld := range map[string]string{`{"title":null}`: "title", `{"type":"epic"}`: "type", `{"priority":null}`: "priority", `{"estimate_minutes":0}`: "estimate_minutes", `{"due_date":"завтра"}`: "due_date"} {
-		rec, b = f.patch(t, f.member, key, "2", body)
+		rec, b = f.patch(t, f.member, key, `"2"`, body)
 		require.Equal(t, http.StatusBadRequest, rec.Code, body)
 		require.Equal(t, fld, field(t, b), body)
 	}
@@ -150,6 +165,49 @@ func TestPatchRights(t *testing.T) {
 	rec, b = f.patch(t, f.manager, key, v(), `{"title":"В архиве"}`)
 	require.Equal(t, http.StatusConflict, rec.Code)
 	require.Equal(t, apierr.CodeProjectArchived, errCode(b))
+}
+
+// Замечания ревью #21: спринты, оценка после работы, порядок ошибок исполнителя, статус в PATCH.
+func TestPatchRules(t *testing.T) {
+	f := newFixture(t)
+	closed := f.sprint(t, f.p.ID, "closed")
+	planned := f.sprint(t, f.p.ID, "planned")
+	key := f.create(t, f.member, `{"title":"X","estimate_minutes":30}`)["key"].(string)
+	v := func() string { return `"` + jsonInt(f.get(t, key).Version) + `"` }
+
+	rec, b := f.patch(t, f.member, key, v(), `{"status":"done"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "статус — только через /transition")
+	require.Equal(t, "status", field(t, b))
+
+	rec, b = f.patch(t, f.manager, key, v(), `{"sprint_id":"`+closed.String()+`"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "в завершённый спринт не добавляют")
+	require.Equal(t, "sprint_id", field(t, b))
+	require.NoError(t, f.db.Exec(`UPDATE tasks SET sprint_id = ? WHERE key = ?`, closed, key).Error)
+	for _, body := range []string{`{"sprint_id":null}`, `{"sprint_id":"` + planned.String() + `"}`} {
+		rec, b = f.patch(t, f.manager, key, v(), body)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "из завершённого спринта не переносят: %s", body)
+		require.Equal(t, "sprint_id", field(t, b))
+	}
+
+	inactive, _ := f.user(t, false)
+	f.join(t, inactive, project.RoleMember)
+	require.NoError(t, f.db.Model(inactive).Update("is_active", false).Error)
+	rec, _ = f.patch(t, f.member, key, v(), `{"assignee_id":"`+inactive.ID.String()+`"}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, "сначала права, потом активность исполнителя")
+	rec, b = f.patch(t, f.manager, key, v(), `{"assignee_id":"`+inactive.ID.String()+`"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "менеджеру — неактивный исполнитель")
+	require.Equal(t, "assignee_id", field(t, b))
+
+	require.NoError(t, f.db.Exec(`UPDATE tasks SET status = 'cancelled', started_at = now() WHERE key = ?`, key).Error)
+	rec, _ = f.patch(t, f.member, key, v(), `{"estimate_minutes":45}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, "оценку отменённой после работы задачи меняет менеджер")
+	rec, _ = f.patch(t, f.manager, key, v(), `{"estimate_minutes":45}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	other := f.create(t, f.member, `{"title":"Не начатая","estimate_minutes":30}`)["key"].(string)
+	require.NoError(t, f.db.Exec(`UPDATE tasks SET status = 'cancelled' WHERE key = ?`, other).Error)
+	rec, _ = f.patch(t, f.member, other, `*`, `{"estimate_minutes":45}`)
+	require.Equal(t, http.StatusOK, rec.Code, "отменённую до начала работы правит автор")
 }
 
 func TestETagOnGet(t *testing.T) {

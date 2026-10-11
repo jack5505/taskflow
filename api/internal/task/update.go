@@ -3,10 +3,8 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
-	"strings"
-	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -56,14 +54,18 @@ var (
 	errEstimateManager = apierr.Forbidden("Оценку задачи в работе и позже меняет менеджер проекта")
 )
 
-// Update — PATCH задачи с оптимистической блокировкой (§3.3): ifMatch — версия, которую видел
-// клиент; разошлась — 409 VERSION_CONFLICT с текущим состоянием. Права — §2, правила — §4.
-func (s *Service) Update(ctx context.Context, u *user.User, key string, ifMatch int, in UpdateInput) (*Task, error) {
-	var lock []uuid.UUID
-	if in.AssigneeID.Value != nil {
-		lock = append(lock, *in.AssigneeID.Value)
+// Update — PATCH задачи с оптимистической блокировкой (§3.3): ifMatch — версии из If-Match,
+// одна из которых должна совпасть с текущей (nil — «*», без сверки); не совпала — 409
+// VERSION_CONFLICT с текущим состоянием. Права — §2, правила — §4.
+func (s *Service) Update(ctx context.Context, u *user.User, key string, ifMatch []int, in UpdateInput) (*Task, error) {
+	var pre preLock
+	if v := in.AssigneeID.Value; v != nil {
+		pre.users = []uuid.UUID{*v}
 	}
-	return s.change(ctx, u, key, &ifMatch, lock, func(tx *gorm.DB, t *Task, a actor) error {
+	if v := in.SprintID.Value; v != nil {
+		pre.sprints = []uuid.UUID{*v}
+	}
+	return s.change(ctx, u, key, ifMatch, pre, func(tx *gorm.DB, t *Task, a actor) error {
 		return applyUpdate(tx, t, a, in)
 	})
 }
@@ -76,11 +78,8 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 		return errEditForbidden
 	}
 	var changed []string
-	track := func(field string, oldV, newV any, history bool) error {
+	track := func(field string, oldV, newV any) error {
 		changed = append(changed, field)
-		if !history {
-			return nil
-		}
 		return writeHistory(tx, t.ID, field, oldV, newV)
 	}
 
@@ -88,75 +87,77 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 		if in.Title.Value == nil {
 			return fieldError("title", "от 1 до 200 символов")
 		}
-		title := strings.TrimSpace(*in.Title.Value)
-		if n := utf8.RuneCountInString(title); n < 1 || n > 200 {
-			return fieldError("title", "от 1 до 200 символов")
+		title, err := validTitle(*in.Title.Value)
+		if err != nil {
+			return err
 		}
 		if title != t.Title {
-			if err := track("title", t.Title, title, true); err != nil {
+			if err := track("title", t.Title, title); err != nil {
 				return err
 			}
 			t.Title = title
 		}
 	}
 	if in.Description.Set {
-		var d *string
-		if in.Description.Value != nil && strings.TrimSpace(*in.Description.Value) != "" {
-			if utf8.RuneCountInString(*in.Description.Value) > 20000 {
-				return fieldError("description", "не длиннее 20 000 символов")
-			}
-			d = in.Description.Value
+		d, err := validDescription(in.Description.Value)
+		if err != nil {
+			return err
 		}
-		if !sameString(t.Description, d) {
+		if !samePtr(t.Description, d) {
 			changed = append(changed, "description") // описание в историю §3.7 не входит
 			t.Description = d
 		}
 	}
 	if in.Type.Set {
-		if in.Type.Value == nil || !slices.Contains([]string{TypeTask, TypeBug, TypeFeature}, *in.Type.Value) {
-			return fieldError("type", "task, bug или feature")
+		if in.Type.Value == nil {
+			return validType("")
+		}
+		if err := validType(*in.Type.Value); err != nil {
+			return err
 		}
 		if *in.Type.Value != t.Type {
-			if err := track("type", t.Type, *in.Type.Value, true); err != nil {
+			if err := track("type", t.Type, *in.Type.Value); err != nil {
 				return err
 			}
 			t.Type = *in.Type.Value
 		}
 	}
 	if in.Priority.Set {
-		if in.Priority.Value == nil || !slices.Contains([]string{PriorityLow, PriorityMedium, PriorityHigh, PriorityCritical}, *in.Priority.Value) {
-			return fieldError("priority", "low, medium, high или critical")
+		if in.Priority.Value == nil {
+			return validPriority("")
+		}
+		if err := validPriority(*in.Priority.Value); err != nil {
+			return err
 		}
 		if *in.Priority.Value != t.Priority {
-			if err := track("priority", t.Priority, *in.Priority.Value, true); err != nil {
+			if err := track("priority", t.Priority, *in.Priority.Value); err != nil {
 				return err
 			}
 			t.Priority = *in.Priority.Value
 		}
 	}
-	if in.EstimateMinutes.Set && !sameInt(t.EstimateMinutes, in.EstimateMinutes.Value) {
-		if v := in.EstimateMinutes.Value; v != nil && (*v < 1 || *v > 60000) {
-			return fieldError("estimate_minutes", "от 1 до 60 000 минут")
+	if in.EstimateMinutes.Set && !samePtr(t.EstimateMinutes, in.EstimateMinutes.Value) {
+		if err := validEstimate(in.EstimateMinutes.Value); err != nil {
+			return err
 		}
-		if !a.manager && t.Status != StatusTodo && t.Status != StatusCancelled {
+		// Оценку задачи, которая была в работе (даже отменённой потом), меняет менеджер.
+		worked := t.StartedAt != nil ||
+			t.Status == StatusInProgress || t.Status == StatusReview || t.Status == StatusDone
+		if worked && !a.manager {
 			return errEstimateManager
 		}
-		if err := track("estimate_minutes", t.EstimateMinutes, in.EstimateMinutes.Value, true); err != nil {
+		if err := track("estimate_minutes", t.EstimateMinutes, in.EstimateMinutes.Value); err != nil {
 			return err
 		}
 		t.EstimateMinutes = in.EstimateMinutes.Value
 	}
 	if in.DueDate.Set {
-		var d *Date
-		if in.DueDate.Value != nil {
-			parsed, err := time.Parse(time.DateOnly, *in.DueDate.Value)
-			if err != nil {
-				return fieldError("due_date", "дата ГГГГ-ММ-ДД")
-			}
-			d = &Date{parsed}
+		d, err := parseDue(in.DueDate.Value)
+		if err != nil {
+			return err
 		}
 		if !sameDate(t.DueDate, d) {
-			if err := track("due_date", t.DueDate, d, true); err != nil {
+			if err := track("due_date", t.DueDate, d); err != nil {
 				return err
 			}
 			t.DueDate = d
@@ -171,12 +172,12 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 		if err != nil {
 			return err
 		}
-		if !slices.Equal([]string(labels), []string(t.Labels)) {
+		if !slices.Equal(labels, t.Labels) {
 			changed = append(changed, "labels") // метки в историю §3.7 не входят
 			t.Labels = labels
 		}
 	}
-	if in.AssigneeID.Set && !sameID(t.AssigneeID, in.AssigneeID.Value) {
+	if in.AssigneeID.Set && !samePtr(t.AssigneeID, in.AssigneeID.Value) {
 		if !a.manager {
 			return errAssignForbidden
 		}
@@ -187,8 +188,8 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 			return fieldError("assignee_id", "с задачи в работе исполнителя не снимают: сначала верните её в «К выполнению»")
 		}
 		if v := in.AssigneeID.Value; v != nil {
-			// Активность нового исполнителя проверена под FOR SHARE в change(); исключение из
-			// проекта блокирует ту же строку пользователя, так что членство здесь не устареет.
+			// Строка пользователя — под FOR SHARE из change(), проекта — тоже: деактивация и
+			// исключение из проекта дождутся транзакции, проверка не устареет.
 			if err := checkAssignee(tx, t.ProjectID, *v); err != nil {
 				return err
 			}
@@ -198,12 +199,16 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 			return err
 		}
 	}
-	if in.SprintID.Set && !sameID(t.SprintID, in.SprintID.Value) {
+	if in.SprintID.Set && !samePtr(t.SprintID, in.SprintID.Value) {
 		if !a.manager {
 			return errSprintForbidden
 		}
+		if err := leaveSprint(tx, t); err != nil {
+			return err
+		}
 		if v := in.SprintID.Value; v != nil {
-			if err := checkSprintLock(tx, t.ProjectID, *v, ""); err != nil {
+			// Целевой спринт — под FOR SHARE из change(): закрыться до конца транзакции не успеет.
+			if err := checkSprint(tx, t.ProjectID, *v); err != nil {
 				return err
 			}
 		}
@@ -220,10 +225,19 @@ func applyUpdate(tx *gorm.DB, t *Task, a actor, in UpdateInput) error {
 	})
 }
 
-func sameString(a, b *string) bool {
-	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
-}
-func sameInt(a, b *int) bool { return (a == nil && b == nil) || (a != nil && b != nil && *a == *b) }
-func sameDate(a, b *Date) bool {
-	return (a == nil && b == nil) || (a != nil && b != nil && a.Equal(b.Time))
+// leaveSprint — из завершённого спринта задачу не переносят: она остаётся в его отчёте.
+// Спринт задачи читается без блокировки: закрытие блокирует спринт, затем его задачи, а строка
+// задачи уже наша — закрытие ждёт нас, и состояние до конца транзакции не изменится.
+func leaveSprint(tx *gorm.DB, t *Task) error {
+	if t.SprintID == nil {
+		return nil
+	}
+	var states []string
+	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, *t.SprintID).Scan(&states).Error; err != nil {
+		return fmt.Errorf("task: current sprint: %w", err)
+	}
+	if len(states) > 0 && states[0] == "closed" {
+		return fieldError("sprint_id", "задача из завершённого спринта — её не переносят")
+	}
+	return nil
 }
