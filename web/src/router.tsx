@@ -9,6 +9,7 @@ import { PasswordSetPage } from "./pages/PasswordSetPage";
 import { BacklogPage } from "./backlog/BacklogPage";
 import { SprintArchivePage } from "./backlog/SprintArchivePage";
 import { BoardPage } from "./board/BoardPage";
+import { ProfilePage } from "./profile/ProfilePage";
 import { SettingsPage } from "./settings/SettingsPage";
 
 // Адреса страниц. /password-set — путь из письма (api/internal/auth: baseURL + /password-set?token=…).
@@ -34,6 +35,7 @@ export const router = createBrowserRouter([
         element: <AppLayout />,
         children: [
           { path: "/", element: <HomePage /> },
+          { path: "/profile", element: <ProfilePage /> },
           { path: "/projects/:key", element: <BoardPage /> },
           { path: "/projects/:key/backlog", element: <BacklogPage /> },
           { path: "/projects/:key/settings", element: <SettingsPage /> },
