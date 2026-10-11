@@ -3,6 +3,7 @@ package telegram_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,4 +202,34 @@ func TestNewCommandArchived(t *testing.T) {
 
 	// Ни одного активного проекта и ключа нет.
 	require.Equal(t, []string{"У вас нет активных проектов"}, b.say(t, b.member, "/new Задача"))
+}
+
+// Архивный проект группы не участвует в выборе по умолчанию; длинное название — понятный отказ;
+// администратору без участия в проектах проект не подставляется.
+func TestNewCommandEdgeCases(t *testing.T) {
+	b := newNewBot(t)
+	old := b.second(t)
+	require.NoError(t, b.g.Exec(`UPDATE projects SET is_archived = true WHERE id = ?`, old.ID).Error)
+	chat := -100_000_000 - testutil.Next()
+	b.bindGroup(t, chat, b.pr, old)
+
+	b.sayIn(t, b.member, chat, models.ChatTypeGroup, "/new Без ключа")
+	require.Equal(t, "Без ключа", b.last(t, b.pr).Title)
+	require.Equal(t, []string{"Проект " + old.Key + " в архиве, изменения недоступны"},
+		b.sayIn(t, b.member, chat, models.ChatTypeGroup, "/new "+old.Key+" В архив"))
+
+	require.Equal(t, []string{"Название задачи — от 1 до 200 символов"},
+		b.say(t, b.member, "/new "+b.pr.Key+" "+strings.Repeat("я", 201)))
+
+	require.NoError(t, b.g.Exec(`UPDATE users SET is_system_admin = true WHERE id = ?`, b.admin.ID).Error)
+	adminTG := tgID()
+	require.NoError(t, b.g.Exec(`UPDATE users SET telegram_user_id = ? WHERE id = ?`, adminTG, b.admin.ID).Error)
+	b.tg[b.admin.ID] = adminTG
+	require.Equal(t, []string{"У вас нет активных проектов"}, b.say(t, b.admin, "/new Задача"))
+	reply := b.say(t, b.admin, "/new "+b.pr.Key+" От администратора")
+	require.Equal(t, []string{"Создана задача " + b.last(t, b.pr).Key + " «От администратора»"}, reply,
+		"с явным ключом администратор создаёт задачу в любом проекте")
+
+	require.NoError(t, b.g.Exec(`UPDATE projects SET is_archived = true WHERE id = ?`, b.pr.ID).Error)
+	require.Equal(t, []string{"Все проекты группы в архиве"}, b.sayIn(t, b.member, chat, models.ChatTypeGroup, "/new Задача"))
 }
