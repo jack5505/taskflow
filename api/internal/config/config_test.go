@@ -14,7 +14,7 @@ const testSecret = "0123456789abcdef0123456789abcdef"
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
 	t.Setenv("JWT_SECRET", testSecret)
-	for _, key := range []string{"APP_ADDR", "REDIS_ADDR", "JWT_ACCESS_TTL", "JWT_REFRESH_TTL"} {
+	for _, key := range []string{"APP_ADDR", "REDIS_ADDR", "JWT_ACCESS_TTL", "JWT_REFRESH_TTL", "ATTACHMENT_MAX_BYTES"} {
 		t.Setenv(key, "") // пустое значение = не задано; иначе тест зависел бы от .env в оболочке
 	}
 
@@ -69,4 +69,18 @@ func TestLoadReadsOverrides(t *testing.T) {
 	require.Equal(t, "redis:6379", cfg.RedisAddr)
 	require.Equal(t, 5*time.Minute, cfg.JWTAccessTTL)
 	require.Equal(t, "TaskFlow <noreply@example.com>", cfg.SMTPFrom)
+}
+
+func TestLoadAttachmentMaxBytes(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
+	t.Setenv("JWT_SECRET", testSecret)
+	t.Setenv("ATTACHMENT_MAX_BYTES", "1048576")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.EqualValues(t, 1<<20, cfg.AttachmentMaxBytes)
+	for _, bad := range []string{"много", "0", "-1"} {
+		t.Setenv("ATTACHMENT_MAX_BYTES", bad)
+		_, err := config.Load()
+		require.ErrorContains(t, err, "ATTACHMENT_MAX_BYTES", bad)
+	}
 }

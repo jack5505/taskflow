@@ -221,43 +221,16 @@ export interface ProjectUpdateRequest {
   timezone?: string;
 }
 
-export interface SprintScope {
-  estimate_minutes?: number;
-  tasks?: number;
-  without_estimate?: number;
-}
-
-export interface SprintView {
-  closed_at?: string;
+export interface TaskAttachmentView {
+  author_id?: string;
+  author_name?: string;
   created_at?: string;
-  /** @example "2026-10-24" */
-  end_date?: string;
-  estimate_minutes?: number;
-  goal?: string;
+  file_name?: string;
   id?: string;
-  name?: string;
-  overdue?: boolean;
-  project_id?: string;
-  /** @example "2026-10-13" */
-  start_date?: string;
-  state?: "planned" | "active" | "closed";
-  tasks_count?: number;
+  mime_type?: string;
+  size_bytes?: number;
+  task_id?: string;
   updated_at?: string;
-}
-
-export interface SprintRequest {
-  /** @example "2026-10-24" */
-  end_date?: string | null;
-  goal?: string | null;
-  /** @maxLength 300 */
-  name?: string;
-  /** @example "2026-10-13" */
-  start_date?: string | null;
-}
-
-export interface SprintStartResponse {
-  scope?: SprintScope;
-  sprint?: SprintView;
 }
 
 export interface TaskCommentView {
@@ -270,6 +243,12 @@ export interface TaskCommentView {
   source?: "web" | "telegram";
   task_id?: string;
   updated_at?: string;
+}
+
+export interface TaskDownloadLink {
+  expires_at?: string;
+  /** @example "/api/v1/attachments/9b2c…/download?exp=1760180000&sig=…" */
+  url?: string;
 }
 
 export interface TaskHistoryView {
@@ -727,6 +706,66 @@ export class Api<
   SecurityDataType extends unknown,
 > extends HttpClient<SecurityDataType> {
   api = {
+    /**
+     * @description После проверки прав выдаёт ссылку, подписанную на 10 минут (§3.9). Ссылка открывается без токена.
+     *
+     * @tags attachments
+     * @name V1AttachmentsDetail
+     * @summary Ссылка на скачивание вложения
+     * @request GET:/api/v1/attachments/{id}
+     * @secure
+     */
+    v1AttachmentsDetail: (id: string, params: RequestParams = {}) =>
+      this.request<TaskDownloadLink, ApierrResponse>({
+        path: `/api/v1/attachments/${id}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Автор файла или менеджер проекта (§2: чужие — только менеджер). Файл удаляется с диска.
+     *
+     * @tags attachments
+     * @name V1AttachmentsDelete
+     * @summary Удалить вложение
+     * @request DELETE:/api/v1/attachments/{id}
+     * @secure
+     */
+    v1AttachmentsDelete: (id: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/attachments/${id}`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Без токена: доступ по подписи и сроку из ссылки GET /attachments/{id}. Файл отдаётся как application/octet-stream с Content-Disposition: attachment и X-Content-Type-Options: nosniff — браузер не открывает его как страницу (§3.9).
+     *
+     * @tags attachments
+     * @name V1AttachmentsDownloadList
+     * @summary Скачать вложение
+     * @request GET:/api/v1/attachments/{id}/download
+     */
+    v1AttachmentsDownloadList: (
+      id: string,
+      query: {
+        /** срок ссылки, unix-время */
+        exp: number;
+        /** подпись */
+        sig: string;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<Blob, ApierrResponse>({
+        path: `/api/v1/attachments/${id}/download`,
+        method: "GET",
+        query: query,
+        ...params,
+      }),
+
     /**
      * @description Возвращает access-токен (15 минут) и ставит httpOnly cookie refresh_token (30 дней). После 10 неудачных попыток вход по email закрыт на 15 минут.
      *
@@ -1226,48 +1265,6 @@ export class Api<
       }),
 
     /**
-     * @description Участник проекта. Порядок: активный, запланированные по дате начала, завершённые (новые первыми). tasks_count и estimate_minutes — итог секции (§7.4), overdue — активный спринт после end_date (§5.3).
-     *
-     * @tags sprints
-     * @name V1ProjectsSprintsList
-     * @summary Спринты проекта
-     * @request GET:/api/v1/projects/{key}/sprints
-     * @secure
-     */
-    v1ProjectsSprintsList: (key: string, params: RequestParams = {}) =>
-      this.request<SprintView[], ApierrResponse>({
-        path: `/api/v1/projects/${key}/sprints`,
-        method: "GET",
-        secure: true,
-        format: "json",
-        ...params,
-      }),
-
-    /**
-     * @description Менеджер (§2, §5.1). Состояние planned; без названия — «Спринт N»; даты необязательны до запуска, end_date позже start_date и не дальше 42 дней.
-     *
-     * @tags sprints
-     * @name V1ProjectsSprintsCreate
-     * @summary Создать спринт
-     * @request POST:/api/v1/projects/{key}/sprints
-     * @secure
-     */
-    v1ProjectsSprintsCreate: (
-      key: string,
-      body: SprintRequest,
-      params: RequestParams = {},
-    ) =>
-      this.request<SprintView, ApierrResponse>({
-        path: `/api/v1/projects/${key}/sprints`,
-        method: "POST",
-        body: body,
-        secure: true,
-        type: ContentType.Json,
-        format: "json",
-        ...params,
-      }),
-
-    /**
      * @description Фильтры (повторяемые или через запятую): status, type, priority; assignee_id и sprint_id — UUID или null (без исполнителя / бэклог); label; q — поиск по ключу (с начала) и названию. include_deleted — только администратор. Порядок — ручной порядок секции (position), затем номер; limit до 200 (по умолчанию 50), следующая страница — cursor из next_cursor. overdue — срок прошёл по поясу проекта, а задача не закрыта.
      *
      * @tags tasks
@@ -1338,83 +1335,6 @@ export class Api<
     /**
      * No description
      *
-     * @tags sprints
-     * @name V1SprintsDetail
-     * @summary Спринт
-     * @request GET:/api/v1/sprints/{id}
-     * @secure
-     */
-    v1SprintsDetail: (id: string, params: RequestParams = {}) =>
-      this.request<SprintView, ApierrResponse>({
-        path: `/api/v1/sprints/${id}`,
-        method: "GET",
-        secure: true,
-        format: "json",
-        ...params,
-      }),
-
-    /**
-     * @description Менеджер; только planned (§5.5), его задачи возвращаются в бэклог. Иначе — 409 INVALID_TRANSITION.
-     *
-     * @tags sprints
-     * @name V1SprintsDelete
-     * @summary Удалить спринт
-     * @request DELETE:/api/v1/sprints/{id}
-     * @secure
-     */
-    v1SprintsDelete: (id: string, params: RequestParams = {}) =>
-      this.request<void, ApierrResponse>({
-        path: `/api/v1/sprints/${id}`,
-        method: "DELETE",
-        secure: true,
-        ...params,
-      }),
-
-    /**
-     * @description Менеджер. Меняются только переданные поля; null очищает цель и даты (у активного даты обязательны). Завершённый спринт не изменяется — 409 INVALID_TRANSITION (details.reason = closed).
-     *
-     * @tags sprints
-     * @name V1SprintsPartialUpdate
-     * @summary Изменить спринт
-     * @request PATCH:/api/v1/sprints/{id}
-     * @secure
-     */
-    v1SprintsPartialUpdate: (
-      id: string,
-      body: SprintRequest,
-      params: RequestParams = {},
-    ) =>
-      this.request<SprintView, ApierrResponse>({
-        path: `/api/v1/sprints/${id}`,
-        method: "PATCH",
-        body: body,
-        secure: true,
-        type: ContentType.Json,
-        format: "json",
-        ...params,
-      }),
-
-    /**
-     * @description Менеджер (§5.2). Под блокировкой проекта: в проекте нет активного (иначе 409 SPRINT_ALREADY_ACTIVE), даты заполнены, end позже start, не больше 42 дней, в спринте есть задачи (иначе 409 INVALID_TRANSITION, details.reason: dates | empty | not_planned). Фиксирует объём на старте: задачи, сумма оценок, сколько без оценки.
-     *
-     * @tags sprints
-     * @name V1SprintsStartCreate
-     * @summary Запустить спринт
-     * @request POST:/api/v1/sprints/{id}/start
-     * @secure
-     */
-    v1SprintsStartCreate: (id: string, params: RequestParams = {}) =>
-      this.request<SprintStartResponse, ApierrResponse>({
-        path: `/api/v1/sprints/${id}/start`,
-        method: "POST",
-        secure: true,
-        format: "json",
-        ...params,
-      }),
-
-    /**
-     * No description
-     *
      * @tags tasks
      * @name V1TasksDetail
      * @summary Задача
@@ -1467,6 +1387,51 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Новые сверху. Участник проекта; вложения удалённой задачи — администратор системы.
+     *
+     * @tags attachments
+     * @name V1TasksAttachmentsList
+     * @summary Вложения задачи
+     * @request GET:/api/v1/tasks/{task_key}/attachments
+     * @secure
+     */
+    v1TasksAttachmentsList: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskAttachmentView[], ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/attachments`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Любой участник проекта (§2). multipart/form-data, поле file, до 50 МБ, тип любой (§3.9). Событие attachment.added.
+     *
+     * @tags attachments
+     * @name V1TasksAttachmentsCreate
+     * @summary Загрузить вложение
+     * @request POST:/api/v1/tasks/{task_key}/attachments
+     * @secure
+     */
+    v1TasksAttachmentsCreate: (
+      taskKey: string,
+      data: {
+        /** файл */
+        file: File;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskAttachmentView, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/attachments`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.FormData,
         format: "json",
         ...params,
       }),

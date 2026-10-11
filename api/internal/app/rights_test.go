@@ -50,7 +50,8 @@ func newWorld(t *testing.T) *world {
 	rdb := queue.NewRedis(addr)
 	jobs := queue.NewClient(addr)
 	t.Cleanup(func() { _ = rdb.Close(); _ = jobs.Close() })
-	cfg := &config.Config{Env: "test", BaseURL: "http://localhost", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: time.Hour}
+	cfg := &config.Config{Env: "test", BaseURL: "http://localhost", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: time.Hour,
+		AttachmentsDir: t.TempDir(), AttachmentMaxBytes: 50 << 20}
 	authSvc := auth.NewService(cfg, g, rdb)
 	w := &world{db: g, r: app.NewServer(cfg, g, rdb, jobs).Router()}
 
@@ -87,6 +88,17 @@ func (w *world) do(method, path, token, body string) *httptest.ResponseRecorder 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+token)
+	w.r.ServeHTTP(rec, r)
+	return rec
+}
+
+// upload — вложение из одного файла (multipart, поле file).
+func (w *world) upload(taskPath, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	body := "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\nтекст\r\n--b--\r\n"
+	r := httptest.NewRequest("POST", taskPath+"/attachments", strings.NewReader(body))
+	r.Header.Set("Content-Type", "multipart/form-data; boundary=b")
 	r.Header.Set("Authorization", "Bearer "+token)
 	w.r.ServeHTTP(rec, r)
 	return rec
@@ -162,12 +174,23 @@ func TestRightsTable(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: удалять чужие комментарии — нет")
 	rec = w.do("POST", taskPath+"/comments", w.outsider, `{"body":"X"}`)
 	require.Equal(t, http.StatusNotFound, rec.Code, "посторонний не видит задачу")
+	rec = w.upload(taskPath, w.member)
+	require.Equal(t, http.StatusCreated, rec.Code, "исполнитель: добавлять вложения — да; %s", rec.Body.String())
+	rec = w.upload(taskPath, w.manager)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var attachment struct{ ID string }
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &attachment))
+	rec = w.do("DELETE", "/api/v1/attachments/"+attachment.ID, w.member, "")
+	require.Equal(t, http.StatusForbidden, rec.Code, "исполнитель: удалять чужие вложения — нет")
+	rec = w.upload(taskPath, w.outsider)
+	require.Equal(t, http.StatusNotFound, rec.Code, "посторонний не добавляет вложения")
 
 	// Пользователь без роли в проекте не видит его ни через один маршрут проекта — 404.
 	for _, r := range []row{
 		{"Создание задачи", "POST", proj + "/tasks", `{"title":"X"}`},
 		{"Карточка задачи", "GET", taskPath, ""},
 		{"История задачи", "GET", taskPath + "/history", ""},
+		{"Вложения задачи", "GET", taskPath + "/attachments", ""},
 		{"Список задач", "GET", proj + "/tasks", ""},
 		{"Спринты проекта", "GET", proj + "/sprints", ""},
 		{"Карточка проекта", "GET", proj, ""},
