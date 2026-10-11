@@ -1525,6 +1525,82 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tasks/{task_key}/move": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "§7.4: sprint_id — секция (null — бэклог; не передан — та же секция), after_task_id — после какой задачи этой секции (null — в начало). Смена секции — только менеджер; порядок внутри секции — любой участник. В завершённый спринт и из него переносить нельзя. Перенос в активный спринт и из него пишется в журнал спринта.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Переместить задачу",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "куда",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.moveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.Task"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: смена спринта не менеджером",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tasks/{task_key}/restore": {
             "post": {
                 "security": [
@@ -2691,6 +2767,20 @@ const docTemplate = `{
                         "bug",
                         "feature"
                     ]
+                }
+            }
+        },
+        "task.moveRequest": {
+            "type": "object",
+            "properties": {
+                "after_task_id": {
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "sprint_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },

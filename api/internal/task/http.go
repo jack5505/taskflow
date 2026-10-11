@@ -34,6 +34,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	t.PATCH("/:task_key", h.update)
 	t.DELETE("/:task_key", h.delete)
 	t.POST("/:task_key/restore", h.restore)
+	t.POST("/:task_key/move", h.move)
 	t.GET("/:task_key/history", h.history)
 	t.POST("/:task_key/transition", h.transition)
 	t.POST("/:task_key/take", h.take)
@@ -437,6 +438,41 @@ func (h *Handlers) delete(c *gin.Context) {
 // @Router       /api/v1/tasks/{task_key}/restore [post]
 func (h *Handlers) restore(c *gin.Context) {
 	t, err := h.svc.Restore(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	respond(c, http.StatusOK, t)
+}
+
+type moveRequest struct {
+	SprintID    Opt[uuid.UUID] `json:"sprint_id" swaggertype:"string" format:"uuid" extensions:"x-nullable"`
+	AfterTaskID *uuid.UUID     `json:"after_task_id" extensions:"x-nullable"`
+}
+
+// move — перетаскивание задачи.
+//
+// @Summary      Переместить задачу
+// @Description  §7.4: sprint_id — секция (null — бэклог; не передан — та же секция), after_task_id — после какой задачи этой секции (null — в начало). Смена секции — только менеджер; порядок внутри секции — любой участник. В завершённый спринт и из него переносить нельзя. Перенос в активный спринт и из него пишется в журнал спринта.
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string       true  "ключ задачи"
+// @Param        body      body      moveRequest  true  "куда"
+// @Success      200       {object}  Task
+// @Failure      400       {object}  apierr.Response  "VALIDATION_FAILED"
+// @Failure      401       {object}  apierr.Response
+// @Failure      403       {object}  apierr.Response  "FORBIDDEN: смена спринта не менеджером"
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409       {object}  apierr.Response  "PROJECT_ARCHIVED"
+// @Router       /api/v1/tasks/{task_key}/move [post]
+func (h *Handlers) move(c *gin.Context) {
+	var req moveRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	t, err := h.svc.Move(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"), MoveInput(req))
 	if err != nil {
 		httpserver.Abort(c, err)
 		return

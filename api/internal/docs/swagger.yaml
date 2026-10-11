@@ -538,6 +538,16 @@ definitions:
     required:
     - title
     type: object
+  task.moveRequest:
+    properties:
+      after_task_id:
+        type: string
+        x-nullable: true
+      sprint_id:
+        format: uuid
+        type: string
+        x-nullable: true
+    type: object
   task.transitionRequest:
     properties:
       assignee_id:
@@ -1678,6 +1688,59 @@ paths:
       security:
       - BearerAuth: []
       summary: История задачи
+      tags:
+      - tasks
+  /api/v1/tasks/{task_key}/move:
+    post:
+      consumes:
+      - application/json
+      description: '§7.4: sprint_id — секция (null — бэклог; не передан — та же секция),
+        after_task_id — после какой задачи этой секции (null — в начало). Смена секции
+        — только менеджер; порядок внутри секции — любой участник. В завершённый спринт
+        и из него переносить нельзя. Перенос в активный спринт и из него пишется в
+        журнал спринта.'
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      - description: куда
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.moveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.Task'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: смена спринта не менеджером'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Переместить задачу
       tags:
       - tasks
   /api/v1/tasks/{task_key}/restore:

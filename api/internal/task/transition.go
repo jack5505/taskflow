@@ -400,7 +400,40 @@ func moveTo(tx *gorm.DB, t *Task, sprintID *uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	old := t.SprintID
 	t.SprintID, t.Position = sprintID, pos
+	return sprintChanged(tx, t, old, sprintID)
+}
+
+// sprintChanged — §5.3: перенос в активный спринт и из него после старта пишется в журнал
+// спринта («добавлено/убрано после старта») и публикуется sprint.task_added / sprint.task_removed.
+func sprintChanged(tx *gorm.DB, t *Task, from, to *uuid.UUID) error {
+	actor, _ := audit.From(tx.Statement.Context)
+	for _, step := range []struct {
+		sprint *uuid.UUID
+		action string
+		event  string
+	}{{from, "removed", events.SprintTaskRemoved}, {to, "added", events.SprintTaskAdded}} {
+		if step.sprint == nil {
+			continue
+		}
+		var state string
+		if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, *step.sprint).Scan(&state).Error; err != nil {
+			return fmt.Errorf("task: sprint state: %w", err)
+		}
+		if state != "active" {
+			continue
+		}
+		if err := tx.Exec(`INSERT INTO sprint_log (sprint_id, task_id, user_id, action) VALUES (?, ?, ?, ?)`,
+			*step.sprint, t.ID, actor, step.action).Error; err != nil {
+			return fmt.Errorf("task: sprint log: %w", err)
+		}
+		if err := events.Publish(tx, step.event, map[string]any{
+			"sprint_id": *step.sprint, "task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "by": actor,
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
