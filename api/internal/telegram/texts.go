@@ -93,6 +93,12 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "cmd_choose_project"}}К группе подключено несколько проектов: {{range $i, $p := .Projects}}{{if $i}}, {{end}}{{$p.Key}}{{end}}. Укажите ключ задачи: {{.Cmd}} {{(index .Projects 0).Key}}-{{.Num}}{{end}}
 {{define "not_project_member"}}Вы не участник проекта {{.ProjectKey}}{{end}}
 {{define "taken_reply"}}🛠 {{.Key}} «{{.Title}}» взята в работу{{end}}
+{{define "cmd_dropped"}}↩️ {{.Key}} «{{.Title}}» возвращена в очередь{{end}}
+{{define "cmd_reviewed"}}🔍 {{.Key}} «{{.Title}}» отправлена на проверку{{end}}
+{{define "cmd_accepted"}}✅ {{.Key}} «{{.Title}}» принята. Списано {{.Spent}}{{end}}
+{{define "cmd_logged"}}Списано {{.Logged}} на {{.Key}}. Всего {{.Total}}{{end}}
+{{define "cmd_commented"}}Комментарий добавлен к {{.Key}}{{end}}
+{{define "cmd_bad_status"}}Задача {{.Key}} в статусе {{.Status}}, команда недоступна{{end}}
 {{- /* Личные уведомления, §8.7. Обычный текст без разметки. */}}
 {{define "p_assigned"}}📌 Вас назначили исполнителем {{.Key}} «{{.Title}}» — {{.By}}{{end}}
 {{define "p_rework"}}🔁 {{.Key}} «{{.Title}}» возвращена на доработку — {{.By}}: {{.Comment}}{{end}}

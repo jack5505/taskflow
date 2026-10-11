@@ -110,6 +110,10 @@ func (c *Cards) Edit(ctx context.Context, taskID uuid.UUID) error {
 		Bucket("tg-card:"+taskID.String(), c.now()))
 }
 
+// cardRepublish — Message.Stamp публикации карточки командой /task (§8.5): новая карточка
+// публикуется, даже если прежняя есть, и становится текущей.
+const cardRepublish = 1
+
 // cardRow — задача со всем, что печатается в карточке.
 type cardRow struct {
 	ID                uuid.UUID
@@ -165,6 +169,10 @@ func (c *Cards) render(ctx context.Context, m *Message) (bool, error) {
 	case m.Op == OpSend && m.Replaces != 0:
 		if r.TelegramMessageID == nil || *r.TelegramMessageID != m.Replaces || r.Deleted {
 			return false, nil // карточку уже заменили или задачу удалили
+		}
+	case m.Op == OpSend && m.Stamp == cardRepublish:
+		if r.Deleted {
+			return false, nil
 		}
 	case m.Op == OpSend:
 		if r.TelegramMessageID != nil || r.Deleted || !project.EffectiveNotifications(r.Settings)[project.NotifyTaskCreated] {

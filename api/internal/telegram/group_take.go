@@ -25,6 +25,7 @@ type TaskCommands struct {
 	tasks    *task.Service
 	projects *project.Service
 	groups   *Groups
+	cards    *Cards // карточка для /task (RegisterTaskCommands)
 }
 
 func NewTaskCommands(db *gorm.DB, tasks *task.Service, projects *project.Service, groups *Groups) *TaskCommands {
@@ -123,6 +124,9 @@ func (tc *TaskCommands) refuse(ctx context.Context, r *Request, ref *taskRef, er
 		if err == nil { // участник, но проект не этой группы
 			return r.Answer(ctx, Text("not_project_member", ref), true)
 		}
+	}
+	if text, ok := commandErrorText(ref, err); ok && r.Command != "" && r.Command != "take" {
+		return r.Answer(ctx, text, true)
 	}
 	text, ferr := taskErrorText(ref, err)
 	if ferr != nil {
