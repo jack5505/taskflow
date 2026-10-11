@@ -300,10 +300,10 @@ export function TaskFields({ task: t, perms, members, ctx, activeSprint, timeZon
       </dd>
 
       <dt>Списано</dt>
-      <dd>{formatDuration(spent)}</dd>
+      <dd data-testid="worklog-spent">{formatDuration(spent)}</dd>
 
       <dt>Остаток</dt>
-      <dd>
+      <dd data-testid="worklog-left">
         {left === undefined ? "—" : formatDuration(left)}
         {over > 0 && <span className="overdue"> перерасход {formatDuration(over)}</span>}
       </dd>
