@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -423,4 +424,90 @@ func TestRestoreRefreshesUpdatedAtAndTaskNumberDoesNot(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, restored.DeletedAt.Valid)
 	require.True(t, restored.UpdatedAt.After(after.UpdatedAt), "в ответе — свежий updated_at")
+}
+
+// §7.2: карточка проекта — активный спринт с датами, открытые задачи и задачи на пользователе.
+func TestListCardCounters(t *testing.T) {
+	f := newFixture(t)
+	me, token := f.user(t, false)
+	other, _ := f.user(t, false)
+	_, admin := f.user(t, true)
+	withSprint := f.project(t, map[*user.User]string{me: project.RoleMember, other: project.RoleMember})
+	empty := f.project(t, map[*user.User]string{me: project.RoleManager})
+
+	sprint := func(p *project.Project, name, state string) {
+		require.NoError(t, f.db.Exec(`INSERT INTO sprints (project_id, name, state, start_date, end_date)
+			VALUES (?, ?, ?, '2026-10-01', '2026-10-14')`, p.ID, name, state).Error)
+	}
+	sprint(withSprint, "Спринт 1", "closed")
+	sprint(withSprint, "Спринт 2", "active")
+	sprint(withSprint, "Спринт 3", "planned")
+	n := 0
+	task := func(p *project.Project, status string, assignee *user.User, deleted bool) {
+		n++
+		var assigneeID any
+		if assignee != nil {
+			assigneeID = assignee.ID
+		}
+		var deletedAt any
+		if deleted {
+			deletedAt = time.Now()
+		}
+		require.NoError(t, f.db.Exec(`INSERT INTO tasks (project_id, number, key, title, status, reporter_id, assignee_id, position, deleted_at)
+			VALUES (?, ?, ?, 'Задача', ?, ?, ?, ?, ?)`, p.ID, n, p.Key+"-"+strconv.Itoa(n), status, other.ID, assigneeID, n, deletedAt).Error)
+	}
+	task(withSprint, "todo", nil, false)
+	task(withSprint, "in_progress", me, false)
+	task(withSprint, "review", me, false)
+	task(withSprint, "review", other, false)
+	task(withSprint, "done", me, false)
+	task(withSprint, "cancelled", me, false)
+	task(withSprint, "todo", me, true)
+
+	type card struct {
+		Key          string
+		MyRole       *string `json:"my_role"`
+		OpenTasks    int     `json:"open_tasks"`
+		MyOpenTasks  int     `json:"my_open_tasks"`
+		ActiveSprint *struct {
+			ID        string
+			Name      string
+			StartDate *string `json:"start_date"`
+			EndDate   *string `json:"end_date"`
+		} `json:"active_sprint"`
+	}
+	list := func(token string) map[string]card {
+		rec, _ := f.do(t, "GET", "/api/v1/projects", token, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var cards []card
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cards))
+		out := map[string]card{}
+		for _, c := range cards {
+			out[c.Key] = c
+		}
+		return out
+	}
+
+	cards := list(token)
+	require.Len(t, cards, 2)
+	c := cards[withSprint.Key]
+	require.Equal(t, 4, c.OpenTasks, "todo, in_progress, review; без done, cancelled и удалённых")
+	require.Equal(t, 2, c.MyOpenTasks)
+	require.NotNil(t, c.ActiveSprint)
+	require.Equal(t, "Спринт 2", c.ActiveSprint.Name)
+	require.NotEmpty(t, c.ActiveSprint.ID)
+	require.Equal(t, "2026-10-01", *c.ActiveSprint.StartDate)
+	require.Equal(t, "2026-10-14", *c.ActiveSprint.EndDate)
+
+	e := cards[empty.Key]
+	require.Nil(t, e.ActiveSprint, "нет активного спринта — null")
+	require.Zero(t, e.OpenTasks)
+	require.Zero(t, e.MyOpenTasks)
+	require.Equal(t, project.RoleManager, *e.MyRole)
+
+	// Администратор не участник: счётчик «на мне» — по нему самому, роли нет.
+	a := list(admin)[withSprint.Key]
+	require.Equal(t, 4, a.OpenTasks)
+	require.Zero(t, a.MyOpenTasks)
+	require.Nil(t, a.MyRole)
 }
