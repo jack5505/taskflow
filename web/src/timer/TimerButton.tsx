@@ -27,7 +27,8 @@ export function TimerButton({ taskKey, canStart, className }: { taskKey: string;
     else
       start.mutate(taskKey, {
         onSuccess: (r) => setFlash(startMessage(r)),
-        onError: (e) => setFlash(parseApiError(e)?.code === "TIMER_ALREADY_RUNNING" ? "" : errorText(e)),
+        onError: (e) =>
+          setFlash(parseApiError(e)?.code === "TIMER_ALREADY_RUNNING" ? "Таймер на этой задаче уже идёт" : errorText(e)),
       });
   };
   return (

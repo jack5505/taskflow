@@ -54,8 +54,3 @@ export function stopMessage(r: TaskTimerStop): string {
 export function startMessage(r: TaskTimerStart): string {
   return r.stopped ? `Прежний таймер остановлен. ${stopMessage(r.stopped)}` : "";
 }
-
-/** Ключ проекта из ключа задачи «TM-42» (§3.3). */
-export function projectKeyOf(taskKey: string): string {
-  return taskKey.replace(/-\d+$/, "");
-}

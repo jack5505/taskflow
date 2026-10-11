@@ -4,22 +4,23 @@ import { api } from "../api";
 import type { MeProfile } from "../api/client";
 import { parseApiError } from "../api/errors";
 import { meQueryKey } from "../auth/hooks";
-import { boardQueryKey } from "../board/cards";
+import { boardQueryKey, moveKey } from "../board/cards";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
-import { historyQueryKey, taskQueryKey, worklogsQueryKey } from "../task/keys";
-import { projectKeyOf } from "./timer";
+import { historyQueryKey, projectKeyOf, taskQueryKey } from "../task/keys";
 
 /**
- * После старта или остановки: профиль (таймер в шапке), задачи, на которые легло время, их
- * журнал времени и история, доска проекта и списки «списано» на других экранах устарели.
+ * После старта или остановки: профиль (таймер в шапке), задачи, на которые легло время (списано,
+ * журнал времени), их история, доска проекта и списки «списано» на других экранах устарели.
+ * Пока идёт переход с доски, её не перечитываем: ответ откатил бы карточку, а доску перечитает
+ * сам переход по завершении.
  */
 export function timerChanged(qc: QueryClient, taskKeys: (string | undefined)[]) {
   void qc.invalidateQueries({ queryKey: meQueryKey });
   for (const key of new Set(taskKeys.filter((k): k is string => !!k))) {
     void qc.invalidateQueries({ queryKey: taskQueryKey(key) });
-    void qc.invalidateQueries({ queryKey: worklogsQueryKey(key) });
     void qc.invalidateQueries({ queryKey: historyQueryKey(key) });
-    void qc.invalidateQueries({ queryKey: boardQueryKey(projectKeyOf(key)) });
+    if (qc.isMutating({ mutationKey: moveKey }) === 0)
+      void qc.invalidateQueries({ queryKey: boardQueryKey(projectKeyOf(key)) });
   }
   void qc.invalidateQueries({ queryKey: projectsQueryKey, refetchType: "none" });
   void qc.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });

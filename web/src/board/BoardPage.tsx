@@ -15,15 +15,16 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import type { TaskListItem } from "../api/client";
 import { errorText } from "../api/errors";
-import { meQueryKey, useMe } from "../auth/hooks";
+import { useMe } from "../auth/hooks";
 import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
 import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { TimerButton } from "../timer/TimerButton";
-import { canStartTimer, projectKeyOf } from "../timer/timer";
+import { canStartTimer } from "../timer/timer";
+import { timerChanged } from "../timer/hooks";
 import { BoardCard, CardBody } from "./BoardCard";
-import { applyMove, boardQueryKey, groupByStatus } from "./cards";
+import { applyMove, boardQueryKey, groupByStatus, moveKey } from "./cards";
 import { BoardFilters } from "./BoardFilters";
 import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter, type TasksQuery } from "./filters";
 import {
@@ -47,8 +48,6 @@ async function fetchAllTasks(key: string, query: TasksQuery, signal: AbortSignal
   } while (cursor);
   return items;
 }
-
-const moveKey = ["board-move"];
 
 interface Move {
   task: TaskListItem;
@@ -152,8 +151,13 @@ export function BoardPage() {
     void queryClient.invalidateQueries({ queryKey: boardQueryKey(key) });
     void queryClient.invalidateQueries({ queryKey: projectsQueryKey, refetchType: "none" });
     void queryClient.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });
-    // Переход из «В работе» останавливает таймер на задаче (§6.4) — шапка должна это увидеть.
-    if (timerKey && projectKeyOf(timerKey) === key) void queryClient.invalidateQueries({ queryKey: meQueryKey });
+  };
+
+  // Переход из «В работе» останавливает таймер на задаче с записью времени (§6.4): шапка и
+  // карточка этой задачи должны это увидеть.
+  const settled = (m: Move) => {
+    refresh(1);
+    if (m.task.key && m.task.key === timerKey) timerChanged(queryClient, [m.task.key]);
   };
 
   // Карточка сразу встаёт в новую колонку; при ошибке возвращается только она — по своему
@@ -180,14 +184,14 @@ export function BoardPage() {
       moveOptions.rollback(m);
       setActionError(`${m.task.key}: ${errorText(e)}`);
     },
-    onSettled: () => refresh(1),
+    onSettled: (_r, _e, m) => settled(m),
   });
   // Переход из окна: ошибка — в окне, успех закрывает окно.
   const dialogMove = useMutation({
     ...moveOptions,
     onError: (_e, m) => moveOptions.rollback(m),
     onSuccess: () => setDialog(null),
-    onSettled: () => refresh(1),
+    onSettled: (_r, _e, m) => settled(m),
   });
 
   const take = useMutation({
@@ -317,9 +321,8 @@ export function BoardPage() {
                           }
                           taking={take.isPending && take.variables?.id === t.id}
                           timerRunning={timerHere}
-                          timer={
-                            timerHere || canStart ? <TimerButton taskKey={t.key!} canStart={canStart} className="card-timer" /> : undefined
-                          }
+                          // Всегда: кнопка сама решает, что показать, и держит итог «списано» после «Стоп».
+                          timer={<TimerButton taskKey={t.key!} canStart={canStart} className="card-timer" />}
                         />
                       );
                     })}

@@ -4,7 +4,12 @@ import type { NotificationNotification, NotificationPage } from "../api/client";
 import { formatDuration } from "../lib/duration";
 import { formatDate } from "../lib/format";
 
+/** Общий префикс: инвалидация по нему обновляет и счётчик, и список. */
 export const notificationsQueryKey = ["notifications"] as const;
+/** Счётчик на колокольчике: первая страница из одного элемента, unread_count приходит с ней. */
+export const unreadQueryKey = [...notificationsQueryKey, "unread"] as const;
+/** Список в открытом колокольчике, по курсору. */
+export const listQueryKey = [...notificationsQueryKey, "list"] as const;
 
 export interface NotificationText {
   text: string;

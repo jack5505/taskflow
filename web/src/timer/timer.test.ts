@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { canStartTimer, elapsedSeconds, formatClock, projectKeyOf, startMessage, stopMessage } from "./timer";
+import { projectKeyOf } from "../task/keys";
+import { canStartTimer, elapsedSeconds, formatClock, startMessage, stopMessage } from "./timer";
 
 describe("elapsedSeconds", () => {
   it("досчитывает от ответа сервера по своим часам", () => {

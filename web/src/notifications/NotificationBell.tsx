@@ -1,22 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { api } from "../api";
-import type { NotificationNotification } from "../api/client";
+import type { NotificationNotification, NotificationPage } from "../api/client";
 import { errorText } from "../api/errors";
 import { useTimeZone } from "../auth/hooks";
 import { formatDateTime } from "../lib/format";
 import {
   badgeText,
   describeNotification,
+  listQueryKey,
   markReadInCache,
   notificationsQueryKey,
+  unreadQueryKey,
   type NotificationsData,
 } from "./notifications";
 
 const PAGE_SIZE = 20;
 // Пушей в браузер нет — новые события подтягиваем опросом.
 const POLL_MS = 60_000;
+const markKey = ["notifications-read"];
 
 /**
  * Колокольчик в шапке (ТЗ §7.7): счётчик непрочитанных, список событий за 30 дней, новые первыми,
@@ -29,26 +32,43 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
+  // Закрытый колокольчик опрашивает только счётчик — один короткий запрос, сколько бы страниц
+  // списка ни было загружено.
+  const counter = useQuery({
+    queryKey: unreadQueryKey,
+    queryFn: async ({ signal }) => (await api.api.v1MeNotificationsList({ limit: 1 }, { signal })).data,
+    refetchInterval: POLL_MS,
+  });
+  // Список грузится при открытии (и перечитывается при каждом открытии) и опрашивается, пока открыт.
   const list = useInfiniteQuery({
-    queryKey: notificationsQueryKey,
+    queryKey: listQueryKey,
     queryFn: async ({ pageParam, signal }) =>
       (await api.api.v1MeNotificationsList({ limit: PAGE_SIZE, cursor: pageParam || undefined }, { signal })).data,
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor || undefined,
-    refetchInterval: POLL_MS,
+    enabled: open,
+    refetchInterval: open ? POLL_MS : false,
   });
 
   const markRead = useMutation({
+    mutationKey: markKey,
     // ids null — все.
     mutationFn: (ids: string[] | null) => api.api.v1MeNotificationsReadCreate(ids ? { ids } : {}),
     onMutate: async (ids) => {
       await queryClient.cancelQueries({ queryKey: notificationsQueryKey });
-      queryClient.setQueryData<NotificationsData>(notificationsQueryKey, (d) =>
-        markReadInCache(d, ids, new Date().toISOString()),
+      const readAt = new Date().toISOString();
+      queryClient.setQueryData<NotificationsData>(listQueryKey, (d) => markReadInCache(d, ids, readAt));
+      // Счётчик — та же страница, только одна и без курсора.
+      queryClient.setQueryData<NotificationPage>(unreadQueryKey, (p) =>
+        p ? markReadInCache({ pages: [p], pageParams: [""] }, ids, readAt)?.pages[0] : p,
       );
     },
-    // При ошибке перечитываем список — отметка вернётся к серверной.
-    onSettled: () => queryClient.invalidateQueries({ queryKey: notificationsQueryKey }),
+    // Перечитываем с сервера, когда закончились все отметки: ответ на первую вернул бы
+    // непрочитанным то, что отмечено второй. При ошибке отметка вернётся к серверной.
+    onSettled: () => {
+      if (queryClient.isMutating({ mutationKey: markKey }) <= 1)
+        void queryClient.invalidateQueries({ queryKey: notificationsQueryKey });
+    },
   });
 
   // Закрыть по щелчку мимо и по Escape.
@@ -68,12 +88,13 @@ export function NotificationBell() {
     };
   }, [open]);
 
-  const unread = list.data?.pages[0]?.unread_count ?? 0;
+  const unread = counter.data?.unread_count ?? 0;
   const items = list.data?.pages.flatMap((p) => p.items ?? []) ?? [];
   const badge = badgeText(unread);
 
   const toggle = () => {
-    if (!open) void list.refetch();
+    // При открытии сверяем и счётчик: список и счётчик должны совпадать.
+    if (!open) void queryClient.invalidateQueries({ queryKey: notificationsQueryKey });
     setOpen(!open);
   };
 
