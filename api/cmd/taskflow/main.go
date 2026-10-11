@@ -171,6 +171,9 @@ func runWorker(ctx context.Context, cfg *config.Config) error {
 	waitCtx, cancel := context.WithTimeout(ctx, migrationsWait)
 	defer cancel()
 	if err := db.WaitForMigrations(waitCtx, g, migrations.FS, 2*time.Second); err != nil {
+		if ctx.Err() != nil {
+			return nil // SIGTERM во время ожидания — обычная остановка, а не сбой
+		}
 		return err
 	}
 	return worker.Run(ctx, cfg, g)

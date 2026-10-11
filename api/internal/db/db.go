@@ -150,25 +150,31 @@ func WaitForMigrations(ctx context.Context, g *gorm.DB, src fs.FS, poll time.Dur
 	if err != nil {
 		return err
 	}
+	tick := time.NewTicker(poll)
+	defer tick.Stop()
 	var (
 		cur     uint
 		dirty   bool
+		read    bool // версия хотя бы раз прочитана
 		lastErr error
 		logged  bool
 	)
-wait:
-	for {
+	for ctx.Err() == nil {
 		v, d, err := schemaVersion(ctx, g)
-		if err != nil && ctx.Err() != nil {
-			// Запрос прерван таймаутом ожидания — в ошибке остаётся последнее прочитанное состояние.
-			break
-		}
-		cur, dirty, lastErr = v, d, err
-		if lastErr == nil && cur >= want && !dirty {
-			if logged {
-				slog.Info("db: migrations ready", "version", cur)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			// Запрос прерван концом ожидания — в ошибке остаётся последнее прочитанное состояние.
+			continue
+		case err != nil:
+			lastErr = err
+		default:
+			cur, dirty, read, lastErr = v, d, true, nil
+			if cur >= want && !dirty {
+				if logged {
+					slog.Info("db: migrations ready", "version", cur)
+				}
+				return nil
 			}
-			return nil
 		}
 		if !logged {
 			slog.Info("db: waiting for migrations", "version", cur, "want", want, "dirty", dirty, "err", lastErr)
@@ -176,14 +182,17 @@ wait:
 		}
 		select {
 		case <-ctx.Done():
-			break wait
-		case <-time.After(poll):
+		case <-tick.C:
 		}
 	}
-	if lastErr != nil {
-		return fmt.Errorf("wait for migrations %d: %w", want, lastErr)
+	switch {
+	case lastErr != nil:
+		return fmt.Errorf("wait for migrations %d: %w; last error: %w", want, ctx.Err(), lastErr)
+	case !read:
+		return fmt.Errorf("wait for migrations %d: %w; schema version not read", want, ctx.Err())
+	default:
+		return fmt.Errorf("wait for migrations %d: %w; schema version %d (dirty=%t)", want, ctx.Err(), cur, dirty)
 	}
-	return fmt.Errorf("wait for migrations: schema version %d (dirty=%t), want %d: %w", cur, dirty, want, ctx.Err())
 }
 
 // schemaVersion — текущая версия схемы и флаг dirty; пока таблицы версий нет — 0 без ошибки.

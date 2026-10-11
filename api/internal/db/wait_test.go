@@ -64,11 +64,11 @@ func TestWaitForMigrationsTimesOut(t *testing.T) {
 		"1_a.up.sql":                   {Data: []byte("SELECT 1;")},
 		"99999999999999_future.up.sql": {Data: []byte("SELECT 1;")},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := db.WaitForMigrations(ctx, g, newer, 50*time.Millisecond)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.ErrorContains(t, err, "want 99999999999999")
+	require.ErrorContains(t, err, "wait for migrations 99999999999999")
 
 	// Схема новее бинарника (откат образа) — не ждём.
 	older := fstest.MapFS{"1_a.up.sql": {Data: []byte("SELECT 1;")}}
@@ -79,17 +79,28 @@ func TestWaitForMigrationsDirtySchema(t *testing.T) {
 	g, _ := testutil.TempDB(t)
 	require.NoError(t, g.Exec(`UPDATE schema_migrations SET dirty = true`).Error)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := db.WaitForMigrations(ctx, g, migrations.FS, 50*time.Millisecond)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.ErrorContains(t, err, "dirty=true")
 }
 
 func TestWaitForMigrationsReportsDatabaseError(t *testing.T) {
 	g, _ := testutil.TempDB(t)
 	require.NoError(t, db.Close(g))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := db.WaitForMigrations(ctx, g, migrations.FS, 50*time.Millisecond)
-	require.ErrorContains(t, err, "schema version")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorContains(t, err, "last error: schema version")
+}
+
+func TestWaitForMigrationsExpiredContext(t *testing.T) {
+	g := testutil.SharedDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := db.WaitForMigrations(ctx, g, migrations.FS, time.Hour)
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, "schema version not read")
 }
