@@ -156,6 +156,7 @@ describe("projectKeyFromPath", () => {
     expect(projectKeyFromPath("/")).toBeNull();
     expect(projectKeyFromPath("/login")).toBeNull();
     expect(projectKeyFromPath("/tasks/TM")).toBeNull();
+    expect(projectKeyFromPath("/projects/%E0")).toBeNull(); // битый адрес не роняет шапку
   });
 });
 
@@ -175,7 +176,10 @@ describe("горячая клавиша C", () => {
   it("C в любой раскладке", () => {
     expect(isCreateHotkey(ev({}))).toBe(true);
     expect(isCreateHotkey(ev({ key: "с" }))).toBe(true); // русская раскладка
-    expect(isCreateHotkey(ev({ key: "C", code: "" }))).toBe(true); // Caps Lock
+    expect(isCreateHotkey(ev({ key: "C" }))).toBe(true); // Caps Lock
+    // По символу, а не по физической клавише: в Dvorak на месте KeyC — «j».
+    expect(isCreateHotkey(ev({ key: "j", code: "KeyC" }))).toBe(false);
+    expect(isCreateHotkey(ev({ key: "c", code: "KeyI" }))).toBe(true);
   });
 
   it("не срабатывает с модификаторами, на повторе и в наборе IME", () => {
@@ -201,21 +205,32 @@ describe("горячая клавиша C", () => {
     expect(isTypingTarget({} as EventTarget)).toBe(false); // window, document
   });
 
-  it("не срабатывает при открытом диалоге", () => {
-    const doc = (found: boolean) => ({ querySelector: () => (found ? ({} as Element) : null) }) as Pick<Document, "querySelector">;
+  it("не срабатывает при открытом диалоге и при перетаскивании карточки с клавиатуры", () => {
+    let selector = "";
+    const doc = (found: boolean) =>
+      ({
+        querySelector: (s: string) => {
+          selector = s;
+          return found ? ({} as Element) : null;
+        },
+      }) as Pick<Document, "querySelector">;
     expect(hasOpenDialog(doc(true))).toBe(true);
+    expect(selector).toContain('[aria-modal="true"]');
+    expect(selector).toContain('[aria-pressed="true"]');
     expect(hasOpenDialog(doc(false))).toBe(false);
   });
 });
 
 describe("affectedByCreate", () => {
-  it("устаревают запросы проекта (доска, бэклог) и сводки главной, чужие проекты — нет", () => {
-    expect(affectedByCreate(["board", "TM", { sprint_id: "s" }], "TM")).toBe(true);
-    expect(affectedByCreate(["backlog", "TM"], "TM")).toBe(true);
-    expect(affectedByCreate(["project-sprints", "TM"], "TM")).toBe(true);
-    expect(affectedByCreate(["projects", "active"], "TM")).toBe(true);
-    expect(affectedByCreate(["my-tasks"], "TM")).toBe(true);
-    expect(affectedByCreate(["board", "XX"], "TM")).toBe(false);
-    expect(affectedByCreate(["task", "TM-1"], "TM")).toBe(false);
+  it("списки задач проекта перечитываются, сводки главной только помечаются, остальное не трогаем", () => {
+    expect(affectedByCreate(["board", "TM", { sprint_id: "s" }], "TM")).toBe("refetch");
+    expect(affectedByCreate(["backlog", "TM"], "TM")).toBe("refetch");
+    expect(affectedByCreate(["project-sprints", "TM"], "TM")).toBe("refetch");
+    expect(affectedByCreate(["projects", "active"], "TM")).toBe("stale");
+    expect(affectedByCreate(["my-tasks"], "TM")).toBe("stale");
+    expect(affectedByCreate(["project", "TM"], "TM")).toBeNull();
+    expect(affectedByCreate(["project-members", "TM"], "TM")).toBeNull();
+    expect(affectedByCreate(["board", "XX"], "TM")).toBeNull();
+    expect(affectedByCreate(["task", "TM-1"], "TM")).toBeNull();
   });
 });

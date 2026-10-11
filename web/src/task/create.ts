@@ -3,6 +3,7 @@ import type { QueryKey } from "@tanstack/react-query";
 import type { MeProfile, ProjectListItem, SprintView, TaskCreateRequest } from "../api/client";
 import type { FieldError } from "../api/errors";
 import { parseDuration } from "../lib/duration";
+import { membersQueryKey, projectQueryKey } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { parseLabels } from "./patch";
 
@@ -146,10 +147,13 @@ export function openSprints(list: SprintView[] | undefined): SprintView[] {
  * null — страница не проектная, клавиша C там не работает (§7.6).
  */
 export function projectKeyFromPath(pathname: string): string | null {
-  const p = /^\/projects\/([^/]+)/.exec(pathname);
-  if (p) return decodeURIComponent(p[1]);
-  const t = /^\/tasks\/(.+)-\d+\/?$/.exec(pathname);
-  return t ? decodeURIComponent(t[1]) : null;
+  const m = /^\/projects\/([^/]+)/.exec(pathname) ?? /^\/tasks\/(.+)-\d+\/?$/.exec(pathname);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null; // битая %-последовательность в набранном вручную адресе — не роняем шапку
+  }
 }
 
 /** Что нужно от события клавиатуры, чтобы решить про горячую клавишу. */
@@ -166,14 +170,14 @@ export interface HotkeyEvent {
 }
 
 /**
- * Клавиша C без модификаторов (Ctrl+C — копирование). По code KeyC: в русской раскладке та же
- * клавиша даёт «с», и пользователю не нужно переключать раскладку.
+ * Клавиша C без модификаторов (Ctrl+C — копирование). По символу, а не по code: в русской
+ * раскладке та же клавиша даёт «с» — тоже подходит; в Dvorak C — там, где на ней написано.
  */
 export function isCreateHotkey(e: HotkeyEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat || e.isComposing || e.defaultPrevented) {
     return false;
   }
-  return e.code === "KeyC" || e.key === "c" || e.key === "C" || e.key === "с" || e.key === "С";
+  return ["c", "C", "с", "С"].includes(e.key);
 }
 
 /** Фокус в поле ввода: там C — это буква, а не команда. */
@@ -185,18 +189,25 @@ export function isTypingTarget(t: EventTarget | null): boolean {
   return tag === "input" || tag === "textarea" || tag === "select";
 }
 
-/** Открыт модальный диалог (переход статуса, конфликт версий, само создание). */
+/**
+ * Открыт модальный диалог (переход статуса, конфликт версий, само создание) или с клавиатуры
+ * тащат карточку доски (dnd-kit ставит взятой карточке aria-pressed) — клавиша C не срабатывает.
+ */
 export function hasOpenDialog(doc: Pick<Document, "querySelector">): boolean {
-  return doc.querySelector('[aria-modal="true"], dialog[open]') !== null;
+  return doc.querySelector('[aria-modal="true"], dialog[open], [aria-roledescription][aria-pressed="true"]') !== null;
 }
 
+// Запросы проекта, которые новая задача не меняет: карточка проекта и участники.
+const unaffected = new Set<unknown>([projectQueryKey("")[0], membersQueryKey("")[0]]);
+
 /**
- * Какие запросы устарели после создания задачи в проекте: всё, что ключено этим проектом
- * (доска ["board", key, …], бэклог, спринты с числом задач), и сводки главной.
+ * Как обновить запрос после создания задачи в проекте. "refetch" — списки задач проекта
+ * (доска ["board", key, …], бэклог, спринты с числом задач): перечитываем, если на экране.
+ * "stale" — счётчики главной и «Мои задачи»: только помечаем, перезапросит главная (как на доске).
  */
-export function affectedByCreate(queryKey: QueryKey, projectKey: string): boolean {
-  if (queryKey[0] === projectsQueryKey[0] || queryKey[0] === myTasksQueryKey[0]) return true;
-  return queryKey[1] === projectKey;
+export function affectedByCreate(queryKey: QueryKey, projectKey: string): "refetch" | "stale" | null {
+  if (queryKey[0] === projectsQueryKey[0] || queryKey[0] === myTasksQueryKey[0]) return "stale";
+  return queryKey[1] === projectKey && !unaffected.has(queryKey[0]) ? "refetch" : null;
 }
 
 export const sprintsQueryKey = (key: string) => ["project-sprints", key] as const;

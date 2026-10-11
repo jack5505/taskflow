@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import type { MeProfile, ProjectListItem, ProjectMemberView, ProjectView } from "../api/client";
 import type { Actor } from "../board/transitions";
-import { listQuery, projectsQueryKey } from "./logic";
+import { listQuery, projectsQueryKey, type ProjectsFilter } from "./logic";
 
 export const projectQueryKey = (key: string) => ["project", key] as const;
 export const membersQueryKey = (key: string) => ["project-members", key] as const;
@@ -25,18 +25,22 @@ export function useProjectMembers(key: string) {
   });
 }
 
+/** Список проектов (§7.2) — один кэш на главную, доску, карточку и окно создания задачи. */
+export function useProjectsList(filter: ProjectsFilter, enabled = true) {
+  return useQuery({
+    queryKey: [...projectsQueryKey, filter],
+    queryFn: async ({ signal }): Promise<ProjectListItem[]> =>
+      (await api.api.v1ProjectsList(listQuery(filter), { signal })).data ?? [],
+    enabled,
+  });
+}
+
 /**
  * Активный спринт проекта — из карточки проекта в общем списке (тот же кэш, что на главной):
  * отдельного эндпоинта спринтов пока нет.
  */
 export function useActiveSprint(key: string, project: ProjectView | undefined) {
-  const listFilter = project?.is_archived ? "archived" : "active";
-  const projects = useQuery({
-    queryKey: [...projectsQueryKey, listFilter],
-    queryFn: async ({ signal }): Promise<ProjectListItem[]> =>
-      (await api.api.v1ProjectsList(listQuery(listFilter), { signal })).data ?? [],
-    enabled: !!project,
-  });
+  const projects = useProjectsList(project?.is_archived ? "archived" : "active", !!project);
   return { query: projects, sprint: projects.data?.find((p) => p.key === key)?.active_sprint };
 }
 

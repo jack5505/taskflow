@@ -1,12 +1,11 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import type { ProjectListItem, SprintView, TaskTask } from "../api/client";
+import type { SprintView, TaskTask } from "../api/client";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { PRIORITIES, TASK_TYPES, priorityLabels, typeLabels } from "../board/filters";
-import { useProjectMembers } from "../projects/hooks";
-import { listQuery, projectsQueryKey } from "../projects/logic";
+import { useProjectMembers, useProjectsList } from "../projects/hooks";
 import {
   affectedByCreate,
   apiFieldErrors,
@@ -39,11 +38,7 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
   const dueRef = useRef<HTMLInputElement>(null);
 
   // Тот же запрос и кэш, что у списка проектов на главной: администратор видит все проекты.
-  const projects = useQuery({
-    queryKey: [...projectsQueryKey, "active"],
-    queryFn: async ({ signal }): Promise<ProjectListItem[]> =>
-      (await api.api.v1ProjectsList(listQuery("active"), { signal })).data ?? [],
-  });
+  const projects = useProjectsList("active");
   const options = creatableProjects(projects.data);
   // Текущий проект в архиве или ещё не загружен список — выбора нет, пусть выберут сами.
   const selected = options.find((p) => p.key === form.projectKey);
@@ -61,7 +56,11 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
     mutationFn: async (v: { key: string; body: ReturnType<typeof validateCreate>["body"] }) =>
       (await api.api.v1ProjectsTasksCreate(v.key, v.body)).data,
     onSuccess: (t, v) => {
-      void queryClient.invalidateQueries({ predicate: (q) => affectedByCreate(q.queryKey, v.key) });
+      void queryClient.invalidateQueries({ predicate: (q) => affectedByCreate(q.queryKey, v.key) === "refetch" });
+      void queryClient.invalidateQueries({
+        predicate: (q) => affectedByCreate(q.queryKey, v.key) === "stale",
+        refetchType: "none",
+      });
       onCreated(t);
     },
   });
@@ -94,6 +93,16 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
     if (Object.keys(errs).length === 0) create.mutate({ key, body });
   };
 
+  // Пока идёт запрос, окно не закрывается: иначе ответ закрыл бы уже следующее окно, а
+  // пользователь мог бы создать задачу повторно. Случайный щелчок мимо окна или Escape не
+  // выбрасывает набранное без вопроса.
+  const dirty = JSON.stringify(form) !== JSON.stringify(emptyForm(projectKey));
+  const dismiss = () => {
+    if (create.isPending) return;
+    if (dirty && !window.confirm("Закрыть окно? Введённые данные не сохранятся.")) return;
+    onCancel();
+  };
+
   const err = (f: keyof FormErrors) =>
     errors[f] ? (
       <span role="alert" className="field-error">
@@ -103,7 +112,7 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
   const invalid = (f: keyof FormErrors) => (errors[f] ? true : undefined);
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismiss()}>
       <form
         className="form panel modal create-task"
         role="dialog"
@@ -112,7 +121,7 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
         noValidate
         onSubmit={submit}
         onKeyDown={(e) => {
-          if (e.key === "Escape") onCancel();
+          if (e.key === "Escape") dismiss();
           // Ctrl+Enter — создать из любого поля, в том числе из описания.
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) e.currentTarget.requestSubmit();
         }}
@@ -142,7 +151,6 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
           Название
           <input
             autoFocus
-            maxLength={200}
             value={form.title}
             onChange={(e) => set("title", e.target.value)}
             aria-invalid={invalid("title")}
@@ -180,7 +188,9 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
             label="Описание"
             value={form.description}
             onChange={(v) => set("description", v)}
-            maxLength={20000}
+            // Лимит §3.3 — 20 000 символов, его проверяет validateCreate; maxLength считает
+            // UTF-16, а не символы, поэтому здесь только верхняя граница с запасом.
+            maxLength={40000}
             rows={5}
           />
           {err("description")}
@@ -266,7 +276,7 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
           <button type="submit" className="primary" disabled={create.isPending || projects.isPending}>
             {create.isPending ? "Создаём…" : "Создать"}
           </button>
-          <button type="button" onClick={onCancel}>
+          <button type="button" onClick={onCancel} disabled={create.isPending}>
             Отмена
           </button>
         </div>
