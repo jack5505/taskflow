@@ -28,6 +28,10 @@ var (
 // keyRe — ключ задачи {project.key}-{number}, например TM-42.
 var keyRe = regexp.MustCompile(`^([A-Z]{2,10})-([1-9][0-9]{0,9})$`)
 
+// ValidKey — key похож на ключ задачи (TM-42, в верхнем регистре): бот проверяет аргумент
+// команды до вызова сервиса, чтобы ответить подсказкой о формате, а не «не найдена».
+func ValidKey(key string) bool { return keyRe.MatchString(key) }
+
 // positionStep — шаг ручного порядка (7.4): новая задача встаёт в конец секции.
 const positionStep = 1024
 
