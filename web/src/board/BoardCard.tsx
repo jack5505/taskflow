@@ -45,8 +45,15 @@ export function CardBody({ task: t, assignee, linked = false }: CardProps & { li
         </span>
       </div>
       <div className="task-title">
-        {/* Карточка задачи (§7.5); в окне перетаскивания — просто текст. */}
-        {linked ? <Link to={`/tasks/${t.key}`}>{t.title}</Link> : t.title}
+        {/* Карточка задачи (§7.5); в окне перетаскивания — просто текст. Enter на ссылке не
+            доходит до клавиатурного перетаскивания карточки, иначе ссылка не открылась бы. */}
+        {linked ? (
+          <Link to={`/tasks/${t.key}`} onKeyDown={(e) => e.stopPropagation()}>
+            {t.title}
+          </Link>
+        ) : (
+          t.title
+        )}
       </div>
       <div className="task-foot">
         <Avatar assigneeId={t.assignee_id} member={assignee} />

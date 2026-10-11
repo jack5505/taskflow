@@ -25,7 +25,7 @@ import { describeHistory, type ValueContext } from "./history";
 import { MarkdownEditor, MarkdownView } from "./Markdown";
 import { buildPatch, ifMatch, isEmptyPatch, versionConflict, type Edits } from "./patch";
 import { taskPerms } from "./perms";
-import { InlineEdit, TaskFields, type SaveResult } from "./TaskFields";
+import { InlineEdit, TaskFields, type Save, type SaveResult } from "./TaskFields";
 
 
 type Tab = "comments" | "history" | "attachments" | "worklog";
@@ -43,15 +43,34 @@ interface DialogState {
 }
 
 /** Описание задачи: Markdown с предпросмотром; правка — по кнопке «Изменить». */
-function Description({ task, editable, onSave }: { task: TaskTask; editable: boolean; onSave: (d: string) => Promise<SaveResult> }) {
+function Description({
+  task,
+  editable,
+  saving,
+  onSave,
+}: {
+  task: TaskTask;
+  editable: boolean;
+  saving: boolean;
+  onSave: (d: string, base: TaskTask) => Promise<SaveResult>;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
+  // Версия, с которой начата правка: за минуты набора текста задачу могли изменить.
+  const [base, setBase] = useState<TaskTask>(task);
   const [busy, setBusy] = useState(false);
   if (draft === null)
     return (
       <>
         {task.description ? <MarkdownView source={task.description} /> : <p className="muted">Описания нет.</p>}
         {editable && (
-          <button type="button" onClick={() => setDraft(task.description ?? "")}>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              setBase(task);
+              setDraft(task.description ?? "");
+            }}
+          >
             Изменить описание
           </button>
         )}
@@ -63,7 +82,7 @@ function Description({ task, editable, onSave }: { task: TaskTask; editable: boo
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        const r = await onSave(draft);
+        const r = await onSave(draft, base);
         setBusy(false);
         if (r !== "error") setDraft(null);
       }}
@@ -173,7 +192,9 @@ export function TaskPage() {
   // PATCH с If-Match версии, от которой шла правка. 409 VERSION_CONFLICT — в кэш актуальную
   // задачу, а свою правку — в окно конфликта: пользователь решит, повторять ли её (§3.3).
   const save = useMutation({
-    mutationFn: async (v: { base: TaskTask; patch: TaskUpdateRequest }) =>
+    // shownBase — версия, от которой пользователь начинал правку: при повторном конфликте
+    // сравнение в окне по-прежнему идёт от неё, а не от промежуточной версии.
+    mutationFn: async (v: { base: TaskTask; patch: TaskUpdateRequest; shownBase?: TaskTask }) =>
       (await api.api.v1TasksPartialUpdate(key, v.patch, { headers: ifMatch(v.base.version) })).data,
     onSuccess: (next) => {
       setConflict(null);
@@ -184,16 +205,14 @@ export function TaskPage() {
       if (current) {
         queryClient.setQueryData(taskQueryKey(key), current);
         void queryClient.invalidateQueries({ queryKey: historyQueryKey(key) });
-        setConflict({ base: v.base, current, patch: v.patch });
+        setConflict({ base: v.shownBase ?? v.base, current, patch: v.patch });
       } else if (!conflict) {
         setSaveError(errorText(e));
       }
     },
   });
 
-  const saveEdits = async (edits: Edits): Promise<SaveResult> => {
-    const base = queryClient.getQueryData<TaskTask>(taskQueryKey(key));
-    if (!base) return "error";
+  const saveEdits: Save = async (edits: Edits, base: TaskTask) => {
     const patch = buildPatch(base, edits);
     if (isEmptyPatch(patch)) return "saved";
     setSaveError("");
@@ -293,7 +312,9 @@ export function TaskPage() {
               const n = [...v.trim()].length;
               return n < 1 || n > 200 ? "Название — от 1 до 200 символов" : "";
             }}
-            onSave={(v) => saveEdits({ title: v })}
+            task={t}
+            disabled={save.isPending}
+            onSave={(v, base) => saveEdits({ title: v }, base)}
           >
             {t.title}
           </InlineEdit>
@@ -358,7 +379,12 @@ export function TaskPage() {
         <div className="task-main">
           <section className="block">
             <h3>Описание</h3>
-            <Description task={t} editable={perms.edit} onSave={(d) => saveEdits({ description: d })} />
+            <Description
+              task={t}
+              editable={perms.edit}
+              saving={save.isPending}
+              onSave={(d, base) => saveEdits({ description: d }, base)}
+            />
           </section>
 
           <nav className="tabs" role="tablist" aria-label="Разделы задачи">
@@ -396,6 +422,7 @@ export function TaskPage() {
             task={t}
             perms={perms}
             members={memberList}
+            ctx={ctx}
             activeSprint={activeSprint}
             timeZone={timeZone}
             saving={save.isPending}
@@ -424,7 +451,7 @@ export function TaskPage() {
           ctx={ctx}
           pending={save.isPending}
           error={save.isError && !versionConflict(save.error) ? errorText(save.error) : ""}
-          onRetry={(patch) => save.mutate({ base: conflict.current, patch })}
+          onRetry={(patch) => save.mutate({ base: conflict.current, patch, shownBase: conflict.base })}
           onDiscard={() => setConflict(null)}
         />
       )}

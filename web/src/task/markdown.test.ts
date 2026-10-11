@@ -45,10 +45,19 @@ describe("renderMarkdown", () => {
     expect(el.textContent).toContain('<img src="x" onerror="alert(1)">');
   });
 
-  it("картинка Markdown без обработчиков", () => {
-    const el = dom(renderMarkdown('![a](x" onerror="alert(1)) ![b](https://example.com/b.png)'));
+  it("картинка: своя — картинкой, внешняя — ссылкой; без обработчиков", () => {
+    const el = dom(renderMarkdown('![a](x" onerror="alert(1)) ![b](https://example.com/b.png) ![c](/files/c.png)'));
     expect(handlers(el)).toEqual([]);
-    expect(el.querySelector("img")?.getAttribute("src")).toBe("https://example.com/b.png");
+    expect([...el.querySelectorAll("img")].map((i) => i.getAttribute("src"))).toEqual(["/files/c.png"]);
+    expect(el.querySelector('a[href="https://example.com/b.png"]')?.textContent).toBe("b");
+  });
+
+  it("список задач GFM: флажки остаются, только для показа", () => {
+    const boxes = [...dom(renderMarkdown("- [x] сделано\n- [ ] осталось")).querySelectorAll("input")];
+    expect(boxes.map((b) => [b.type, b.checked, b.disabled])).toEqual([
+      ["checkbox", true, true],
+      ["checkbox", false, true],
+    ]);
   });
 
   it("ссылка javascript: обезврежена, обычная открывается в новой вкладке", () => {
@@ -74,5 +83,10 @@ describe("sanitizeHtml", () => {
     expect(el.querySelector("p")?.hasAttribute("style")).toBe(false);
     expect(el.querySelector("a")?.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
     expect(el.querySelector("img")).not.toBeNull(); // картинка остаётся, без обработчика
+  });
+
+  it("поля ввода, кроме флажков, вырезаются", () => {
+    const el = dom(sanitizeHtml('<input type="text" value="x"><input type="checkbox" checked>'));
+    expect([...el.querySelectorAll("input")].map((i) => [i.type, i.disabled])).toEqual([["checkbox", true]]);
   });
 });

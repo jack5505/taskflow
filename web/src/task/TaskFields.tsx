@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import type { ProjectActiveSprint, ProjectMemberView, TaskTask } from "../api/client";
+import type { ValueContext } from "./history";
 import { PRIORITIES, TASK_TYPES, priorityLabels, typeLabels } from "../board/filters";
 import { formatDuration, parseDuration } from "../lib/duration";
 import { formatDate, formatDateTime } from "../lib/format";
@@ -8,25 +9,35 @@ import type { TaskPerms } from "./perms";
 
 /** Итог сохранения: при ошибке редактор остаётся открытым, при конфликте правку забирает окно конфликта. */
 export type SaveResult = "saved" | "conflict" | "error";
-export type Save = (edits: Edits) => Promise<SaveResult>;
+/**
+ * Сохранить правку. base — версия задачи, которую пользователь видел, начиная правку: её
+ * version уходит в If-Match, чтобы чужое изменение, пришедшее за это время, дало 409, а не
+ * перезаписалось молча.
+ */
+export type Save = (edits: Edits, base: TaskTask) => Promise<SaveResult>;
 
 interface InlineProps {
   /** Текст в поле ввода при открытии. */
   initial: string;
   /** Показ без редактирования. */
   children: ReactNode;
+  /** Задача на экране: версия на момент открытия поля уходит в If-Match. */
+  task: TaskTask;
   editable: boolean;
+  /** Идёт другое сохранение: открыть поле нельзя. */
+  disabled?: boolean;
   label: string;
   placeholder?: string;
   /** "" — годится, иначе текст ошибки. */
   validate?: (v: string) => string;
-  onSave: (v: string) => Promise<SaveResult>;
+  onSave: (v: string, base: TaskTask) => Promise<SaveResult>;
   className?: string;
 }
 
 /** Значение, которое правится по щелчку: Enter или уход фокуса — сохранить, Escape — отмена. */
 export function InlineEdit(p: InlineProps) {
   const [draft, setDraft] = useState<string | null>(null);
+  const [base, setBase] = useState<TaskTask>(p.task);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // Escape закрывает поле; уход фокуса при закрытии не должен сохранять.
@@ -40,9 +51,11 @@ export function InlineEdit(p: InlineProps) {
         className={`inline-edit ${p.className ?? ""}`}
         title="Изменить"
         aria-label={`${p.label}: изменить`}
+        disabled={p.disabled}
         onClick={() => {
           setError("");
           cancelled.current = false;
+          setBase(p.task);
           setDraft(p.initial);
         }}
       >
@@ -56,7 +69,7 @@ export function InlineEdit(p: InlineProps) {
     setError(err);
     if (err) return;
     setBusy(true);
-    const r = await p.onSave(draft);
+    const r = await p.onSave(draft, base);
     setBusy(false);
     if (r !== "error") setDraft(null);
   };
@@ -68,7 +81,8 @@ export function InlineEdit(p: InlineProps) {
         className={p.className}
         value={draft}
         placeholder={p.placeholder}
-        disabled={busy}
+        // readOnly, а не disabled: при ошибке сохранения фокус остаётся в поле, Escape работает.
+        readOnly={busy}
         aria-invalid={!!error}
         onChange={(e) => {
           setDraft(e.target.value);
@@ -95,21 +109,27 @@ export function InlineEdit(p: InlineProps) {
  * Срок: сохраняется при уходе фокуса или Enter, а не на каждое изменение — иначе ручной ввод
  * года отправил бы PATCH на каждую цифру.
  */
-function DateInput(p: { value: string; disabled: boolean; onSave: (v: string) => void }) {
+function DateInput(p: { task: TaskTask; disabled: boolean; onSave: (v: string, base: TaskTask) => void }) {
+  const value = p.task.due_date ?? "";
   const [draft, setDraft] = useState<string | null>(null);
-  const commit = () => {
-    if (draft !== null && draft !== p.value) p.onSave(draft);
+  const [base, setBase] = useState<TaskTask>(p.task);
+  const commit = (el: HTMLInputElement) => {
+    // Недописанная дата (validity.badInput) даёт value "" — это не очистка срока.
+    if (draft !== null && draft !== value && !el.validity.badInput) p.onSave(draft, base);
     setDraft(null);
   };
   return (
     <input
       type="date"
       aria-label="Срок"
-      value={draft ?? p.value}
+      value={draft ?? value}
       disabled={p.disabled}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => e.key === "Enter" && commit()}
+      onChange={(e) => {
+        if (draft === null) setBase(p.task);
+        setDraft(e.target.value);
+      }}
+      onBlur={(e) => commit(e.currentTarget)}
+      onKeyDown={(e) => e.key === "Enter" && commit(e.currentTarget)}
     />
   );
 }
@@ -118,20 +138,18 @@ interface Props {
   task: TaskTask;
   perms: TaskPerms;
   members: ProjectMemberView[];
+  /** Имена участников — те же, что в истории. */
+  ctx: ValueContext;
   activeSprint?: ProjectActiveSprint;
   timeZone?: string;
   saving: boolean;
   onSave: Save;
 }
 
-function memberName(members: ProjectMemberView[], id: string | undefined): string {
-  if (!id) return "";
-  const m = members.find((x) => x.user_id === id);
-  return m ? m.display_name || m.email || "Без имени" : "Пользователь не в проекте";
-}
 
 /** Правая панель карточки (§7.5, §6.2): поля задачи, учёт времени и даты. */
-export function TaskFields({ task: t, perms, members, activeSprint, timeZone, saving, onSave }: Props) {
+export function TaskFields({ task: t, perms, members, ctx, activeSprint, timeZone, saving, onSave }: Props) {
+  const name = (id: string | undefined) => (id ? (ctx.userName(id) ?? "Пользователь не в проекте") : "");
   const spent = t.spent_minutes ?? 0;
   const estimate = t.estimate_minutes;
   const left = estimate ? Math.max(estimate - spent, 0) : undefined;
@@ -153,7 +171,7 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
             aria-label="Тип"
             value={t.type ?? "task"}
             disabled={saving}
-            onChange={(e) => void onSave({ type: e.target.value as TaskTask["type"] })}
+            onChange={(e) => void onSave({ type: e.target.value as TaskTask["type"] }, t)}
           >
             {TASK_TYPES.map((v) => (
               <option key={v} value={v}>
@@ -173,7 +191,7 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
             aria-label="Приоритет"
             value={t.priority ?? "medium"}
             disabled={saving}
-            onChange={(e) => void onSave({ priority: e.target.value as TaskTask["priority"] })}
+            onChange={(e) => void onSave({ priority: e.target.value as TaskTask["priority"] }, t)}
           >
             {PRIORITIES.map((v) => (
               <option key={v} value={v}>
@@ -193,12 +211,12 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
             aria-label="Исполнитель"
             value={t.assignee_id ?? ""}
             disabled={saving}
-            onChange={(e) => void onSave({ assignee_id: e.target.value || undefined })}
+            onChange={(e) => void onSave({ assignee_id: e.target.value || undefined }, t)}
           >
             {(perms.unassign || !t.assignee_id) && <option value="">— не назначен —</option>}
             {/* Текущий исполнитель остаётся в списке, даже если деактивирован. */}
             {t.assignee_id && !assignable.some((m) => m.user_id === t.assignee_id) && (
-              <option value={t.assignee_id}>{memberName(members, t.assignee_id)}</option>
+              <option value={t.assignee_id}>{name(t.assignee_id)}</option>
             )}
             {assignable.map((m) => (
               <option key={m.user_id} value={m.user_id}>
@@ -207,12 +225,12 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
             ))}
           </select>
         ) : (
-          memberName(members, t.assignee_id) || <span className="muted">не назначен</span>
+          name(t.assignee_id) || <span className="muted">не назначен</span>
         )}
       </dd>
 
       <dt>Автор</dt>
-      <dd>{memberName(members, t.reporter_id) || "—"}</dd>
+      <dd>{name(t.reporter_id) || "—"}</dd>
 
       <dt>Спринт</dt>
       <dd>{sprint}</dd>
@@ -220,7 +238,7 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
       <dt>Срок</dt>
       <dd>
         {perms.edit ? (
-          <DateInput value={t.due_date ?? ""} disabled={saving} onSave={(v) => void onSave({ due_date: v })} />
+          <DateInput task={t} disabled={saving} onSave={(v, base) => void onSave({ due_date: v }, base)} />
         ) : (
           formatDate(t.due_date) || "—"
         )}
@@ -229,6 +247,8 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
       <dt>Метки</dt>
       <dd>
         <InlineEdit
+          task={t}
+          disabled={saving}
           editable={perms.edit}
           label="Метки"
           placeholder="через запятую"
@@ -239,7 +259,7 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
             if (l.some((x) => [...x].length > 30)) return "Метка — до 30 символов";
             return "";
           }}
-          onSave={(v) => onSave({ labels: parseLabels(v) })}
+          onSave={(v, base) => onSave({ labels: parseLabels(v) }, base)}
         >
           {t.labels?.length ? (
             t.labels.map((l) => (
@@ -256,6 +276,8 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
       <dt>Оценка</dt>
       <dd>
         <InlineEdit
+          task={t}
+          disabled={saving}
           editable={perms.estimate}
           label="Оценка"
           placeholder="2h 30m"
@@ -267,7 +289,7 @@ export function TaskFields({ task: t, perms, members, activeSprint, timeZone, sa
             if (m < 1 || m > 60000) return "От 1m до 1000h";
             return "";
           }}
-          onSave={(v) => onSave({ estimate_minutes: v.trim() ? (parseDuration(v) ?? undefined) : undefined })}
+          onSave={(v, base) => onSave({ estimate_minutes: v.trim() ? (parseDuration(v) ?? undefined) : undefined }, base)}
         >
           {formatDuration(estimate) || <span className="muted">нет</span>}
         </InlineEdit>
