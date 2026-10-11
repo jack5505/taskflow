@@ -124,6 +124,7 @@ var (
 type preLock struct {
 	users, sprints []uuid.UUID
 	withDeleted    bool // разрешить удалённую задачу (восстановление)
+	reorder        bool // перестановка: advisory-блокировка порядка задач проекта (см. Move)
 }
 
 // change — общая часть изменений задачи. Порядок блокировок тот же, что у деактивации и закрытия
@@ -154,6 +155,13 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		}
 		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
 			return err
+		}
+		if pre.reorder {
+			// Проект берём из ключа задачи: блокировка нужна раньше строки задачи.
+			projectKey := keyRe.FindStringSubmatch(key)[1]
+			if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('task-order:' || ?))`, projectKey).Error; err != nil {
+				return fmt.Errorf("task: order lock: %w", err)
+			}
 		}
 		cond := " AND deleted_at IS NULL"
 		if pre.withDeleted {
@@ -296,7 +304,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 		if err := setAssignee(tx, t, nil, uid); err != nil {
 			return err
 		}
-		if err := moveTo(tx, t, nil); err != nil {
+		if err := moveTo(tx, t, nil, uid); err != nil {
 			return err
 		}
 	}
@@ -330,7 +338,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 // переходит в активный, нет активного — в бэклог. Спринт читается без блокировки: закрытие спринта
 // блокирует спринт, затем его задачи — встречная блокировка отсюда дала бы deadlock; в худшем случае
 // задача попадёт в только что закрытый спринт и уйдёт при следующем переносе.
-// Запись «добавлено после старта» в журнал спринта добавит задача спринтов.
+// Запись «добавлено после старта» в журнал спринта делает moveTo.
 func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
 	if newAssignee != nil {
 		if err := checkAssignee(tx, t.ProjectID, *newAssignee); err != nil {
@@ -363,10 +371,10 @@ func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
 		return fmt.Errorf("task: active sprint: %w", err)
 	}
 	if len(ids) == 0 {
-		return moveTo(tx, t, nil)
+		return moveTo(tx, t, nil, by)
 	}
 	active := uuid.MustParse(ids[0])
-	return moveTo(tx, t, &active)
+	return moveTo(tx, t, &active, by)
 }
 
 // setAssignee меняет исполнителя с записью в историю. Когда исполнителем назначают не того,
@@ -389,7 +397,7 @@ func setAssignee(tx *gorm.DB, t *Task, id *uuid.UUID, by uuid.UUID) error {
 }
 
 // moveTo — перенос в секцию (спринт или бэклог) в её конец, с записью в историю.
-func moveTo(tx *gorm.DB, t *Task, sprintID *uuid.UUID) error {
+func moveTo(tx *gorm.DB, t *Task, sprintID *uuid.UUID, by uuid.UUID) error {
 	if samePtr(t.SprintID, sprintID) {
 		return nil
 	}
@@ -400,7 +408,41 @@ func moveTo(tx *gorm.DB, t *Task, sprintID *uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	old := t.SprintID
 	t.SprintID, t.Position = sprintID, pos
+	return sprintChanged(tx, t, old, sprintID, by)
+}
+
+// sprintChanged — §5.3: перенос в активный спринт и из него после старта пишется в журнал
+// спринта («добавлено/убрано после старта») и публикуется sprint.task_added / sprint.task_removed.
+// by — кто действует (явно, а не из контекста: бот вызывает сервис напрямую).
+func sprintChanged(tx *gorm.DB, t *Task, from, to *uuid.UUID, by uuid.UUID) error {
+	actor := &by
+	for _, step := range []struct {
+		sprint *uuid.UUID
+		action string
+		event  string
+	}{{from, "removed", events.SprintTaskRemoved}, {to, "added", events.SprintTaskAdded}} {
+		if step.sprint == nil {
+			continue
+		}
+		var state string
+		if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, *step.sprint).Scan(&state).Error; err != nil {
+			return fmt.Errorf("task: sprint state: %w", err)
+		}
+		if state != "active" {
+			continue
+		}
+		if err := tx.Exec(`INSERT INTO sprint_log (sprint_id, task_id, user_id, action) VALUES (?, ?, ?, ?)`,
+			*step.sprint, t.ID, actor, step.action).Error; err != nil {
+			return fmt.Errorf("task: sprint log: %w", err)
+		}
+		if err := events.Publish(tx, step.event, map[string]any{
+			"sprint_id": *step.sprint, "task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "by": actor,
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

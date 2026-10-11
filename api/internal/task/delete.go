@@ -27,6 +27,9 @@ func (s *Service) Delete(ctx context.Context, u *user.User, key string) error {
 			return err
 		}
 		t.DeletedAt = &now
+		if err := sprintChanged(tx, t, t.SprintID, nil, a.user.ID); err != nil {
+			return err // удалённая задача уходит из объёма активного спринта
+		}
 		return deletedOrRestored(tx, t, events.TaskDeleted, audit.TaskDeleted, a)
 	})
 	return err
@@ -47,6 +50,9 @@ func (s *Service) Restore(ctx context.Context, u *user.User, key string) (*Task,
 		}
 		t.DeletedAt = nil
 		if err := releaseStaleAssignee(tx, t); err != nil {
+			return err
+		}
+		if err := sprintChanged(tx, t, nil, t.SprintID, a.user.ID); err != nil {
 			return err
 		}
 		return deletedOrRestored(tx, t, events.TaskRestored, audit.TaskRestored, a)

@@ -333,6 +333,13 @@ export interface TaskCreateRequest {
   type?: "task" | "bug" | "feature";
 }
 
+export interface TaskMoveRequest {
+  /** @format uuid */
+  after_task_id?: string | null;
+  /** @format uuid */
+  sprint_id?: string | null;
+}
+
 export interface TaskTransitionRequest {
   assignee_id?: string;
   /** @maxLength 5000 */
@@ -1259,6 +1266,30 @@ export class Api<
         path: `/api/v1/tasks/${taskKey}/history`,
         method: "GET",
         secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description §7.4: sprint_id — секция (null — бэклог; не передан — та же секция), after_task_id — после какой задачи этой секции (null — в начало). Смена секции — только менеджер; порядок внутри секции — любой участник. В завершённый спринт и из него переносить нельзя. Перенос в активный спринт и из него пишется в журнал спринта.
+     *
+     * @tags tasks
+     * @name V1TasksMoveCreate
+     * @summary Переместить задачу
+     * @request POST:/api/v1/tasks/{task_key}/move
+     * @secure
+     */
+    v1TasksMoveCreate: (
+      taskKey: string,
+      body: TaskMoveRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskTask, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/move`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),
