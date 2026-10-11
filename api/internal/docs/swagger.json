@@ -2724,6 +2724,129 @@
                 }
             }
         },
+        "/api/v1/tasks/{task_key}/worklogs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Новые сверху (по дате работы). Участник проекта; записи удалённой задачи — администратор системы.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "worklogs"
+                ],
+                "summary": "Записи времени задачи",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/task.WorklogView"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Исполнитель задачи или менеджер проекта (§2), запись — от имени текущего пользователя (source manual, через бота — telegram).\nduration — §6.1 («2h 30m», «45m», «3h», «1d» = 8h), от 1m до 24h, иначе 400 INVALID_DURATION. work_date — не позже сегодня и не раньше даты создания задачи по поясу пользователя (§3.5).\nСумма записей пользователя за дату по всем задачам — не больше 24 часов (§6.3), иначе 409 DAILY_LIMIT_EXCEEDED (в details used_minutes и available_minutes).\nОтменённая задача и задача закрытого спринта (§4, §6.5) — 409 INVALID_TRANSITION. spent_minutes задачи пересчитывается, version не меняется. Событие worklog.created.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "worklogs"
+                ],
+                "summary": "Списать время",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "запись",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.worklogRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/task.WorklogView"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_DURATION, VALIDATION_FAILED (work_date, comment), INVALID_JSON",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не исполнитель и не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "DAILY_LIMIT_EXCEEDED, INVALID_TRANSITION, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [
@@ -2888,6 +3011,132 @@
                     },
                     "409": {
                         "description": "LAST_MANAGER",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/worklogs/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Права и сроки — как у правки (§6.5); удаление чужой записи — в журнал аудита (§3.8). spent_minutes задачи пересчитывается. Событие worklog.deleted.",
+                "tags": [
+                    "worklogs"
+                ],
+                "summary": "Удалить запись времени",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id записи",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: чужая запись или прошло 7 дней",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "INVALID_TRANSITION: закрытый спринт; PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Автор — в течение 7 календарных дней после work_date, менеджер проекта — любую без срока (§6.5). Правка чужой записи пишется в журнал аудита (§3.8).\nОграничения полей и дневной лимит — как при создании; день и лимит — по поясу владельца записи. Задача закрытого спринта — 409 INVALID_TRANSITION. Событие worklog.updated.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "worklogs"
+                ],
+                "summary": "Изменить запись времени",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id записи",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "изменяемые поля",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/task.worklogPatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/task.WorklogView"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_DURATION, VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: чужая запись или прошло 7 дней",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "DAILY_LIMIT_EXCEEDED, INVALID_TRANSITION, PROJECT_ARCHIVED",
                         "schema": {
                             "$ref": "#/definitions/apierr.Response"
                         }
@@ -3955,6 +4204,56 @@
                 }
             }
         },
+        "task.WorklogView": {
+            "type": "object",
+            "properties": {
+                "comment": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "duration": {
+                    "type": "string",
+                    "example": "2h 30m"
+                },
+                "hours": {
+                    "type": "string",
+                    "example": "2.50"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "minutes": {
+                    "type": "integer",
+                    "example": 150
+                },
+                "source": {
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "timer",
+                        "telegram"
+                    ]
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "user_name": {
+                    "type": "string"
+                },
+                "work_date": {
+                    "type": "string",
+                    "example": "2026-10-11"
+                }
+            }
+        },
         "task.commentRequest": {
             "type": "object",
             "required": [
@@ -4115,6 +4414,48 @@
                         "bug",
                         "feature"
                     ]
+                }
+            }
+        },
+        "task.worklogPatchRequest": {
+            "type": "object",
+            "properties": {
+                "comment": {
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "duration": {
+                    "type": "string",
+                    "example": "1h 15m"
+                },
+                "work_date": {
+                    "type": "string",
+                    "example": "2026-10-10"
+                }
+            }
+        },
+        "task.worklogRequest": {
+            "type": "object",
+            "properties": {
+                "comment": {
+                    "description": "до 500 символов",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "x-nullable": true,
+                    "example": "Разбор логов"
+                },
+                "duration": {
+                    "description": "§6.1: d, h, m от большей к меньшей; 1d = 8h; от 1m до 24h",
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "2h 30m"
+                },
+                "work_date": {
+                    "description": "по умолчанию сегодня по поясу пользователя",
+                    "type": "string",
+                    "format": "date",
+                    "maxLength": 40,
+                    "example": "2026-10-11"
                 }
             }
         },

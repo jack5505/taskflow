@@ -45,6 +45,9 @@ const (
 
 	TaskDeleted  = "task.deleted"
 	TaskRestored = "task.restored"
+
+	WorklogUpdated = "worklog.updated" // правка чужой записи времени
+	WorklogDeleted = "worklog.deleted" // удаление чужой записи времени
 )
 
 // Entry — строка таблицы audit_logs.

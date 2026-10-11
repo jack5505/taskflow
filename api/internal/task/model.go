@@ -63,6 +63,20 @@ type Date struct{ time.Time }
 
 func (d Date) MarshalJSON() ([]byte, error) { return json.Marshal(d.Format(time.DateOnly)) }
 
+// UnmarshalJSON — "2026-10-10"; null оставляет нулевое значение, как у time.Time.
+func (d *Date) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	t, err := time.Parse(time.DateOnly, s)
+	d.Time = t
+	return err
+}
+
 func (d Date) Value() (driver.Value, error) { return d.Format(time.DateOnly), nil }
 
 func (d *Date) Scan(src any) error {
