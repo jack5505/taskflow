@@ -954,3 +954,127 @@ button.link.danger {
 .attachment-info .comment-actions {
   margin-left: 0;
 }
+
+/* Бэклог и спринты (ТЗ §7.4) */
+.backlog-page .block-head .primary {
+  margin-left: auto;
+}
+
+.backlog-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: #eaeef2;
+}
+
+.backlog-section.over {
+  border-color: var(--accent);
+  border-style: dashed;
+  background: var(--notice-bg);
+}
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.section-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.section-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.section-goal {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 14px;
+}
+
+.section-empty {
+  margin: 4px;
+  font-size: 14px;
+}
+
+.badge.overdue {
+  border-color: var(--danger);
+}
+
+.backlog-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.backlog-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 120px 180px 70px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.backlog-row.draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.backlog-row.dragging {
+  opacity: 0.4;
+}
+
+.backlog-row.over {
+  box-shadow: 0 -3px 0 var(--accent);
+}
+
+.backlog-row.overlay {
+  cursor: grabbing;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.15);
+}
+
+.row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date-range {
+  display: flex;
+  gap: 12px;
+}
+
+.date-range label {
+  flex: 1;
+}
+
+.archive-table {
+  margin-bottom: 16px;
+}
+
+.archive-table tr.selected td {
+  background: var(--notice-bg);
+}
+
+.archive-sprint {
+  max-width: none;
+}
+
+.archive-sprint h3 {
+  margin: 0 0 8px;
+}

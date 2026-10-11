@@ -1,12 +1,27 @@
 // Запросы проекта, общие для доски и карточки задачи: один кэш TanStack Query на оба экрана.
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import type { MeProfile, ProjectListItem, ProjectMemberView, ProjectView } from "../api/client";
+import type { MeProfile, ProjectListItem, ProjectMemberView, ProjectView, TaskListItem } from "../api/client";
 import type { Actor } from "../board/transitions";
 import { listQuery, projectsQueryKey } from "./logic";
 
 export const projectQueryKey = (key: string) => ["project", key] as const;
 export const membersQueryKey = (key: string) => ["project-members", key] as const;
+
+/** Параметры GET /projects/{key}/tasks — как в сгенерированном клиенте. */
+export type TasksListQuery = NonNullable<Parameters<typeof api.api.v1ProjectsTasksList>[1]>;
+
+/** Все задачи по запросу: сервер отдаёт до 200 за раз, остальное — по next_cursor. */
+export async function fetchAllTasks(key: string, query: TasksListQuery, signal: AbortSignal): Promise<TaskListItem[]> {
+  const items: TaskListItem[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = (await api.api.v1ProjectsTasksList(key, { ...query, cursor }, { signal })).data;
+    items.push(...(page.items ?? []));
+    cursor = page.next_cursor || undefined;
+  } while (cursor);
+  return items;
+}
 
 export function useProject(key: string) {
   return useQuery({

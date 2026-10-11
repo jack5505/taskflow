@@ -18,12 +18,12 @@ import { errorText } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
-import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
+import { actorFor, fetchAllTasks, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { BoardCard, CardBody } from "./BoardCard";
 import { applyMove, boardQueryKey, groupByStatus } from "./cards";
 import { BoardFilters } from "./BoardFilters";
-import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter, type TasksQuery } from "./filters";
+import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter } from "./filters";
 import {
   BOARD_COLUMNS,
   canTransition,
@@ -33,18 +33,6 @@ import {
   type TransitionPrompt,
 } from "./transitions";
 import { TransitionDialog } from "./TransitionDialog";
-
-/** Все задачи по запросу: сервер отдаёт до 200 за раз, остальное — по next_cursor. */
-async function fetchAllTasks(key: string, query: TasksQuery, signal: AbortSignal): Promise<TaskListItem[]> {
-  const items: TaskListItem[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = (await api.api.v1ProjectsTasksList(key, { ...query, cursor }, { signal })).data;
-    items.push(...(page.items ?? []));
-    cursor = page.next_cursor || undefined;
-  } while (cursor);
-  return items;
-}
 
 const moveKey = ["board-move"];
 
