@@ -89,6 +89,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		telegram.RegisterAccount(rt, accounts, rdb)
 		telegram.RegisterGroups(rt, telegram.NewGroups(g, cfg.TelegramBotUsername), rdb)
 		telegram.RegisterCards(rt, d, telegram.NewCards(g, telegram.NewQueue(client), cfg.BaseURL))
+		telegram.RegisterGroupEvents(rt, d, telegram.NewGroupEvents(g, rdb, telegram.NewQueue(client)))
 		telegram.RegisterPersonal(rt, d, g, tasks, rdb, client, cfg.BaseURL)
 		telegram.Mount(mux, b, rt, rdb, client)
 		digest = telegram.NewDigest(g, client, cfg.BaseURL)

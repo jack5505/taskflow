@@ -47,6 +47,24 @@ var texts = template.Must(template.New("bot").Parse(`
 {{with .Details}}{{range $i, $d := .}}{{if $i}} · {{end}}{{html $d}}{{end}}
 {{end}}Статус: {{.Status}} · Исполнитель: {{html .Assignee}}{{end}}
 {{define "card_deleted"}}🗑 Задача удалена: {{html .Key}} «{{html .Title}}»{{end}}
+
+{{- /* Сообщения в группу по событиям, §8.6 (без разметки) */}}
+{{define "ev_taken"}}🛠 {{.Key}} «{{.Title}}» взята в работу — {{.Assignee}}{{end}}
+{{define "ev_assigned"}}📌 {{.Key}} «{{.Title}}»: исполнитель {{.Assignee}} — назначение: {{.Actor}}{{end}}
+{{define "ev_returned"}}↩️ {{.Key}} «{{.Title}}» возвращена в очередь — {{.Actor}}{{end}}
+{{define "ev_review"}}🔍 {{.Key}} «{{.Title}}» отправлена на проверку — {{.Actor}}{{end}}
+{{define "ev_rework"}}🔁 {{.Key}} «{{.Title}}» возвращена на доработку — {{.Actor}}{{with .Comment}}: {{.}}{{end}}{{end}}
+{{define "ev_accepted"}}✅ {{.Key}} «{{.Title}}» принята — {{.Actor}}. Списано {{.Spent}}{{end}}
+{{define "ev_cancelled"}}❌ {{.Key}} «{{.Title}}» отменена — {{.Actor}}{{with .Comment}}: {{.}}{{end}}{{end}}
+{{define "ev_comment"}}💬 {{.Author}} к {{.Key}}: {{.Body}}{{end}}
+{{define "ev_sprint_started"}}🚀 {{.Name}} запущен: {{.Dates}}, {{.Tasks}}, оценка {{.Estimate}}
+{{- with .Free}}
+
+Свободные задачи:{{range .}}
+{{.Key}} «{{.Title}}»{{end}}{{end}}{{if .More}}
+…и другие: /tasks{{end}}{{end}}
+{{define "ev_sprint_closed"}}🏁 {{.Name}} завершён: готово {{.Done}} из {{.Total}}, перенесено {{.Moved}}, списано {{.Spent}}{{end}}
+{{define "button_take_key"}}Взять {{.}}{{end}}
 {{- /* Личные уведомления, §8.7. Обычный текст без разметки. */}}
 {{define "p_assigned"}}📌 Вас назначили исполнителем {{.Key}} «{{.Title}}» — {{.By}}{{end}}
 {{define "p_rework"}}🔁 {{.Key}} «{{.Title}}» возвращена на доработку — {{.By}}: {{.Comment}}{{end}}
