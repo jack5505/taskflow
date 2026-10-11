@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
@@ -15,8 +15,9 @@ import (
 // MaxMyTasks — /my показывает не больше стольких задач (§8.5).
 const MaxMyTasks = 30
 
-// privateKeyRe — ключ задачи в личном чате: ключ проекта обязателен (§8.5), регистр не важен.
-var privateKeyRe = regexp.MustCompile(`^[A-Z]{2,10}-[1-9][0-9]{0,9}$`)
+// myTitleRunes — длина названия в строке /my: 30 строк с названиями до 200 символов (§3.3) не
+// влезли бы в одно сообщение Telegram (4096 символов).
+const myTitleRunes = 60
 
 // RegisterPrivateCommands подключает личные команды §8.5: /timer, /stop, /my. Они работают только
 // в личном чате; права и правила таймера (§6.4) проверяет task.Service, как и для веба.
@@ -40,8 +41,9 @@ func privateOnly(h HandlerFunc) HandlerFunc {
 // останавливается сервисом с записью времени — об этом первая строка ответа.
 func timerCommand(tasks *task.Service) HandlerFunc {
 	return func(ctx context.Context, r *Request) error {
+		// Ключ проекта в личном чате обязателен (§8.5), регистр не важен.
 		key := strings.ToUpper(strings.TrimSpace(r.Args))
-		if !privateKeyRe.MatchString(key) {
+		if !task.ValidKey(key) {
 			return r.Reply(ctx, Text("cmd_timer_usage", nil))
 		}
 		res, err := tasks.StartTimer(ctx, r.User, key)
@@ -73,6 +75,7 @@ func stopCommand(tasks *task.Service) HandlerFunc {
 // myItem — строка списка /my.
 type myItem struct {
 	task.MyTask
+	Title    string // название, укороченное до myTitleRunes
 	Status   string
 	Spent    string
 	Estimate string
@@ -91,11 +94,14 @@ func myCommand(tasks *task.Service) HandlerFunc {
 		}
 		data := struct {
 			Items []myItem
-			Total int
+			Total string
 			More  bool
-		}{Total: len(list), More: len(list) > MaxMyTasks}
+		}{Total: strconv.Itoa(len(list)), More: len(list) > MaxMyTasks}
+		if len(list) >= task.MaxMine {
+			data.Total += "+" // Mine отдаёт не больше MaxMine задач
+		}
 		for _, t := range list[:min(len(list), MaxMyTasks)] {
-			it := myItem{MyTask: t, Status: Text("cmd_status_"+t.Status, nil), Spent: duration.Format(t.SpentMinutes)}
+			it := myItem{MyTask: t, Title: shorten(t.Title, myTitleRunes), Status: Text("cmd_status_"+t.Status, nil), Spent: duration.Format(t.SpentMinutes)}
 			if t.EstimateMinutes != nil {
 				it.Estimate = duration.Format(*t.EstimateMinutes)
 			}
@@ -103,6 +109,15 @@ func myCommand(tasks *task.Service) HandlerFunc {
 		}
 		return r.Reply(ctx, Text("cmd_my", data))
 	}
+}
+
+// shorten обрезает s до n символов с многоточием.
+func shorten(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // replyServiceError переводит ошибку сервиса (§9.3) в ответ бота. key — задача команды (пусто,

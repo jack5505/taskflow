@@ -262,17 +262,21 @@ func TestMyCommand(t *testing.T) {
 	}, lines[1:])
 }
 
-// §8.5: /my показывает не больше 30 задач и говорит, сколько всего.
+// §8.5: /my показывает не больше 30 задач и говорит, сколько всего; длинные названия
+// укорачиваются, чтобы список влез в одно сообщение Telegram (4096 символов).
 func TestMyCommandLimit(t *testing.T) {
 	b := newCmdBot(t)
-	for i := range telegram.MaxMyTasks + 2 {
-		b.create(t, fmt.Sprintf("Задача %d", i), b.member, 0)
+	long := b.create(t, strings.Repeat("Д", 200), b.member, 0)
+	for i := range telegram.MaxMyTasks + 1 {
+		b.create(t, fmt.Sprintf("Задача %d %s", i, strings.Repeat("я", 190)), b.member, 0)
 	}
 	reply := b.say(t, b.member, "/my")
 	require.Len(t, reply, 1)
+	require.Less(t, len([]rune(reply[0])), 4096)
 	lines := strings.Split(reply[0], "\n")
 	require.Equal(t, fmt.Sprintf("Ваши открытые задачи (первые %d из %d):", telegram.MaxMyTasks, telegram.MaxMyTasks+2), lines[0])
 	require.Len(t, lines, telegram.MaxMyTasks+1)
+	require.Equal(t, long.Key+" «"+strings.Repeat("Д", 59)+"…» · К выполнению · 0m", lines[1])
 }
 
 // §8.1: личные команды без привязки — общий ответ.
