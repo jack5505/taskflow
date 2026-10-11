@@ -93,6 +93,11 @@ func (a *Accounts) IssueLinkCode(ctx context.Context, userID uuid.UUID) (*LinkCo
 	now := a.now()
 	c := OneTimeCode{ID: uuid.New(), Kind: CodeUserLink, UserID: &userID, ExpiresAt: now.Add(LinkCodeTTL)}
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Блокировка пользователя: два одновременных запроса иначе оба удалят «прежние» коды
+		// до вставки и оставят два действующих.
+		if err := tx.Exec(`SELECT 1 FROM users WHERE id = ? FOR UPDATE`, userID).Error; err != nil {
+			return fmt.Errorf("telegram: lock user: %w", err)
+		}
 		if err := tx.Exec(`DELETE FROM one_time_codes WHERE kind = ? AND user_id = ? AND used_at IS NULL`,
 			CodeUserLink, userID).Error; err != nil {
 			return fmt.Errorf("telegram: drop old codes: %w", err)
@@ -189,7 +194,8 @@ func (a *Accounts) ByTelegram(ctx context.Context, tgID int64, username string) 
 		return nil, nil
 	}
 	if cur := deref(u.TelegramUsername); cur != username {
-		if err := a.db.WithContext(ctx).Model(&u).Update("telegram_username", nullable(username)).Error; err != nil {
+		// UpdateColumn: служебное поле, updated_at профиля не трогаем.
+		if err := a.db.WithContext(ctx).Model(&u).UpdateColumn("telegram_username", nullable(username)).Error; err != nil {
 			return nil, fmt.Errorf("telegram: update username: %w", err)
 		}
 	}

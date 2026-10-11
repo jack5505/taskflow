@@ -759,7 +759,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/\u003cбот\u003e?start=\u003cкод\u003e (§8.1). Новый код гасит прежний неиспользованный. url пустой, если имя бота не настроено.",
+                "description": "Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/\u003cбот\u003e?start=\u003cкод\u003e (§8.1). Новый код гасит прежний неиспользованный. Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me), иначе 404.",
                 "produces": [
                     "application/json"
                 ],
@@ -776,6 +776,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "бот не подключён",
                         "schema": {
                             "$ref": "#/definitions/apierr.Response"
                         }
@@ -3816,6 +3822,10 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/me.MyProject"
                     }
+                },
+                "telegram_bot_enabled": {
+                    "description": "TelegramBotEnabled — бот подключён (задан TELEGRAM_BOT_TOKEN): можно получить код привязки.",
+                    "type": "boolean"
                 },
                 "telegram_user_id": {
                     "type": "integer"

@@ -88,6 +88,8 @@ export interface MeProfile {
   is_system_admin?: boolean;
   notification_settings?: Record<string, boolean>;
   projects?: MeMyProject[];
+  /** TelegramBotEnabled — бот подключён (задан TELEGRAM_BOT_TOKEN): можно получить код привязки. */
+  telegram_bot_enabled?: boolean;
   telegram_user_id?: number;
   telegram_username?: string;
   timer?: TaskTimerView | null;
@@ -1325,7 +1327,7 @@ export class Api<
       }),
 
     /**
-     * @description Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный. url пустой, если имя бота не настроено.
+     * @description Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный. Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me), иначе 404.
      *
      * @tags me
      * @name V1MeTelegramLinkCodeCreate

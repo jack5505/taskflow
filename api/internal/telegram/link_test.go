@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func newLinkBot(t *testing.T) *linkBot {
 	g := testutil.SharedDB(t)
 	b := &linkBot{env: e, g: g, accounts: telegram.NewAccounts(g, "TaskBot")}
 	rt := telegram.NewRouter("TaskBot")
-	telegram.RegisterAccount(rt, b.accounts)
+	telegram.RegisterAccount(rt, b.accounts, e.rdb)
 	rt.Command("take", func(ctx context.Context, r *telegram.Request) error {
 		b.takes++
 		b.actor, _ = audit.From(ctx)
@@ -168,4 +169,29 @@ func TestNotLinkedInGroup(t *testing.T) {
 	del, in := b.pendingMessage(t)
 	require.Equal(t, telegram.OpDelete, del.Op)
 	require.InDelta(t, 30, in.Seconds(), 2)
+}
+
+// Перебор кодов: после 10 неверных кодов за час с одного Telegram /start <код> не проверяется,
+// даже верный код.
+func TestStartLimitsCodeGuessing(t *testing.T) {
+	b := newLinkBot(t)
+	u := newUser(t, b.g, "Цель")
+	tg := tgID()
+	for range 10 {
+		b.send(tg, tg, models.ChatTypePrivate, "/start ZZZZ2222")
+	}
+	require.Len(t, b.replies(t), 10)
+	ttl, err := b.rdb.TTL(context.Background(), "tg:link-fail:"+strconv.FormatInt(tg, 10)).Result()
+	require.NoError(t, err)
+	require.InDelta(t, time.Hour.Seconds(), ttl.Seconds(), 60)
+
+	code, err := b.accounts.IssueLinkCode(context.Background(), u.ID)
+	require.NoError(t, err)
+	b.send(tg, tg, models.ChatTypePrivate, "/start "+code.Code)
+	require.Equal(t, []string{"Слишком много неверных кодов. Попробуйте через час"}, b.replies(t))
+	require.Nil(t, reload(t, b.g, u.ID).TelegramUserID)
+
+	other := tgID()
+	b.send(other, other, models.ChatTypePrivate, "/start "+code.Code)
+	require.Equal(t, []string{"Аккаунт привязан: Цель (" + u.Email + ")"}, b.replies(t), "счётчик — на Telegram-аккаунт")
 }

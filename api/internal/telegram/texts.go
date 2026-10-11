@@ -18,6 +18,7 @@ var texts = template.Must(template.New("bot").Parse(`
 Чтобы привязать аккаунт, откройте профиль в веб-интерфейсе, нажмите «Привязать Telegram» и перейдите по ссылке или отправьте сюда /start <код>.{{end}}
 {{define "linked"}}Аккаунт привязан: {{.DisplayName}} ({{.Email}}){{end}}
 {{define "code_invalid"}}Код не найден или устарел. Сгенерируйте новый в профиле{{end}}
+{{define "too_many_codes"}}Слишком много неверных кодов. Попробуйте через час{{end}}
 {{define "linked_to_other"}}Этот Telegram уже привязан к другому аккаунту. Сначала отвяжите его командой /unlink{{end}}
 {{define "unlinked"}}Аккаунт отвязан{{end}}
 {{define "not_linked"}}Сначала привяжите аккаунт: профиль → Привязать Telegram{{end}}

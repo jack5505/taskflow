@@ -3,6 +3,11 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/jack5505/taskflow/api/internal/audit"
 )
@@ -11,11 +16,18 @@ import (
 // реагирует только на /start).
 var publicCommands = map[string]bool{"start": true}
 
+// Перебор кодов: после maxCodeFailures неверных кодов за linkFailWindow с одного Telegram-аккаунта
+// /start <код> не проверяется до конца окна. Код — 40 бит, но живых кодов может быть много.
+const (
+	maxCodeFailures = 10
+	linkFailWindow  = time.Hour
+)
+
 // RegisterAccount подключает привязку аккаунта (§8.1): middleware, определяющий пользователя
-// по telegram_user_id, и команды /start и /unlink.
-func RegisterAccount(rt *Router, accounts *Accounts) {
+// по telegram_user_id, и команды /start и /unlink. rdb — счётчик неверных кодов.
+func RegisterAccount(rt *Router, accounts *Accounts, rdb *redis.Client) {
 	rt.Use(RequireLinked(accounts))
-	rt.Command("start", startCommand(accounts))
+	rt.Command("start", startCommand(accounts, rdb))
 	rt.Command("unlink", unlinkCommand(accounts))
 }
 
@@ -42,7 +54,7 @@ func RequireLinked(accounts *Accounts) Middleware {
 }
 
 // startCommand — /start [код] в личном чате: привязка по коду или приветствие с инструкцией.
-func startCommand(accounts *Accounts) HandlerFunc {
+func startCommand(accounts *Accounts, rdb *redis.Client) HandlerFunc {
 	return func(ctx context.Context, r *Request) error {
 		if !r.Private() {
 			return r.Answer(ctx, Text("private_only", nil), true)
@@ -53,9 +65,23 @@ func startCommand(accounts *Accounts) HandlerFunc {
 			}
 			return r.Reply(ctx, Text("start", nil))
 		}
+		failKey := "tg:link-fail:" + strconv.FormatInt(r.From.ID, 10)
+		failures, err := rdb.Get(ctx, failKey).Int()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return fmt.Errorf("telegram: link failures: %w", err)
+		}
+		if failures >= maxCodeFailures {
+			return r.Reply(ctx, Text("too_many_codes", nil))
+		}
 		u, err := accounts.Link(ctx, r.Args, r.From.ID, r.From.Username)
 		switch {
 		case errors.Is(err, ErrCodeInvalid):
+			pipe := rdb.TxPipeline()
+			pipe.Incr(ctx, failKey)
+			pipe.ExpireNX(ctx, failKey, linkFailWindow)
+			if _, err := pipe.Exec(ctx); err != nil {
+				return fmt.Errorf("telegram: link failures: %w", err)
+			}
 			return r.Reply(ctx, Text("code_invalid", nil))
 		case errors.Is(err, ErrLinkedToOther):
 			return r.Reply(ctx, Text("linked_to_other", nil))

@@ -176,10 +176,12 @@ func TestByTelegram(t *testing.T) {
 	_, err = a.Link(ctx, c.Code, tg, "old")
 	require.NoError(t, err)
 
+	before := reload(t, g, u.ID).UpdatedAt
 	got, err := a.ByTelegram(ctx, tg, "new")
 	require.NoError(t, err)
 	require.Equal(t, u.ID, got.ID)
 	require.Equal(t, "new", *reload(t, g, u.ID).TelegramUsername)
+	require.Equal(t, before, reload(t, g, u.ID).UpdatedAt, "служебное поле не меняет updated_at профиля")
 	_, err = a.ByTelegram(ctx, tg, "")
 	require.NoError(t, err)
 	require.Nil(t, reload(t, g, u.ID).TelegramUsername, "username убрали в Telegram — убираем и у нас")
@@ -213,4 +215,22 @@ func TestCleanupCodes(t *testing.T) {
 	require.Positive(t, n)
 	require.NoError(t, g.Raw(`SELECT count(*) FROM one_time_codes WHERE code = ?`, c.Code).Scan(&left).Error)
 	require.Zero(t, left)
+}
+
+// Два одновременных запроса кода — действует только один (новый гасит прежний).
+func TestIssueLinkCodeConcurrent(t *testing.T) {
+	g := testutil.SharedDB(t)
+	a := telegram.NewAccounts(g, "taskflow_bot")
+	u := newUser(t, g, "Две вкладки")
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			_, err := a.IssueLinkCode(context.Background(), u.ID)
+			require.NoError(t, err)
+		})
+	}
+	wg.Wait()
+	var n int64
+	require.NoError(t, g.Raw(`SELECT count(*) FROM one_time_codes WHERE user_id = ? AND used_at IS NULL`, u.ID).Scan(&n).Error)
+	require.EqualValues(t, 1, n)
 }
