@@ -6,6 +6,7 @@ import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { PasswordSetPage } from "./pages/PasswordSetPage";
+import { ProjectPage } from "./pages/ProjectPage";
 
 // Адреса страниц. /password-set — путь из письма (api/internal/auth: baseURL + /password-set?token=…).
 export const router = createBrowserRouter([
@@ -28,7 +29,10 @@ export const router = createBrowserRouter([
     children: [
       {
         element: <AppLayout />,
-        children: [{ path: "/", element: <HomePage /> }],
+        children: [
+          { path: "/", element: <HomePage /> },
+          { path: "/projects/:key", element: <ProjectPage /> },
+        ],
       },
     ],
   },
