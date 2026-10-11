@@ -20,16 +20,18 @@ import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../pro
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { TimerButton } from "../timer/TimerButton";
 import { canStartTimer } from "../timer/timer";
+import { useSprints } from "../backlog/useSprints";
 import { Attachments } from "./Attachments";
 import { Comments } from "./Comments";
-import { commentsQueryKey, historyQueryKey, projectKeyOf, taskQueryKey } from "./keys";
+import { commentsQueryKey, historyQueryKey, projectKeyOf, taskQueryKey, worklogsQueryKey } from "./keys";
 import { ConflictDialog, type Conflict } from "./ConflictDialog";
 import { describeHistory, type ValueContext } from "./history";
 import { MarkdownEditor, MarkdownView } from "./Markdown";
 import { buildPatch, ifMatchBase, ifMatch, isEmptyPatch, versionConflict, type Edits } from "./patch";
 import { taskPerms } from "./perms";
 import { InlineEdit, TaskFields, type Save, type SaveResult } from "./TaskFields";
-
+import { canAddWorklog } from "./worklog";
+import { WorklogDialog, Worklogs } from "./Worklogs";
 
 type Tab = "comments" | "history" | "attachments" | "worklog";
 const tabs: { id: Tab; label: string }[] = [
@@ -162,6 +164,7 @@ export function TaskPage() {
   const [saveError, setSaveError] = useState("");
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [logging, setLogging] = useState(false);
   const statusMenu = useRef<HTMLDetailsElement>(null);
 
   const actor = actorFor(me.data, project.data);
@@ -169,6 +172,12 @@ export function TaskPage() {
   const t = task.data;
   const perms = t ? taskPerms(t, actor, { archived, admin: me.data?.is_system_admin === true }) : null;
   const readOnly = archived || !!t?.deleted_at;
+  // Задача не в активном спринте — узнаём состояние её спринта: по задачам завершённого записи
+  // времени не меняются (§6.5), кнопки списания и правки не показываем.
+  const otherSprint = t?.sprint_id && t.sprint_id !== activeSprint?.id ? t.sprint_id : "";
+  const sprints = useSprints(otherSprint ? projectKey : "");
+  const sprintClosed = !!otherSprint && sprints.data?.find((s) => s.id === otherSprint)?.state === "closed";
+  const worklogReadOnly = readOnly || sprintClosed;
 
   const memberList = useMemo(() => members.data ?? [], [members.data]);
   const ctx: ValueContext = useMemo(() => {
@@ -193,8 +202,10 @@ export function TaskPage() {
     // Переход из «В работе», смена исполнителя и удаление останавливают таймер на задаче с
     // записью времени (§6.4). Задача в кэше уже из ответа сервера — обновляем шапку.
     const timer = me.data?.timer;
-    if (timer?.task_key === key && (next?.status !== "in_progress" || next.assignee_id !== me.data?.id))
+    if (timer?.task_key === key && (next?.status !== "in_progress" || next.assignee_id !== me.data?.id)) {
       void queryClient.invalidateQueries({ queryKey: meQueryKey });
+      void queryClient.invalidateQueries({ queryKey: worklogsQueryKey(key) });
+    }
   };
 
   // PATCH с If-Match версии, от которой шла правка. 409 VERSION_CONFLICT — в кэш актуальную
@@ -359,6 +370,11 @@ export function TaskPage() {
             </button>
           )}
           <TimerButton taskKey={key} canStart={canStartTimer(t, me.data?.id, archived)} />
+          {canAddWorklog(t, actor, worklogReadOnly) && (
+            <button type="button" data-testid="worklog-add" onClick={() => setLogging(true)}>
+              Списать время
+            </button>
+          )}
           {perms.remove && (
             <button
               type="button"
@@ -427,8 +443,9 @@ export function TaskPage() {
             {tab === "attachments" && (
               <Attachments taskKey={key} actor={actor} canWrite={perms.comment} archived={readOnly} timeZone={timeZone} />
             )}
-            {/* API записей времени ещё нет — вкладка без запросов. */}
-            {tab === "worklog" && <p className="muted">Скоро</p>}
+            {tab === "worklog" && (
+              <Worklogs task={t} actor={actor} readOnly={worklogReadOnly} sprintClosed={sprintClosed} timeZone={timeZone} />
+            )}
           </div>
         </div>
 
@@ -458,6 +475,10 @@ export function TaskPage() {
           onCancel={() => setDialog(null)}
           onSubmit={(comment, assigneeId) => transition.mutate({ to: dialog.to, comment, assigneeId })}
         />
+      )}
+
+      {logging && (
+        <WorklogDialog task={t} manager={!!actor?.manager} timeZone={timeZone} onClose={() => setLogging(false)} />
       )}
 
       {conflict && (

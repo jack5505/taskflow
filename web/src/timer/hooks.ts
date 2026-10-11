@@ -6,7 +6,8 @@ import { parseApiError } from "../api/errors";
 import { meQueryKey } from "../auth/hooks";
 import { boardQueryKey, moveKey } from "../board/cards";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
-import { historyQueryKey, projectKeyOf, taskQueryKey } from "../task/keys";
+import { reportQueryKey } from "../reports/logic";
+import { historyQueryKey, projectKeyOf, taskQueryKey, worklogsQueryKey } from "../task/keys";
 
 /**
  * После старта или остановки: профиль (таймер в шапке), задачи, на которые легло время (списано,
@@ -19,11 +20,13 @@ export function timerChanged(qc: QueryClient, taskKeys: (string | undefined)[]) 
   for (const key of new Set(taskKeys.filter((k): k is string => !!k))) {
     void qc.invalidateQueries({ queryKey: taskQueryKey(key) });
     void qc.invalidateQueries({ queryKey: historyQueryKey(key) });
+    void qc.invalidateQueries({ queryKey: worklogsQueryKey(key) });
     if (qc.isMutating({ mutationKey: moveKey }) === 0)
       void qc.invalidateQueries({ queryKey: boardQueryKey(projectKeyOf(key)) });
   }
   void qc.invalidateQueries({ queryKey: projectsQueryKey, refetchType: "none" });
   void qc.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });
+  void qc.invalidateQueries({ queryKey: reportQueryKey, refetchType: "none" });
 }
 
 /** «Старт» на задаче: новый таймер сразу в профиль, шапка покажет его без ожидания GET /me. */

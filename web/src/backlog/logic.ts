@@ -179,8 +179,8 @@ export function addDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Сегодня ГГГГ-ММ-ДД в поясе пользователя (без пояса — браузера). */
-export function today(timeZone?: string): string {
+/** Сегодня (или дата момента at) ГГГГ-ММ-ДД в поясе пользователя (без пояса — браузера). */
+export function today(timeZone?: string, at: Date = new Date()): string {
   const opts = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
   let f: Intl.DateTimeFormat;
   try {
@@ -188,7 +188,7 @@ export function today(timeZone?: string): string {
   } catch {
     f = new Intl.DateTimeFormat("en-CA", opts);
   }
-  return f.format(new Date());
+  return f.format(at);
 }
 
 /** PATCH перед запуском: только изменённые в окне цель и даты; ничего не изменилось — null. */
