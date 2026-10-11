@@ -86,6 +86,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		}
 		rt := telegram.NewRouter(cfg.TelegramBotUsername)
 		telegram.RegisterAccount(rt, accounts, rdb)
+		telegram.RegisterPersonal(rt, d, g, tasks, rdb, client, cfg.BaseURL)
 		telegram.Mount(mux, b, rt, rdb, client)
 	}
 
