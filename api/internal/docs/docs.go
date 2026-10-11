@@ -1870,6 +1870,82 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/sprints/{id}/close": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Менеджер (§5.4). move_open_to — куда перенести незакрытые задачи (todo, in_progress, review): \"backlog\" или id запланированного спринта этого проекта; done и cancelled остаются. Спринт становится closed и больше не меняется. Не активный — 409 INVALID_TRANSITION (details.reason = not_active).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sprints"
+                ],
+                "summary": "Завершить спринт",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id спринта",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "куда перенести незакрытые",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sprint.closeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sprint.closeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED: move_open_to",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "INVALID_TRANSITION, PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sprints/{id}/start": {
             "post": {
                 "security": [
@@ -3387,6 +3463,29 @@ const docTemplate = `{
                 }
             }
         },
+        "sprint.Summary": {
+            "type": "object",
+            "properties": {
+                "done": {
+                    "type": "integer"
+                },
+                "estimate_minutes": {
+                    "type": "integer"
+                },
+                "moved": {
+                    "type": "integer"
+                },
+                "moved_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "sprint.View": {
             "type": "object",
             "properties": {
@@ -3435,6 +3534,29 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "sprint.closeRequest": {
+            "type": "object",
+            "required": [
+                "move_open_to"
+            ],
+            "properties": {
+                "move_open_to": {
+                    "type": "string",
+                    "example": "backlog"
+                }
+            }
+        },
+        "sprint.closeResponse": {
+            "type": "object",
+            "properties": {
+                "sprint": {
+                    "$ref": "#/definitions/sprint.View"
+                },
+                "summary": {
+                    "$ref": "#/definitions/sprint.Summary"
                 }
             }
         },

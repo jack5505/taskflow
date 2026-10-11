@@ -31,6 +31,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.PATCH("/:id", h.update)
 	g.DELETE("/:id", h.delete)
 	g.POST("/:id/start", h.start)
+	g.POST("/:id/close", h.close)
 }
 
 // request — поля спринта; null у goal и дат очищает их.
@@ -232,4 +233,56 @@ func (h *Handlers) start(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, startResponse{Sprint: *v, Scope: *scope})
+}
+
+type closeRequest struct {
+	MoveOpenTo string `json:"move_open_to" binding:"required" example:"backlog"`
+}
+
+type closeResponse struct {
+	Sprint  View    `json:"sprint"`
+	Summary Summary `json:"summary"`
+}
+
+// close — завершение спринта.
+//
+// @Summary      Завершить спринт
+// @Description  Менеджер (§5.4). move_open_to — куда перенести незакрытые задачи (todo, in_progress, review): "backlog" или id запланированного спринта этого проекта; done и cancelled остаются. Спринт становится closed и больше не меняется. Не активный — 409 INVALID_TRANSITION (details.reason = not_active).
+// @Tags         sprints
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      string        true  "id спринта"
+// @Param        body  body      closeRequest  true  "куда перенести незакрытые"
+// @Success      200   {object}  closeResponse
+// @Failure      400   {object}  apierr.Response  "VALIDATION_FAILED: move_open_to"
+// @Failure      401   {object}  apierr.Response
+// @Failure      403   {object}  apierr.Response  "FORBIDDEN"
+// @Failure      404   {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409   {object}  apierr.Response  "INVALID_TRANSITION, PROJECT_ARCHIVED"
+// @Router       /api/v1/sprints/{id}/close [post]
+func (h *Handlers) close(c *gin.Context) {
+	sid, ok := id(c)
+	if !ok {
+		return
+	}
+	var req closeRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	var target *uuid.UUID
+	if req.MoveOpenTo != "backlog" {
+		t, err := uuid.Parse(req.MoveOpenTo)
+		if err != nil {
+			httpserver.Abort(c, fieldError("move_open_to", "backlog или id запланированного спринта"))
+			return
+		}
+		target = &t
+	}
+	v, sum, err := h.svc.Close(c.Request.Context(), auth.CurrentUser(c), sid, target)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, closeResponse{Sprint: *v, Summary: *sum})
 }
