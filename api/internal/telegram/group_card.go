@@ -222,13 +222,8 @@ type cardView struct {
 
 func (c *Cards) view(r *cardRow) cardView {
 	v := cardView{Key: r.Key, Title: r.Title, Type: typeLabels[r.Type], Priority: priorityLabels[r.Priority],
-		Status: statusLabels[r.Status], Reporter: r.Reporter, Assignee: "—"}
-	if r.Assignee != nil {
-		v.Assignee = *r.Assignee
-		if r.AssigneeUsername != nil && *r.AssigneeUsername != "" {
-			v.Assignee += " @" + *r.AssigneeUsername
-		}
-	}
+		Status: statusLabels[r.Status], Reporter: r.Reporter}
+	v.Assignee = mention(r.Assignee, r.AssigneeUsername)
 	if r.Sprint != nil {
 		v.Details = append(v.Details, "Спринт: "+*r.Sprint)
 	}

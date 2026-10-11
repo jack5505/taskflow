@@ -59,6 +59,9 @@ type Message struct {
 	// заполняет Render.
 	Kind string `json:"kind,omitempty"`
 	Ref  string `json:"ref,omitempty"`
+	// Stamp — сколько данных учтено при сборке сообщения (для KindHooks.Sent): например, число
+	// событий задачи, по которым собрано сообщение о них.
+	Stamp int `json:"stamp,omitempty"`
 	// Replaces — send вместо edit этого сообщения, который Telegram отклонил (старше 48 часов
 	// или удалено): новое публикуется, только если старое всё ещё текущее.
 	Replaces int `json:"replaces,omitempty"`
