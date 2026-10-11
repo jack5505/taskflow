@@ -29,7 +29,10 @@ func newTakeBot(t *testing.T) *takeBot {
 	b.chat = models.Chat{ID: b.chatID, Type: models.ChatTypeGroup, Title: "Команда"}
 	rt := telegram.NewRouter("TaskBot")
 	telegram.RegisterAccount(rt, telegram.NewAccounts(b.g, "TaskBot"), b.rdb)
-	telegram.RegisterTake(rt, telegram.NewTaskCommands(b.g, b.tasks, project.NewService(b.g), b.groups))
+	tc := telegram.NewTaskCommands(b.g, b.tasks, project.NewService(b.g), b.groups,
+		telegram.NewCards(b.g, b.out, "https://tasks.example/"))
+	telegram.RegisterTake(rt, tc)
+	telegram.RegisterTaskCommands(rt, tc)
 	telegram.RegisterHelp(rt) // последним, как в воркере
 	b.bot = telegram.NewProcessor(b.api, rt, b.out)
 	return b
