@@ -13,8 +13,8 @@ import (
 )
 
 // publicCommands — команды, которые работают без привязки аккаунта (§8.1: после отвязки бот
-// реагирует только на /start).
-var publicCommands = map[string]bool{"start": true}
+// реагирует только на /start и /help).
+var publicCommands = map[string]bool{"start": true, "help": true}
 
 // Перебор кодов: после maxCodeFailures неверных кодов за linkFailWindow с одного Telegram-аккаунта
 // /start <код> не проверяется до конца окна. Код — 40 бит, но живых кодов может быть много.
@@ -32,7 +32,7 @@ func RegisterAccount(rt *Router, accounts *Accounts, rdb *redis.Client) {
 }
 
 // RequireLinked определяет пользователя по telegram_user_id отправителя и действует от его
-// имени (audit.WithActor). Не привязан — на любую команду, кроме /start, и любую кнопку один и
+// имени (audit.WithActor). Не привязан — на любую команду, кроме /start и /help, и любую кнопку один и
 // тот же ответ (§8.1): у кнопки — всплывающим окном, в группе — ответом, который удаляется
 // через 30 секунд.
 func RequireLinked(accounts *Accounts) Middleware {
