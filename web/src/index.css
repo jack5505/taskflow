@@ -1078,3 +1078,7 @@ button.link.danger {
 .archive-sprint h3 {
   margin: 0 0 8px;
 }
+
+.archive-sprint .card-stats {
+  margin-bottom: 12px;
+}

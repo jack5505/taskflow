@@ -139,7 +139,8 @@ export function BacklogPage() {
   const archived = project.data?.is_archived === true;
   const actor = actorFor(me.data, project.data);
   const manager = !!actor?.manager && !archived;
-  const canReorder = !!actor?.member && !archived;
+  // Порядок — любой участник; администратор системы — с правами менеджера и без роли в проекте.
+  const canReorder = !!actor && (actor.member || actor.manager) && !archived;
   const active = open.find((s) => s.state === "active");
   const planned = open.filter((s) => s.state === "planned");
 
