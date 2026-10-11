@@ -21,13 +21,10 @@ function Avatar({ assigneeId, member }: { assigneeId?: string; member?: ProjectM
 interface CardProps {
   task: TaskListItem;
   assignee?: ProjectMemberView;
-  /** Кнопка «Взять в работу»: свободная задача в «К выполнению». */
-  onTake?: () => void;
-  taking?: boolean;
 }
 
 /** Содержимое карточки доски (ТЗ §7.3). Индикатор таймера появится вместе с таймером. */
-export function CardBody({ task: t, assignee, onTake, taking }: CardProps) {
+export function CardBody({ task: t, assignee }: CardProps) {
   const type = (t.type ?? "task") as TaskType;
   const priority = (t.priority ?? "medium") as Priority;
   const due = formatDate(t.due_date);
@@ -58,38 +55,45 @@ export function CardBody({ task: t, assignee, onTake, taking }: CardProps) {
           </span>
         )}
       </div>
-      {onTake && (
-        <button
-          type="button"
-          className="take"
-          disabled={taking}
-          // Нажатие на кнопку не должно начинать перетаскивание карточки.
-          onPointerDown={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          onClick={onTake}
-        >
-          {taking ? "Берём…" : "Взять в работу"}
-        </button>
-      )}
     </>
   );
 }
 
-/** Карточка, которую можно перетащить в другую колонку. */
-export function BoardCard(props: CardProps & { draggable: boolean }) {
+/**
+ * Карточка, которую можно перетащить в другую колонку. Тянется за содержимое; кнопка
+ * «Взять в работу» лежит вне перетаскиваемой области, чтобы не быть кнопкой внутри кнопки.
+ */
+export function BoardCard(
+  props: CardProps & {
+    draggable: boolean;
+    /** Кнопка «Взять в работу»: свободная задача в «К выполнению». */
+    onTake?: () => void;
+    taking?: boolean;
+  },
+) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: props.task.id!,
     data: { task: props.task },
     disabled: !props.draggable,
   });
   return (
-    <article
-      ref={setNodeRef}
-      className={`task-card${props.draggable ? " draggable" : ""}${isDragging ? " dragging" : ""}`}
-      aria-roledescription={props.draggable ? "перетаскиваемая карточка" : undefined}
-      {...(props.draggable ? { ...attributes, ...listeners } : {})}
-    >
-      <CardBody {...props} />
+    <article ref={setNodeRef} className={`task-card${isDragging ? " dragging" : ""}`}>
+      <div
+        className={props.draggable ? "task-drag draggable" : "task-drag"}
+        {...(props.draggable ? { ...attributes, ...listeners, "aria-roledescription": "перетаскиваемая карточка" } : {})}
+      >
+        <CardBody task={props.task} assignee={props.assignee} />
+      </div>
+      {props.onTake && (
+        <button
+          type="button"
+          className="take"
+          disabled={props.taking}
+          onClick={props.onTake}
+        >
+          {props.taking ? "Берём…" : "Взять в работу"}
+        </button>
+      )}
     </article>
   );
 }

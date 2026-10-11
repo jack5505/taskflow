@@ -10,7 +10,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import type { ProjectListItem, ProjectMemberView, TaskListItem } from "../api/client";
@@ -20,7 +20,7 @@ import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
 import { listQuery, myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { BoardCard, CardBody } from "./BoardCard";
-import { boardQueryKey, groupByStatus } from "./cards";
+import { applyMove, boardQueryKey, groupByStatus } from "./cards";
 import { BoardFilters } from "./BoardFilters";
 import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter, type TasksQuery } from "./filters";
 import {
@@ -46,6 +46,8 @@ async function fetchAllTasks(key: string, query: TasksQuery, signal: AbortSignal
   return items;
 }
 
+const moveKey = ["board-move"];
+
 interface Move {
   task: TaskListItem;
   to: Status;
@@ -60,6 +62,23 @@ interface DialogState {
   comment: "rework" | "cancel" | null;
   chooseAssignee: boolean;
 }
+
+/** Подсказки и объявления dnd-kit для экранного диктора — на русском (§10.3). */
+const dndAccessibility = {
+  screenReaderInstructions: {
+    draggable:
+      "Чтобы взять карточку, нажмите пробел или Enter. Стрелками переместите её в другую колонку, " +
+      "пробелом или Enter положите, Escape — отмена.",
+  },
+  announcements: {
+    onDragStart: () => "Карточка взята.",
+    onDragOver: ({ over }: { over: { id: string | number } | null }) =>
+      over ? `Над колонкой «${statusLabel(String(over.id))}».` : "Вне колонок.",
+    onDragEnd: ({ over }: { over: { id: string | number } | null }) =>
+      over ? `Карточка перенесена в колонку «${statusLabel(String(over.id))}».` : "Карточка возвращена на место.",
+    onDragCancel: () => "Перетаскивание отменено.",
+  },
+};
 
 function Column({
   status,
@@ -127,6 +146,8 @@ export function BoardPage() {
     queryFn: ({ signal }) => fetchAllTasks(key, query!, signal),
     // «Только мои» ждёт профиль: без id пользователя запрос вернул бы всех.
     enabled: query !== null && (!filter.mine || !!meId),
+    // При смене фильтра доска не мигает пустыми колонками, пока идёт новый запрос.
+    placeholderData: keepPreviousData,
   });
 
   const memberById = useMemo(() => new Map((members.data ?? []).map((m) => [m.user_id, m])), [members.data]);
@@ -145,39 +166,55 @@ export function BoardPage() {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [dragging, setDragging] = useState<TaskListItem | null>(null);
 
-  const refresh = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: boardQueryKey(key) }),
-      queryClient.invalidateQueries({ queryKey: projectsQueryKey }),
-      queryClient.invalidateQueries({ queryKey: myTasksQueryKey }),
-    ]);
+  // Счётчики проектов и «Мои задачи» показывает главная: помечаем устаревшими, перезапросит она.
+  // Доску перечитываем, когда закончились все переходы, иначе ответ на первый откатил бы второй.
+  // own — вызвано из onSettled перехода: сам он в этот момент ещё числится выполняющимся.
+  const refresh = (own = 0) => {
+    if (queryClient.isMutating({ mutationKey: moveKey }) > own) return;
+    void queryClient.invalidateQueries({ queryKey: boardQueryKey(key) });
+    void queryClient.invalidateQueries({ queryKey: projectsQueryKey, refetchType: "none" });
+    void queryClient.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });
+  };
 
-  const transition = useMutation({
+  // Карточка сразу встаёт в новую колонку; при ошибке возвращается только она — по своему
+  // исходному виду, а не по снимку всей доски (тот мог устареть из-за соседнего перехода).
+  const moveOptions = {
+    mutationKey: moveKey,
     mutationFn: (m: Move) =>
       api.api.v1TasksTransitionCreate(m.task.key!, { to: m.to, comment: m.comment, assignee_id: m.assigneeId }),
-    // Карточка сразу встаёт в новую колонку; при ошибке возвращается обратно.
-    onMutate: async (m) => {
+    onMutate: async (m: Move) => {
       await queryClient.cancelQueries({ queryKey: m.queryKey });
-      const prev = queryClient.getQueryData<TaskListItem[]>(m.queryKey);
       queryClient.setQueryData<TaskListItem[]>(m.queryKey, (old) =>
-        old?.map((t) => (t.id === m.task.id ? { ...t, status: m.to } : t)),
+        old?.map((t) => (t.id === m.task.id ? applyMove(t, m.to, meId ?? "") : t)),
       );
-      return { prev };
     },
-    onError: (e, m, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(m.queryKey, ctx.prev);
-      // Ошибку перехода из окна показывает само окно.
-      if (!dialog) setActionError(`${m.task.key}: ${errorText(e)}`);
+    rollback: (m: Move) =>
+      queryClient.setQueryData<TaskListItem[]>(m.queryKey, (old) =>
+        old?.map((t) => (t.id === m.task.id ? m.task : t)),
+      ),
+  };
+  // Перетаскивание без окна: ошибка — над доской.
+  const move = useMutation({
+    ...moveOptions,
+    onError: (e, m) => {
+      moveOptions.rollback(m);
+      setActionError(`${m.task.key}: ${errorText(e)}`);
     },
+    onSettled: () => refresh(1),
+  });
+  // Переход из окна: ошибка — в окне, успех закрывает окно.
+  const dialogMove = useMutation({
+    ...moveOptions,
+    onError: (_e, m) => moveOptions.rollback(m),
     onSuccess: () => setDialog(null),
-    onSettled: refresh,
+    onSettled: () => refresh(1),
   });
 
   const take = useMutation({
     mutationFn: (t: TaskListItem) => api.api.v1TasksTakeCreate(t.key!),
     // 409 TASK_ALREADY_TAKEN: сервер пишет, кто уже взял задачу.
     onError: (e, t) => setActionError(`${t.key}: ${errorText(e)}`),
-    onSettled: refresh,
+    onSettled: () => refresh(),
   });
 
   const allowed = (t: TaskListItem, to: Status) =>
@@ -191,11 +228,11 @@ export function BoardPage() {
     const assigneeActive = t.assignee_id ? memberById.get(t.assignee_id)?.is_active : undefined;
     const chooseAssignee = needsNewAssignee(from, to, assigneeActive);
     if (comment || chooseAssignee) {
-      transition.reset();
+      dialogMove.reset();
       setDialog({ task: t, to, comment, chooseAssignee });
       return;
     }
-    transition.mutate({ task: t, to, queryKey: tasksKey });
+    move.mutate({ task: t, to, queryKey: tasksKey });
   };
 
   const sensors = useSensors(
@@ -272,6 +309,7 @@ export function BoardPage() {
           {tasks.isPending && tasks.fetchStatus !== "idle" && <p className="muted">Загрузка задач…</p>}
           <DndContext
             sensors={sensors}
+            accessibility={dndAccessibility}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
             onDragCancel={() => setDragging(null)}
@@ -326,11 +364,11 @@ export function BoardPage() {
           comment={dialog.comment}
           chooseAssignee={dialog.chooseAssignee}
           activeMembers={(members.data ?? []).filter((m) => m.is_active !== false)}
-          pending={transition.isPending}
-          error={transition.isError ? errorText(transition.error) : ""}
+          pending={dialogMove.isPending}
+          error={dialogMove.isError ? errorText(dialogMove.error) : ""}
           onCancel={() => setDialog(null)}
           onSubmit={(comment, assigneeId) =>
-            transition.mutate({ task: dialog.task, to: dialog.to, comment, assigneeId, queryKey: tasksKey })
+            dialogMove.mutate({ task: dialog.task, to: dialog.to, comment, assigneeId, queryKey: tasksKey })
           }
         />
       )}

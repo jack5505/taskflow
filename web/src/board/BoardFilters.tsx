@@ -64,6 +64,8 @@ function assigneeSummary(f: BoardFilter, members: ProjectMemberView[]): string {
 
 /** Фильтры доски (ТЗ §7.3): исполнитель, тип, приоритет, метка, поиск. */
 export function BoardFilters({ filter: f, onChange, members }: Props) {
+  // «Сбросить» пересоздаёт текстовые поля: так отменяется и ещё не отправленный ввод.
+  const [generation, setGeneration] = useState(0);
   // Отложенные поля срабатывают позже, чем фильтр мог смениться: берём последний, а не захваченный.
   const latest = useRef({ f, onChange });
   useLayoutEffect(() => {
@@ -75,6 +77,7 @@ export function BoardFilters({ filter: f, onChange, members }: Props) {
   return (
     <div className="board-filters">
       <DebouncedInput
+        key={`q${generation}`}
         type="search"
         className="search"
         placeholder="Поиск по ключу и названию"
@@ -141,6 +144,7 @@ export function BoardFilters({ filter: f, onChange, members }: Props) {
         ))}
       </div>
       <DebouncedInput
+        key={`label${generation}`}
         className="label-filter"
         placeholder="Метка"
         aria-label="Метка"
@@ -149,7 +153,10 @@ export function BoardFilters({ filter: f, onChange, members }: Props) {
         onCommit={onLabel}
       />
       {!isFilterEmpty(f) && (
-        <button type="button" onClick={() => onChange(emptyFilter)}>
+        <button type="button" onClick={() => {
+            setGeneration((g) => g + 1);
+            onChange(emptyFilter);
+          }}>
           Сбросить
         </button>
       )}

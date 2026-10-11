@@ -64,7 +64,7 @@ export function paramsFromFilter(f: BoardFilter): URLSearchParams {
 }
 
 export function isFilterEmpty(f: BoardFilter): boolean {
-  return paramsFromFilter(f).size === 0;
+  return !f.mine && !f.assignees.length && !f.types.length && !f.priorities.length && !f.label && !f.q;
 }
 
 /** Переключить значение в списке (множественный выбор). */

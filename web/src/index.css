@@ -507,7 +507,13 @@ button.primary:hover:not(:disabled) {
   background: var(--surface);
 }
 
-.task-card.draggable {
+.task-drag {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-drag.draggable {
   cursor: grab;
   touch-action: none;
 }

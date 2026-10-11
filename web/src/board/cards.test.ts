@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupByStatus, initials } from "./cards";
+import { applyMove, groupByStatus, initials } from "./cards";
 
 describe("initials", () => {
   it.each([
@@ -25,5 +25,22 @@ describe("groupByStatus", () => {
     expect(g.get("todo")!.map((t) => t.id)).toEqual(["1", "4"]);
     expect(g.get("in_progress")).toEqual([]);
     expect(g.get("done")!.map((t) => t.id)).toEqual(["3"]);
+  });
+});
+
+describe("applyMove", () => {
+  it("меняет статус, остальное как было", () => {
+    expect(applyMove({ id: "1", status: "in_progress", assignee_id: "u" }, "review", "me")).toEqual({
+      id: "1",
+      status: "review",
+      assignee_id: "u",
+    });
+  });
+  it("отказаться — исполнитель очищается", () => {
+    expect(applyMove({ status: "in_progress", assignee_id: "u" }, "todo", "me").assignee_id).toBeUndefined();
+  });
+  it("взять свободную — исполнителем становится тот, кто взял; назначенную — не меняется", () => {
+    expect(applyMove({ status: "todo" }, "in_progress", "me").assignee_id).toBe("me");
+    expect(applyMove({ status: "todo", assignee_id: "u" }, "in_progress", "me").assignee_id).toBe("u");
   });
 });
