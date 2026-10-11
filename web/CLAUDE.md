@@ -11,6 +11,7 @@ npm ci            установка
 npm run dev       Vite, /api проксируется на localhost:8100
 npm run lint      oxlint
 npm test          Vitest (юнит-тесты, *.test.ts рядом с кодом)
+npm run e2e       Playwright (e2e/*.e2e.ts) против стенда из e2e/stack.sh
 npm run build     tsc -b && vite build → ../api/internal/web/dist (встраивается в бинарник Go)
 ```
 
@@ -31,4 +32,9 @@ npm run build     tsc -b && vite build → ../api/internal/web/dist (встра�
 
 ## Тесты
 
-Vitest для логики (парсеры, форматирование), Playwright для сценариев приёмки из §10.4 (issue #46). E2E гоняются в CI; локально Chromium на сервере не стартует — запускать в образе `mcr.microsoft.com/playwright`.
+Vitest для логики (парсеры, форматирование), Playwright для сценариев приёмки из §10.4 (issue #46) — job `E2E (Playwright)` в CI.
+
+- Стенд: `e2e/stack.sh up` собирает образ и поднимает api, worker, postgres, redis отдельным compose-проектом (`E2E_PROJECT`, по умолчанию `taskflow-e2e`, порт `E2E_PORT`, по умолчанию 8199), создаёт администраторов командой `taskflow admin create` и печатает `E2E_*=…` для тестов. `e2e/stack.sh down` удаляет всё вместе с данными. Ссылки одноразовые: сценарий входа проходит один раз на стенд — для повторного прогона стенд пересоздают.
+- Данные каждый сценарий готовит сам через API (`e2e/fixtures.ts`, свой проект со случайным ключом); через интерфейс — только проверяемое действие. Ожидания — `expect(...)` и `expect.poll`, без `waitForTimeout`.
+- Локально Chromium на сервере не стартует — запускать в образе той же версии, что `@playwright/test`:
+  `E2E_PORT=8199 e2e/stack.sh up > /tmp/e2e.env && docker run --rm --network host --ipc=host -u $(id -u) -e HOME=/tmp --env-file /tmp/e2e.env -v $PWD:/web -w /web mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test` (нужен `npm ci`), затем `e2e/stack.sh down`.
