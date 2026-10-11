@@ -21,6 +21,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -63,7 +65,17 @@ func main() {
 	case "worker":
 		err = runWorker(ctx, cfg)
 	case "admin":
-		err = runAdmin(ctx, cfg, os.Args[2:])
+		// Команду читает человек в консоли: ошибки текстом в stderr, а не JSON-логом.
+		if err := runAdmin(ctx, cfg, os.Args[2:], os.Stdout); err != nil {
+			if !errors.Is(err, flag.ErrHelp) {
+				fmt.Fprintln(os.Stderr, "ошибка:", err)
+			}
+			if isUsageError(err) {
+				os.Exit(2)
+			}
+			os.Exit(1)
+		}
+		return
 	default:
 		usage()
 		os.Exit(2)
@@ -76,6 +88,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: taskflow <api|worker|admin> [args]")
+	fmt.Fprintln(os.Stderr, "       taskflow admin create --email <email> [--name <имя>]")
 }
 
 // runAPI: подключение к базе, миграции при старте (ТЗ §10.2), затем HTTP-сервер.
@@ -116,9 +129,4 @@ func runWorker(ctx context.Context, cfg *config.Config) error {
 	}
 	defer func() { _ = db.Close(g) }()
 	return worker.Run(ctx, cfg, g)
-}
-
-// runAdmin — заглушка до реализации CLI (issue #11).
-func runAdmin(_ context.Context, _ *config.Config, args []string) error {
-	return fmt.Errorf("admin: not implemented yet (args: %v)", args)
 }
