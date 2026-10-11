@@ -23,6 +23,21 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "unlinked"}}Аккаунт отвязан{{end}}
 {{define "not_linked"}}Сначала привяжите аккаунт: профиль → Привязать Telegram{{end}}
 
+{{- /* Подключение группы к проекту, §8.2 */}}
+{{define "group_only"}}Эта команда работает в группе проекта{{end}}
+{{define "bind_usage"}}Формат: /bind <код>. Код выдаётся в настройках проекта → Telegram{{end}}
+{{define "bind_code_invalid"}}Код не найден или устарел. Получите новый в настройках проекта → Telegram{{end}}
+{{define "bind_not_manager"}}Подключать и отключать группу может только менеджер проекта{{end}}
+{{define "bind_has_group"}}К проекту {{.Key}} уже подключена другая группа. Сначала отключите её: /unbind в той группе или кнопка в настройках проекта{{end}}
+{{define "project_archived"}}Проект {{.Key}} в архиве, изменения недоступны{{end}}
+{{define "group_bound"}}Группа подключена к проекту {{.Key}} «{{.Name}}». Команды: /help{{end}}
+{{define "group_unbound"}}Группа отключена от проекта {{.Key}} «{{.Name}}»{{end}}
+{{define "group_no_projects"}}К этой группе не подключён ни один проект{{end}}
+{{define "unbind_choose"}}К группе подключено несколько проектов: {{range $i, $p := .}}{{if $i}}, {{end}}{{$p.Key}}{{end}}. Укажите ключ: /unbind {{(index . 0).Key}}{{end}}
+{{define "unbind_not_here"}}Проект {{.}} не подключён к этой группе{{end}}
+{{define "group_bot_removed"}}Бота удалили из группы{{with .Title}} «{{.}}»{{end}}, Telegram-группа отключена от {{if gt (len .Projects) 1}}проектов{{else}}проекта{{end}}:
+{{range .Projects}}{{.Key}} «{{.Name}}»
+{{end}}Подключить группу снова можно в настройках проекта → Telegram{{end}}
 {{- /* Личные уведомления, §8.7. Обычный текст без разметки. */}}
 {{define "p_assigned"}}📌 Вас назначили исполнителем {{.Key}} «{{.Title}}» — {{.By}}{{end}}
 {{define "p_rework"}}🔁 {{.Key}} «{{.Title}}» возвращена на доработку — {{.By}}: {{.Comment}}{{end}}
