@@ -72,10 +72,11 @@ type GroupEvents struct {
 	db  *gorm.DB
 	rdb *redis.Client
 	out *Queue
+	now func() time.Time
 }
 
 func NewGroupEvents(db *gorm.DB, rdb *redis.Client, out *Queue) *GroupEvents {
-	return &GroupEvents{db: db, rdb: rdb, out: out}
+	return &GroupEvents{db: db, rdb: rdb, out: out, now: time.Now}
 }
 
 // RegisterGroupEvents подключает сообщения о событиях: сборку KindTaskEvent в отправителе и
@@ -139,7 +140,13 @@ func (ge *GroupEvents) queue(ctx context.Context, taskID uuid.UUID, ev taskEvent
 	if err := ge.rdb.Set(ctx, lastEventKey(taskID.String()), raw, lastEventTTL).Err(); err != nil {
 		return fmt.Errorf("telegram: last event: %w", err)
 	}
-	return ge.out.SendOnce(ctx, Message{Op: OpSend, Kind: KindTaskEvent, Ref: taskID.String()}, EventDelay, "tg-event:"+taskID.String())
+	return ge.schedule(ctx, taskID.String())
+}
+
+// schedule ставит отправку последнего события задачи через EventDelay; события той же секунды
+// второй отправки не ставят.
+func (ge *GroupEvents) schedule(ctx context.Context, taskID string) error {
+	return ge.out.SendOnce(ctx, Message{Op: OpSend, Kind: KindTaskEvent, Ref: taskID}, EventDelay, Bucket("tg-event:"+taskID, ge.now()))
 }
 
 // eventRow — задача и группа для сообщения о событии.
@@ -202,14 +209,14 @@ func (ge *GroupEvents) render(ctx context.Context, m *Message) (bool, error) {
 	return true, nil
 }
 
-// sent — пока сообщение собиралось и отправлялось, могло прийти новое событие, а его задание
-// не поставилось (это ещё выполнялось): тогда ставим отправку ещё раз.
+// sent — пока сообщение собиралось и отправлялось, могло прийти новое событие той же секунды,
+// а его задание не поставилось: тогда ставим отправку ещё раз.
 func (ge *GroupEvents) sent(ctx context.Context, m Message, _ *models.Message) error {
 	n, err := ge.rdb.Exists(ctx, lastEventKey(m.Ref)).Result()
 	if err != nil || n == 0 {
 		return err
 	}
-	return ge.out.Send(ctx, Message{Op: OpSend, Kind: KindTaskEvent, Ref: m.Ref}, EventDelay)
+	return ge.schedule(ctx, m.Ref)
 }
 
 // onComment — «💬 Иван Петров к TM-42: <первые 200 символов>» (§8.6, по умолчанию выключено).
