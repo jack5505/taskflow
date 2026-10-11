@@ -88,6 +88,8 @@ export interface MeProfile {
   is_system_admin?: boolean;
   notification_settings?: Record<string, boolean>;
   projects?: MeMyProject[];
+  /** TelegramBotEnabled — бот подключён (задан TELEGRAM_BOT_TOKEN): можно получить код привязки. */
+  telegram_bot_enabled?: boolean;
   telegram_user_id?: number;
   telegram_username?: string;
   timer?: TaskTimerView | null;
@@ -673,6 +675,17 @@ export interface TaskWorklogRequest {
    * @example "2026-10-11"
    */
   work_date?: string;
+}
+
+export interface TelegramLinkCode {
+  /** @example "K7M2X9QD" */
+  code?: string;
+  expires_at?: string;
+  /**
+   * URL — https://t.me/<бот>?start=<код>; пусто, если имя бота не задано (TELEGRAM_BOT_USERNAME).
+   * @example "https://t.me/taskflow_bot?start=K7M2X9QD"
+   */
+  url?: string;
 }
 
 export interface UserUser {
@@ -1291,6 +1304,41 @@ export class Api<
       this.request<TaskMyTask[], ApierrResponse>({
         path: `/api/v1/me/tasks`,
         method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start. Без привязки — тоже 204.
+     *
+     * @tags me
+     * @name V1MeTelegramDelete
+     * @summary Отвязать Telegram
+     * @request DELETE:/api/v1/me/telegram
+     * @secure
+     */
+    v1MeTelegramDelete: (params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/me/telegram`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный. Маршрут есть, только если бот подключён (telegram_bot_enabled в GET /me), иначе 404.
+     *
+     * @tags me
+     * @name V1MeTelegramLinkCodeCreate
+     * @summary Код привязки Telegram
+     * @request POST:/api/v1/me/telegram-link-code
+     * @secure
+     */
+    v1MeTelegramLinkCodeCreate: (params: RequestParams = {}) =>
+      this.request<TelegramLinkCode, ApierrResponse>({
+        path: `/api/v1/me/telegram-link-code`,
+        method: "POST",
         secure: true,
         format: "json",
         ...params,

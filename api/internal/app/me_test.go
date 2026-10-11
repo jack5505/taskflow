@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jack5505/taskflow/api/internal/app"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/testutil"
 )
 
@@ -109,12 +111,17 @@ func TestMeNotifications(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// Без TELEGRAM_BOT_TOKEN бот выключен: маршрута webhook нет, ответ 404 в формате §9.3.
+// Без TELEGRAM_BOT_TOKEN бот выключен: маршрута webhook нет, ответ 404 в формате §9.3; код
+// привязки не выдаётся (веб прячет кнопку по telegram_bot_enabled), отвязка работает.
 func TestTelegramWebhookDisabledWithoutToken(t *testing.T) {
 	w := newWorld(t)
 	rec := w.do("POST", "/api/v1/telegram/webhook", "", `{"update_id":1}`)
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	require.Contains(t, rec.Body.String(), `"code":"NOT_FOUND"`)
+
+	require.Contains(t, w.do("GET", "/api/v1/me", w.member, "").Body.String(), `"telegram_bot_enabled":false`)
+	require.Equal(t, http.StatusNotFound, w.do("POST", "/api/v1/me/telegram-link-code", w.member, "").Code)
+	require.Equal(t, http.StatusNoContent, w.do("DELETE", "/api/v1/me/telegram", w.member, "").Code)
 }
 
 // С токеном и в режиме webhook маршрут есть и проверяет секрет; в long polling — нет.
@@ -135,4 +142,56 @@ func TestTelegramWebhookMountedWithToken(t *testing.T) {
 	polling := *cfg
 	polling.TelegramPolling = true
 	require.Equal(t, http.StatusNotFound, call(&polling))
+}
+
+// Сценарий приёмки «исполнитель привязывает Telegram по коду» (§8.1, §10.4): код в профиле →
+// /start <код> боту → профиль показывает привязку → «Отвязать» в профиле.
+func TestTelegramLinkScenario(t *testing.T) {
+	w := newWorld(t, func(c *config.Config) {
+		c.TelegramBotToken, c.TelegramBotUsername, c.TelegramWebhookSecret = "1:T", "taskflow_bot", "secret"
+	})
+	rec := w.do("GET", "/api/v1/me", w.member, "")
+	require.Contains(t, rec.Body.String(), `"telegram_bot_enabled":true`)
+	rec = w.do("POST", "/api/v1/me/telegram-link-code", w.member, "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var code telegram.LinkCode
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &code))
+	require.Len(t, code.Code, 8)
+	require.WithinDuration(t, time.Now().Add(10*time.Minute), code.ExpiresAt, 10*time.Second)
+	require.Equal(t, "https://t.me/taskflow_bot?start="+code.Code, code.URL)
+
+	tg := testutil.NewFakeTelegram(t)
+	addr := testutil.SharedRedisAddr(t)
+	jobs := queue.NewClient(addr)
+	t.Cleanup(func() { _ = jobs.Close() })
+	api, err := telegram.NewBot(&config.Config{TelegramBotToken: "1:T", TelegramAPIURL: tg.URL})
+	require.NoError(t, err)
+	rt := telegram.NewRouter("taskflow_bot")
+	rdb := queue.NewRedis(addr)
+	t.Cleanup(func() { _ = rdb.Close() })
+	telegram.RegisterAccount(rt, telegram.NewAccounts(w.db, "taskflow_bot"), rdb)
+	tgID := 900_000_000 + testutil.Next()
+	telegram.NewProcessor(api, rt, telegram.NewQueue(jobs)).Handle(context.Background(), &models.Update{ID: 1, Message: &models.Message{
+		ID: 1, Text: "/start " + code.Code, Chat: models.Chat{ID: tgID, Type: models.ChatTypePrivate},
+		From: &models.User{ID: tgID, Username: "member"}}}, time.Now())
+
+	rec = w.do("GET", "/api/v1/me", w.member, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var me struct {
+		TelegramUserID   *int64  `json:"telegram_user_id"`
+		TelegramUsername *string `json:"telegram_username"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &me))
+	require.NotNil(t, me.TelegramUserID, rec.Body.String())
+	require.Equal(t, tgID, *me.TelegramUserID)
+	require.Equal(t, "member", *me.TelegramUsername)
+
+	rec = w.do("DELETE", "/api/v1/me/telegram", w.member, "")
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	rec = w.do("GET", "/api/v1/me", w.member, "")
+	require.NotContains(t, rec.Body.String(), "telegram_user_id")
+	require.Equal(t, http.StatusNoContent, w.do("DELETE", "/api/v1/me/telegram", w.member, "").Code, "повторная отвязка")
+
+	require.Equal(t, http.StatusUnauthorized, w.do("POST", "/api/v1/me/telegram-link-code", "", "").Code)
+	require.Equal(t, http.StatusUnauthorized, w.do("DELETE", "/api/v1/me/telegram", "", "").Code)
 }

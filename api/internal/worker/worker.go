@@ -78,12 +78,15 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	mux.Handle(mail.TaskType, mail.Handler(smtp))
 	mux.Handle(auth.TaskPasswordReset, auth.PasswordResetHandler(authSvc))
 	mux.Handle(auth.TaskPasswordInvite, auth.PasswordInviteHandler(authSvc))
+	accounts := telegram.NewAccounts(g, cfg.TelegramBotUsername)
 	if cfg.TelegramEnabled() {
 		b, err := telegram.NewBot(cfg)
 		if err != nil {
 			return fmt.Errorf("worker: %w", err)
 		}
-		telegram.Mount(mux, b, telegram.NewRouter(cfg.TelegramBotUsername), rdb, client)
+		rt := telegram.NewRouter(cfg.TelegramBotUsername)
+		telegram.RegisterAccount(rt, accounts, rdb)
+		telegram.Mount(mux, b, rt, rdb, client)
 	}
 
 	srv := queue.NewServer(cfg.RedisAddr, 10)
@@ -108,6 +111,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		})
 	}()
 	wg.Go(func() { sprint.RunSnapshots(ctx, g) }) // снимки спринтов в 00:00 по поясу проекта (§3.8)
+	wg.Go(func() { runDaily(ctx, "one-time codes cleanup", accounts.CleanupCodes) })
 	go func() {
 		defer wg.Done()
 		runEvery(ctx, "timers stop", time.Minute, stopTimers)

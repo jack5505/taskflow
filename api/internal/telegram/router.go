@@ -7,6 +7,8 @@ import (
 	"unicode"
 
 	"github.com/go-telegram/bot/models"
+
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // HandlerFunc обрабатывает команду или нажатие кнопки. Ошибка пишется в лог, пользователь
@@ -29,6 +31,10 @@ type Request struct {
 
 	Action string // действие кнопки: часть callback_data до «:» (§8.8: take:<task_id>)
 	Data   string // часть callback_data после «:»
+
+	// User — пользователь системы, привязанный к From (§8.1); nil — не привязан. Заполняет
+	// middleware RequireLinked.
+	User *user.User
 
 	callbackID string
 	out        *Queue
