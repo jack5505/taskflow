@@ -1305,6 +1305,89 @@ button.link.danger {
   font-size: 14px;
 }
 
+/* Отчёты по времени (ТЗ §6.6) */
+.topbar-link {
+  margin-left: 24px;
+}
+
+.report-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.report-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.report-filters select {
+  font: inherit;
+  min-width: 180px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+}
+
+.report-hint {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.report-tabs {
+  align-items: center;
+  margin: 16px 0 12px;
+}
+
+.report-period {
+  margin-left: auto;
+  font-size: 14px;
+}
+
+.report-body.loading-dim {
+  opacity: 0.6;
+}
+
+.report-scroll {
+  overflow-x: auto;
+}
+
+.report-table td,
+.report-table th {
+  white-space: nowrap;
+}
+
+.report-tasks td:nth-child(2) {
+  white-space: normal;
+}
+
+.report-table .weekend {
+  background: #eaeef2;
+}
+
+.report-table .report-total,
+.report-table tfoot th {
+  font-weight: 600;
+}
+
+.report-hours {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.report-table tr.deleted td {
+  color: var(--muted);
+}
+
+.report-deleted {
+  margin-left: 8px;
 /* Профиль (ТЗ §7.8) */
 .profile-page .panel {
   max-width: 720px;
