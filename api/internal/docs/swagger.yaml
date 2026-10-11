@@ -63,6 +63,80 @@ definitions:
     - password
     - token
     type: object
+  project.View:
+    properties:
+      created_at:
+        type: string
+      daily_summary_time:
+        type: string
+      deleted_at:
+        format: date-time
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_archived:
+        type: boolean
+      key:
+        type: string
+      my_role:
+        type: string
+      name:
+        type: string
+      notification_settings:
+        additionalProperties:
+          type: boolean
+        type: object
+      telegram_chat_id:
+        type: integer
+      timezone:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  project.createRequest:
+    properties:
+      description:
+        maxLength: 2000
+        type: string
+      key:
+        example: TM
+        maxLength: 10
+        type: string
+      name:
+        maxLength: 100
+        type: string
+      timezone:
+        example: Europe/Moscow
+        maxLength: 64
+        type: string
+    required:
+    - key
+    - name
+    type: object
+  project.updateRequest:
+    properties:
+      daily_summary_time:
+        example: "10:00"
+        maxLength: 5
+        type: string
+      description:
+        maxLength: 2000
+        type: string
+      is_archived:
+        type: boolean
+      name:
+        maxLength: 100
+        type: string
+      notification_settings:
+        additionalProperties:
+          type: boolean
+        type: object
+      timezone:
+        maxLength: 64
+        type: string
+    type: object
   user.User:
     properties:
       created_at:
@@ -286,6 +360,225 @@ paths:
       summary: Проверка связи
       tags:
       - system
+  /api/v1/projects:
+    get:
+      description: Проекты, где пользователь участник; администратору системы — все.
+        По умолчанию — не архивные; archived=true — только архив; deleted=true — только
+        удалённые (администратор).
+      parameters:
+      - description: только архивные
+        in: query
+        name: archived
+        type: boolean
+      - description: только удалённые (администратор)
+        in: query
+        name: deleted
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/project.View'
+            type: array
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: deleted=true не администратору'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Проекты
+      tags:
+      - projects
+    post:
+      consumes:
+      - application/json
+      description: Ключ — 2–10 заглавных латинских букв, уникален и среди удалённых
+        проектов, не меняется. Участников добавляет администратор или менеджер (§9.2,
+        участники).
+      parameters:
+      - description: проект
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.createRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/project.View'
+        "400":
+          description: VALIDATION_FAILED, в том числе ключ занят
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор системы'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Создать проект
+      tags:
+      - projects
+  /api/v1/projects/{key}:
+    delete:
+      description: 'Мягкое удаление (§3.2): проект пропадает из списков, бота и отчётов,
+        Telegram-группа отключается; данные сохраняются. Восстановление — POST /projects/{key}/restore.'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор системы'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Удалить проект
+      tags:
+      - projects
+    get:
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/project.View'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет, удалён или пользователь не участник'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Проект
+      tags:
+      - projects
+    patch:
+      consumes:
+      - application/json
+      description: Менеджер проекта или администратор. Меняются только переданные
+        поля; description "" очищает. notification_settings — частичный объект событий
+        §8.6 (task_created, task_taken, task_returned, task_review, task_rework, task_accepted,
+        task_cancelled, sprint_started, sprint_closed, daily_summary, comment_created).
+        смену is_archived — только администратор (то же значение, что сейчас, пропускается).
+        В архивном проекте любое изменение, кроме разархивации, — 409 PROJECT_ARCHIVED.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: поля для изменения
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.updateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/project.View'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер; is_archived — не администратор'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Изменить проект
+      tags:
+      - projects
+  /api/v1/projects/{key}/restore:
+    post:
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/project.View'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не администратор системы'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Восстановить проект
+      tags:
+      - projects
   /api/v1/users:
     get:
       description: Администратору — все пользователи целиком (user.User). Менеджеру
