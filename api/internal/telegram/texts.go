@@ -10,6 +10,12 @@ import (
 // имя ставится после тире, глагол согласуется с задачей («TM-42 принята — Анна Смирнова»).
 // Сообщения с разметкой HTML экранируют данные пользователя функцией html.
 var texts = template.Must(template.New("bot").Parse(`
+{{- /* Оповещения администраторам о сбоях, §10.3 */}}
+{{define "alert_postgres"}}⚠️ TaskFlow: PostgreSQL недоступен с {{.Since.UTC.Format "15:04:05"}} UTC: {{.Err}}{{end}}
+{{define "alert_redis"}}⚠️ TaskFlow: Redis недоступен с {{.Since.UTC.Format "15:04:05"}} UTC: {{.Err}}{{end}}
+{{define "alert_worker"}}⚠️ TaskFlow: воркер не отвечает с {{.Since.UTC.Format "15:04:05"}} UTC ({{.Err}}). Сообщения бота, письма и таймеры не обрабатываются{{end}}
+{{define "alert_send"}}⚠️ TaskFlow: сообщение в чат {{.ChatID}} не отправлено после {{.Attempts}} попыток: {{.Err}}{{end}}
+{{define "alert_disk"}}⚠️ TaskFlow: диск сервера заполнен на {{.Used}}%{{end}}
 {{define "internal_error"}}Не получилось выполнить действие. Попробуйте ещё раз{{end}}
 {{define "private_only"}}Эта команда работает в личном чате с ботом{{end}}
 

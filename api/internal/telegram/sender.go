@@ -132,10 +132,24 @@ type Deliverer struct {
 	limit *Limiter
 	out   *Queue
 	kinds map[string]KindHooks
+	alert *Alerter // оповещение администраторам об отброшенном после повторов сообщении (§10.3)
 }
 
 func NewDeliverer(api API, rdb *redis.Client, out *Queue) *Deliverer {
 	return &Deliverer{api: api, limit: NewLimiter(rdb), out: out}
+}
+
+// WithAlerts — оповещать администраторов, когда сообщение отброшено после MaxAttempts попыток.
+func (d *Deliverer) WithAlerts(a *Alerter) *Deliverer {
+	d.alert = a
+	return d
+}
+
+// dropped — оповещение администраторам о сообщении, отброшенном после MaxAttempts попыток.
+func (d *Deliverer) dropped(ctx context.Context, m Message, err error) {
+	if d.alert != nil {
+		d.alert.Notify(ctx, AlertSend, Text("alert_send", map[string]any{"ChatID": m.ChatID, "Attempts": m.Attempt, "Err": err.Error()}))
+	}
 }
 
 // WithRouter — сборка сообщений по видам, зарегистрированным в роутере (Router.Kind).
@@ -205,6 +219,7 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		// migrate_to_chat_id перепишет его, — с паузой и счётчиком попыток.
 		if m.Attempt++; m.Attempt >= MaxAttempts {
 			slog.Error("telegram: message dropped, group migrated", "kind", m.Kind, "ref", m.Ref)
+			d.dropped(ctx, m, err)
 			return nil
 		}
 		return d.out.Send(ctx, m, backoff(m.Attempt))
@@ -217,6 +232,7 @@ func (d *Deliverer) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	}
 	if m.Attempt >= MaxAttempts {
 		log.Error("telegram: message dropped after retries")
+		d.dropped(ctx, m, err)
 		return nil
 	}
 	delay := backoff(m.Attempt)
