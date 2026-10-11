@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test": "vitest run",
     "preview": "vite preview",
+    "e2e": "playwright test",
     "gen:api": "swagger-typescript-api generate -p ../api/internal/docs/swagger.json -o src/api -n client.ts"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "react-router": "^7.18.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
