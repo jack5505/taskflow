@@ -1359,7 +1359,7 @@ export class Api<
       }),
 
     /**
-     * @description Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start. Без привязки — тоже 204.
+     * @description Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start и /help. Без привязки — тоже 204.
      *
      * @tags me
      * @name V1MeTelegramDelete

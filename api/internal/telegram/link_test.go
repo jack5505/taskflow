@@ -114,7 +114,7 @@ func TestStartAnswers(t *testing.T) {
 	require.Equal(t, 30, msgs[0].DeleteAfter)
 }
 
-// §8.1 п. 6: /unlink отвязывает; после этого бот отвечает только на /start, на остальное —
+// §8.1 п. 6: /unlink отвязывает; после этого бот отвечает только на /start и /help (TestHelpUnlinked), на остальное —
 // «Сначала привяжите аккаунт».
 func TestUnlinkCommand(t *testing.T) {
 	b := newLinkBot(t)
