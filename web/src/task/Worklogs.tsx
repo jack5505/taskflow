@@ -81,19 +81,30 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
     },
   });
 
+  // Пока запрос идёт, окно не закрывается: иначе его ответ закрыл бы уже новое окно, а повторное
+  // списание задвоило бы запись. Введённое не теряется молча.
+  const dirty = worklog
+    ? draft.duration !== formatDuration(worklog.minutes) || draft.workDate !== worklog.work_date || draft.comment !== (worklog.comment ?? "")
+    : draft.duration.trim() !== "" || draft.comment.trim() !== "";
+  const dismiss = () => {
+    if (save.isPending) return;
+    if (dirty && !window.confirm("Закрыть без сохранения?")) return;
+    onClose();
+  };
+
   const set = (field: keyof WorklogDraft, value: string) => {
     setDraft((d) => ({ ...d, [field]: value }));
     setErrors((e) => ({ ...e, [field]: undefined }));
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const errs = validateDraft(draft, { today, minDate: minDate || undefined });
+    const errs = validateDraft(draft, { today, minDate: minDate || undefined, keepDate: worklog?.work_date });
     setErrors(errs);
     if (Object.values(errs).every((v) => !v)) save.mutate(draft);
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismiss()}>
       <form
         className="form panel modal"
         role="dialog"
@@ -102,7 +113,7 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
         data-testid="worklog-form"
         noValidate
         onSubmit={submit}
-        onKeyDown={(e) => e.key === "Escape" && onClose()}
+        onKeyDown={(e) => e.key === "Escape" && dismiss()}
       >
         <h2 id="worklog-title">{worklog ? "Изменить запись времени" : "Списать время"}</h2>
         <p className="muted">
@@ -143,7 +154,8 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
           <textarea
             rows={3}
             data-testid="worklog-comment"
-            maxLength={MAX_WORKLOG_COMMENT}
+            // Длина в символах (эмодзи — один символ) проверяется validateDraft; maxLength считает UTF-16.
+            maxLength={MAX_WORKLOG_COMMENT * 2}
             value={draft.comment}
             aria-invalid={!!errors.comment}
             onChange={(e) => set("comment", e.target.value)}
@@ -163,7 +175,7 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
           <button type="submit" className="primary" data-testid="worklog-submit" disabled={save.isPending}>
             {save.isPending ? "Сохраняем…" : worklog ? "Сохранить" : "Списать"}
           </button>
-          <button type="button" onClick={onClose}>
+          <button type="button" disabled={save.isPending} onClick={dismiss}>
             Отмена
           </button>
         </div>
@@ -239,13 +251,15 @@ function WorklogRow({
 interface Props {
   task: TaskTask;
   actor: Actor | null;
-  /** Проект в архиве или задача удалена. */
+  /** Проект в архиве, задача удалена или её спринт завершён (§6.5). */
   readOnly: boolean;
+  /** Спринт задачи завершён — пояснение над журналом. */
+  sprintClosed: boolean;
   timeZone?: string;
 }
 
 /** Вкладка «Журнал времени» (§7.5): кто, дата, длительность, источник, комментарий; правка по §6.5. */
-export function Worklogs({ task, actor, readOnly, timeZone }: Props) {
+export function Worklogs({ task, actor, readOnly, sprintClosed, timeZone }: Props) {
   const key = task.key ?? "";
   const list = useQuery({
     queryKey: worklogsQueryKey(key),
@@ -254,17 +268,24 @@ export function Worklogs({ task, actor, readOnly, timeZone }: Props) {
   const [editing, setEditing] = useState<TaskWorklogView | null>(null);
   const today = todayIn(timeZone);
 
+  const closedNote = sprintClosed && (
+    <p className="notice">Спринт задачи завершён: записи времени не добавляются, не изменяются и не удаляются.</p>
+  );
   if (list.isPending) return <p className="muted">Загрузка…</p>;
   if (list.isError) return <p role="alert">{errorText(list.error)}</p>;
   if (list.data.length === 0)
     return (
-      <p className="muted" data-testid="worklog-empty">
-        Время на задачу ещё не списано.
-      </p>
+      <>
+        {closedNote}
+        <p className="muted" data-testid="worklog-empty">
+          Время на задачу ещё не списано.
+        </p>
+      </>
     );
   const total = list.data.reduce((s, w) => s + (w.minutes ?? 0), 0);
   return (
     <>
+      {closedNote}
       <table className="table worklogs" data-testid="worklog-list">
         <thead>
           <tr>

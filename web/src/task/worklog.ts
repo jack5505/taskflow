@@ -2,8 +2,9 @@
 import type { TaskTask, TaskWorklogView } from "../api/client";
 import { parseApiError, errorText, fieldErrors } from "../api/errors";
 import type { Actor } from "../board/transitions";
-import { addDays } from "../backlog/logic";
+import { addDays, today } from "../backlog/logic";
 import { formatDuration, parseDuration } from "../lib/duration";
+import { formatDate } from "../lib/format";
 
 /** Запись не больше суток (§3.5). */
 export const MAX_WORKLOG_MINUTES = 24 * 60;
@@ -22,18 +23,12 @@ export const sourceLabels: Record<NonNullable<TaskWorklogView["source"]>, string
 export function dayOf(value: string | undefined, timeZone?: string): string {
   if (!value) return "";
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  const opts = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
-  try {
-    return new Intl.DateTimeFormat("en-CA", { ...opts, timeZone }).format(d);
-  } catch {
-    return new Intl.DateTimeFormat("en-CA", opts).format(d);
-  }
+  return Number.isNaN(d.getTime()) ? "" : today(timeZone, d);
 }
 
 /**
- * «Списать время» (§2, §6.3): исполнитель задачи или менеджер. readOnly — проект в архиве или
- * задача удалена. На отменённую задачу время не списывается; закрытый спринт проверяет сервер.
+ * «Списать время» (§2, §6.3): исполнитель задачи или менеджер. readOnly — проект в архиве,
+ * задача удалена или её спринт завершён (§6.5). На отменённую задачу время не списывается.
  */
 export function canAddWorklog(t: TaskTask, actor: Actor | null, readOnly: boolean): boolean {
   if (!actor || readOnly || t.status === "cancelled") return false;
@@ -73,22 +68,21 @@ export type DraftErrors = Partial<Record<keyof WorklogDraft, string>>;
  * Проверка формы (§3.5, §6.1, §6.3): длительность обязательна, от 1m до 24h; дата не позже
  * сегодня и не раньше minDate (дата создания задачи; для автора при правке — ещё и 7 дней назад).
  */
-export function validateDraft(d: WorklogDraft, range: { today: string; minDate?: string }): DraftErrors {
+export function validateDraft(d: WorklogDraft, range: { today: string; minDate?: string; keepDate?: string }): DraftErrors {
   const e: DraftErrors = {};
   const m = d.duration.trim() ? parseDuration(d.duration) : null;
   if (!d.duration.trim()) e.duration = "Укажите длительность";
   else if (m === null) e.duration = "Формат: 2h 30m, 45m, 3h, 1d (1d = 8h)";
   else if (m < 1 || m > MAX_WORKLOG_MINUTES) e.duration = "От 1m до 24h";
+  // Дату записи, которую не меняют, сервер не проверяет: её «сегодня» — по поясу автора записи.
+  const kept = !!range.keepDate && d.workDate === range.keepDate;
   if (!d.workDate) e.workDate = "Укажите дату";
-  else if (d.workDate > range.today) e.workDate = "Не позже сегодняшней даты";
-  else if (range.minDate && d.workDate < range.minDate) e.workDate = `Не раньше ${formatIsoDate(range.minDate)}`;
+  else if (kept) {
+    // не проверяем
+  } else if (d.workDate > range.today) e.workDate = "Не позже сегодняшней даты";
+  else if (range.minDate && d.workDate < range.minDate) e.workDate = `Не раньше ${formatDate(range.minDate)}`;
   if ([...d.comment.trim()].length > MAX_WORKLOG_COMMENT) e.comment = "Не длиннее 500 символов";
   return e;
-}
-
-function formatIsoDate(s: string): string {
-  const [y, m, d] = s.split("-");
-  return `${d}.${m}.${y}`;
 }
 
 /**
@@ -99,11 +93,11 @@ export function worklogErrorText(e: unknown): string {
   const err = parseApiError(e);
   if (!err) return errorText(e);
   if (err.code === "DAILY_LIMIT_EXCEEDED") {
-    const used = Number(err.details.used_minutes);
-    const left = Number(err.details.available_minutes);
+    const used = minutesOf(err.details.used_minutes);
+    const left = minutesOf(err.details.available_minutes);
     const parts = ["За один день можно списать не больше 24 часов"];
-    if (Number.isFinite(used)) parts.push(`уже списано ${formatDuration(used)}`);
-    if (Number.isFinite(left)) parts.push(`доступно ${formatDuration(left)}`);
+    if (used !== null) parts.push(`уже списано ${formatDuration(used)}`);
+    if (left !== null) parts.push(`доступно ${formatDuration(left)}`);
     return parts.join(", ");
   }
   const field = fieldErrors(err)[0];
@@ -112,4 +106,8 @@ export function worklogErrorText(e: unknown): string {
     return `${names[field.field] ?? field.field}: ${field.reason}`;
   }
   return errorText(e);
+}
+
+function minutesOf(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

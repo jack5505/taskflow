@@ -81,7 +81,14 @@ describe("validateDraft", () => {
     expect(validateDraft({ ...ok, workDate: "" }, range).workDate).toBe("Укажите дату");
   });
 
-  it("комментарий до 500 символов", () => {
+  it("неизменённую дату записи при правке не проверяем — её день по поясу автора", () => {
+    const keep = { ...range, keepDate: "2026-09-30" };
+    expect(validateDraft({ ...ok, workDate: "2026-09-30" }, keep)).toEqual({});
+    expect(validateDraft({ ...ok, workDate: "2026-09-29" }, keep).workDate).toBe("Не раньше 01.10.2026");
+  });
+
+  it("комментарий до 500 символов (эмодзи — один символ)", () => {
+    expect(validateDraft({ ...ok, comment: "😀".repeat(500) }, range)).toEqual({});
     expect(validateDraft({ ...ok, comment: "я".repeat(500) }, range)).toEqual({});
     expect(validateDraft({ ...ok, comment: "я".repeat(501) }, range).comment).toBe("Не длиннее 500 символов");
   });
@@ -95,6 +102,15 @@ describe("worklogErrorText", () => {
       details: { used_minutes: 1290, available_minutes: 150 },
     });
     expect(worklogErrorText(e)).toBe("За один день можно списать не больше 24 часов, уже списано 21h 30m, доступно 2h 30m");
+  });
+
+  it("дневной лимит без чисел в details — без «0m»", () => {
+    const e = apiError(409, {
+      code: "DAILY_LIMIT_EXCEEDED",
+      message: "",
+      details: { used_minutes: null },
+    });
+    expect(worklogErrorText(e)).toBe("За один день можно списать не больше 24 часов");
   });
 
   it("ошибка поля — с причиной", () => {
