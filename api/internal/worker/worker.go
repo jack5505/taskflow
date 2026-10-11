@@ -1,5 +1,5 @@
 // Package worker — режим `taskflow worker` (ТЗ §10.1): релей outbox и сервер asynq.
-// Сюда же позже встанут планировщик сводок и напоминаний.
+// Здесь же — планировщики: снимки спринтов, сводки в группы и напоминания о сроках.
 package worker
 
 import (
@@ -79,6 +79,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	mux.Handle(auth.TaskPasswordReset, auth.PasswordResetHandler(authSvc))
 	mux.Handle(auth.TaskPasswordInvite, auth.PasswordInviteHandler(authSvc))
 	accounts := telegram.NewAccounts(g, cfg.TelegramBotUsername)
+	var digest *telegram.Digest // сводки в группы и личные напоминания о сроке (§8.6, §8.7)
 	if cfg.TelegramEnabled() {
 		b, err := telegram.NewBot(cfg)
 		if err != nil {
@@ -88,6 +89,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		telegram.RegisterAccount(rt, accounts, rdb)
 		telegram.RegisterPersonal(rt, d, g, tasks, rdb, client, cfg.BaseURL)
 		telegram.Mount(mux, b, rt, rdb, client)
+		digest = telegram.NewDigest(g, client, cfg.BaseURL)
 	}
 
 	srv := queue.NewServer(cfg.RedisAddr, 10)
@@ -117,6 +119,25 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		defer wg.Done()
 		runEvery(ctx, "timers stop", time.Minute, stopTimers)
 	}()
+	// Напоминания о сроке (§8.7, §7.7): колокольчик всегда, личное сообщение — если бот включён.
+	var sendDue func(context.Context, notification.Due) error
+	if digest != nil {
+		sendDue = digest.SendDue
+		wg.Go(func() {
+			runEvery(ctx, "daily summaries", time.Minute, func(ctx context.Context) (int64, error) { return digest.Summaries(ctx, time.Now()) })
+		})
+		wg.Go(func() {
+			runDaily(ctx, "daily summaries cleanup", func(ctx context.Context) (int64, error) { return digest.CleanupSummaries(ctx, time.Now()) })
+		})
+	}
+	wg.Go(func() {
+		runEvery(ctx, "due reminders", notification.DueEvery, func(ctx context.Context) (int64, error) {
+			return notification.DueReminders(ctx, g, time.Now(), sendDue)
+		})
+	})
+	wg.Go(func() {
+		runDaily(ctx, "due reminders cleanup", func(ctx context.Context) (int64, error) { return notification.CleanupDue(ctx, g, time.Now()) })
+	})
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 
 	<-ctx.Done()
