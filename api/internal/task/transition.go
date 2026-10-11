@@ -127,6 +127,77 @@ type preLock struct {
 	reorder        bool // перестановка: advisory-блокировка порядка задач проекта (см. Move)
 }
 
+// opened — задача под блокировкой, её проект и права действующего пользователя.
+type opened struct {
+	task    Task
+	project project.Project
+	actor   actor
+}
+
+// openTask — общее начало любой операции над задачей. Порядок блокировок тот же, что у деактивации
+// и закрытия спринта: FOR SHARE строк действующего пользователя и pre, затем строка задачи (lock:
+// FOR UPDATE для изменения, FOR SHARE — для действий, не меняющих её поля), затем FOR SHARE проекта.
+// Права — из строк под блокировкой. Ошибки: деактивирован — 401; нет задачи, не участник или
+// удалённая для не-администратора — 404. Архив проверяет вызывающий — в нужном месте порядка ответов.
+func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (*opened, error) {
+	var me []struct {
+		IsSystemAdmin bool
+		IsActive      bool
+	}
+	if err := tx.Raw(`SELECT is_system_admin, is_active FROM users WHERE id = ? FOR SHARE`, u.ID).Scan(&me).Error; err != nil {
+		return nil, fmt.Errorf("task: actor: %w", err)
+	}
+	if len(me) == 0 || !me[0].IsActive {
+		return nil, errUserBlocked
+	}
+	if err := lockShare(tx, "users", pre.users); err != nil {
+		return nil, err
+	}
+	if err := lockShare(tx, "sprints", pre.sprints); err != nil {
+		return nil, err
+	}
+	if pre.reorder {
+		// Проект берём из ключа задачи: блокировка нужна раньше строки задачи.
+		projectKey := keyRe.FindStringSubmatch(key)[1]
+		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('task-order:' || ?))`, projectKey).Error; err != nil {
+			return nil, fmt.Errorf("task: order lock: %w", err)
+		}
+	}
+	var o opened
+	cond := " AND deleted_at IS NULL"
+	if pre.withDeleted {
+		cond = ""
+	}
+	res := tx.Raw(`SELECT * FROM tasks WHERE key = ?`+cond+` `+lock, key).Scan(&o.task)
+	if res.Error != nil {
+		return nil, fmt.Errorf("task: lock: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return nil, ErrNotFound
+	}
+	pr := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR SHARE`, o.task.ProjectID).Scan(&o.project)
+	if pr.Error != nil {
+		return nil, fmt.Errorf("task: project: %w", pr.Error)
+	}
+	if pr.RowsAffected == 0 {
+		return nil, ErrNotFound
+	}
+	role, err := project.RoleIn(tx, o.project.ID, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	admin := me[0].IsSystemAdmin
+	if role == "" && !admin {
+		return nil, ErrNotFound
+	}
+	if o.task.DeletedAt != nil && !admin {
+		return nil, ErrNotFound // корзину видит только администратор (§2) — раньше любых других ответов
+	}
+	_, source := audit.From(tx.Statement.Context)
+	o.actor = actor{user: u, member: role != "", admin: admin, manager: admin || role == project.RoleManager, source: source}
+	return &o, nil
+}
+
 // change — общая часть изменений задачи. Порядок блокировок тот же, что у деактивации и закрытия
 // спринта: FOR SHARE строк действующего пользователя и pre, затем FOR UPDATE строки задачи,
 // затем FOR SHARE проекта. Права берутся из строк под блокировкой, а не из снимка при входе.
@@ -140,60 +211,12 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 	}
 	var t, before Task
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var me []struct {
-			IsSystemAdmin bool
-			IsActive      bool
-		}
-		if err := tx.Raw(`SELECT is_system_admin, is_active FROM users WHERE id = ? FOR SHARE`, u.ID).Scan(&me).Error; err != nil {
-			return fmt.Errorf("task: actor: %w", err)
-		}
-		if len(me) == 0 || !me[0].IsActive {
-			return errUserBlocked
-		}
-		if err := lockShare(tx, "users", pre.users); err != nil {
-			return err
-		}
-		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
-			return err
-		}
-		if pre.reorder {
-			// Проект берём из ключа задачи: блокировка нужна раньше строки задачи.
-			projectKey := keyRe.FindStringSubmatch(key)[1]
-			if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('task-order:' || ?))`, projectKey).Error; err != nil {
-				return fmt.Errorf("task: order lock: %w", err)
-			}
-		}
-		cond := " AND deleted_at IS NULL"
-		if pre.withDeleted {
-			cond = ""
-		}
-		res := tx.Raw(`SELECT * FROM tasks WHERE key = ?`+cond+` FOR UPDATE`, key).Scan(&t)
-		if res.Error != nil {
-			return fmt.Errorf("task: lock: %w", res.Error)
-		}
-		if res.RowsAffected == 0 {
-			return ErrNotFound
-		}
-		// FOR SHARE: архивация проекта (FOR UPDATE) дождётся этой транзакции и наоборот.
-		var p project.Project
-		pr := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR SHARE`, t.ProjectID).Scan(&p)
-		if pr.Error != nil {
-			return fmt.Errorf("task: project: %w", pr.Error)
-		}
-		if pr.RowsAffected == 0 {
-			return ErrNotFound
-		}
-		role, err := project.RoleIn(tx, p.ID, u.ID)
+		o, err := openTask(tx, u, key, pre, "FOR UPDATE")
 		if err != nil {
 			return err
 		}
-		if role == "" && !me[0].IsSystemAdmin {
-			return ErrNotFound
-		}
-		if t.DeletedAt != nil && !me[0].IsSystemAdmin {
-			return ErrNotFound // корзину видит только администратор (§2) — раньше любых других ответов
-		}
-		if err := project.EnsureWritable(&p); err != nil {
+		t = o.task
+		if err := project.EnsureWritable(&o.project); err != nil {
 			return err
 		}
 		if ifMatch != nil && !slices.Contains(ifMatch, t.Version) {
@@ -201,9 +224,7 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 			return apierr.Conflict(apierr.CodeVersionConflict, "Задачу уже изменил другой пользователь").
 				With("current", t).With("expected_version", ifMatch)
 		}
-		_, source := audit.From(ctx)
-		a := actor{user: u, member: role != "", admin: me[0].IsSystemAdmin,
-			manager: me[0].IsSystemAdmin || role == project.RoleManager, source: source}
+		a := o.actor
 		before = t
 		if err := fn(tx, &t, a); err != nil {
 			return err
@@ -310,11 +331,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 	}
 
 	if comment != "" && (to == StatusCancelled || (from == StatusReview && to == StatusInProgress)) {
-		source := "web"
-		if a.source == audit.SourceBot {
-			source = "telegram"
-		}
-		c := Comment{TaskID: t.ID, AuthorID: uid, Body: comment, Source: source}
+		c := Comment{TaskID: t.ID, AuthorID: uid, Body: comment, Source: commentSource(a.source)}
 		if err := tx.Create(&c).Error; err != nil {
 			return fmt.Errorf("task: reason comment: %w", err)
 		}
