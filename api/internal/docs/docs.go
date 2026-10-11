@@ -1701,6 +1701,108 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/reports/time": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "ТЗ §6.6. Период from–to включительно (ГГГГ-ММ-ДД), по умолчанию текущая неделя пн–вс по поясу пользователя, не длиннее 366 дней. Фильтры: project (ключ), sprint_id (задачи, которые сейчас в спринте), user_id.\ngroup_by=user — строка на пользователя, столбец на день (days, weekend — выходные), итоги по строке (total_minutes) и по столбцу (day_totals). group_by=task — строка на задачу: ключ, название, исполнитель, статус, оценка, списано за период и всего (всего — в пределах того же фильтра по пользователю и прав); deleted — удалённая задача (§4).\nПрава (§2): администратор системы — все проекты; менеджер — все записи своих проектов; исполнитель — только свои записи (user_id другого — 403). Чужой проект или спринт — 404. Удалённые проекты в отчёт не входят, архивные — входят.\nformat=csv — файл для русского Excel: UTF-8 с BOM, разделитель «;», часы с десятичной запятой (2,50), даты dd.mm.yyyy, итоговая строка «Итого».",
+                "produces": [
+                    "application/json",
+                    "text/csv"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Отчёт по времени",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "с (ГГГГ-ММ-ДД)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "по (ГГГГ-ММ-ДД, включительно)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "project",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "id спринта",
+                        "name": "sprint_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "id пользователя",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "user",
+                            "task"
+                        ],
+                        "type": "string",
+                        "description": "представление",
+                        "name": "group_by",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "json",
+                            "csv"
+                        ],
+                        "type": "string",
+                        "description": "формат ответа",
+                        "name": "format",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/report.Report"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: исполнитель запросил другого пользователя",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND: проект или спринт",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sprints/{id}": {
             "get": {
                 "security": [
@@ -3695,6 +3797,150 @@ const docTemplate = `{
                 "timezone": {
                     "type": "string",
                     "maxLength": 64
+                }
+            }
+        },
+        "report.Day": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "example": "2026-10-05"
+                },
+                "weekend": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "report.Report": {
+            "type": "object",
+            "properties": {
+                "day_totals": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "days": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/report.Day"
+                    }
+                },
+                "from": {
+                    "type": "string",
+                    "example": "2026-10-05"
+                },
+                "group_by": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "task"
+                    ]
+                },
+                "hours": {
+                    "type": "string",
+                    "example": "2.50"
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/report.TaskRow"
+                    }
+                },
+                "to": {
+                    "type": "string",
+                    "example": "2026-10-11"
+                },
+                "total": {
+                    "type": "string",
+                    "example": "2h 30m"
+                },
+                "total_minutes": {
+                    "type": "integer"
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/report.UserRow"
+                    }
+                }
+            }
+        },
+        "report.TaskRow": {
+            "type": "object",
+            "properties": {
+                "assignee_id": {
+                    "type": "string"
+                },
+                "assignee_name": {
+                    "type": "string"
+                },
+                "deleted": {
+                    "description": "§4: «удалённая задача»",
+                    "type": "boolean"
+                },
+                "estimate_minutes": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string",
+                    "example": "TM-42"
+                },
+                "period_hours": {
+                    "type": "string",
+                    "example": "2.50"
+                },
+                "period_minutes": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "todo",
+                        "in_progress",
+                        "review",
+                        "done",
+                        "cancelled"
+                    ]
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "total_hours": {
+                    "type": "string",
+                    "example": "10.00"
+                },
+                "total_minutes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "report.UserRow": {
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "string",
+                    "example": "2.50"
+                },
+                "minutes": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "total_minutes": {
+                    "type": "integer",
+                    "example": 150
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "user_name": {
+                    "type": "string"
                 }
             }
         },

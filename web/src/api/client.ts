@@ -221,6 +221,58 @@ export interface ProjectUpdateRequest {
   timezone?: string;
 }
 
+export interface ReportDay {
+  /** @example "2026-10-05" */
+  date?: string;
+  weekend?: boolean;
+}
+
+export interface ReportReport {
+  day_totals?: number[];
+  days?: ReportDay[];
+  /** @example "2026-10-05" */
+  from?: string;
+  group_by?: "user" | "task";
+  /** @example "2.50" */
+  hours?: string;
+  tasks?: ReportTaskRow[];
+  /** @example "2026-10-11" */
+  to?: string;
+  /** @example "2h 30m" */
+  total?: string;
+  total_minutes?: number;
+  users?: ReportUserRow[];
+}
+
+export interface ReportTaskRow {
+  assignee_id?: string;
+  assignee_name?: string;
+  /** §4: «удалённая задача» */
+  deleted?: boolean;
+  estimate_minutes?: number;
+  /** @example "TM-42" */
+  key?: string;
+  /** @example "2.50" */
+  period_hours?: string;
+  period_minutes?: number;
+  status?: "todo" | "in_progress" | "review" | "done" | "cancelled";
+  task_id?: string;
+  title?: string;
+  /** @example "10.00" */
+  total_hours?: string;
+  total_minutes?: number;
+}
+
+export interface ReportUserRow {
+  /** @example "2.50" */
+  hours?: string;
+  minutes?: number[];
+  /** @example 150 */
+  total_minutes?: number;
+  user_id?: string;
+  user_name?: string;
+}
+
 export interface SprintScope {
   estimate_minutes?: number;
   tasks?: number;
@@ -1477,6 +1529,43 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description ТЗ §6.6. Период from–to включительно (ГГГГ-ММ-ДД), по умолчанию текущая неделя пн–вс по поясу пользователя, не длиннее 366 дней. Фильтры: project (ключ), sprint_id (задачи, которые сейчас в спринте), user_id. group_by=user — строка на пользователя, столбец на день (days, weekend — выходные), итоги по строке (total_minutes) и по столбцу (day_totals). group_by=task — строка на задачу: ключ, название, исполнитель, статус, оценка, списано за период и всего (всего — в пределах того же фильтра по пользователю и прав); deleted — удалённая задача (§4). Права (§2): администратор системы — все проекты; менеджер — все записи своих проектов; исполнитель — только свои записи (user_id другого — 403). Чужой проект или спринт — 404. Удалённые проекты в отчёт не входят, архивные — входят. format=csv — файл для русского Excel: UTF-8 с BOM, разделитель «;», часы с десятичной запятой (2,50), даты dd.mm.yyyy, итоговая строка «Итого».
+     *
+     * @tags reports
+     * @name V1ReportsTimeList
+     * @summary Отчёт по времени
+     * @request GET:/api/v1/reports/time
+     * @secure
+     */
+    v1ReportsTimeList: (
+      query?: {
+        /** с (ГГГГ-ММ-ДД) */
+        from?: string;
+        /** по (ГГГГ-ММ-ДД, включительно) */
+        to?: string;
+        /** ключ проекта */
+        project?: string;
+        /** id спринта */
+        sprint_id?: string;
+        /** id пользователя */
+        user_id?: string;
+        /** представление */
+        group_by?: "user" | "task";
+        /** формат ответа */
+        format?: "json" | "csv";
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<ReportReport, ApierrResponse>({
+        path: `/api/v1/reports/time`,
+        method: "GET",
+        query: query,
+        secure: true,
         format: "json",
         ...params,
       }),
