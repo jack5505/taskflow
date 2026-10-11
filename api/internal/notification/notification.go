@@ -24,6 +24,8 @@ const (
 	TypeMemberRemoved = "member_removed"
 	TypeTaskDeleted   = "task_deleted"
 	TypeComment       = "comment"
+	TypeTimerStopped  = "timer_auto_stopped" // таймер остановлен на отметке 12 часов (§6.4)
+	TypeTimerTrimmed  = "worklog_trimmed"    // запись таймера обрезана по дневному лимиту (§6.4)
 )
 
 // Retention — §3.8: уведомления хранятся 30 дней.

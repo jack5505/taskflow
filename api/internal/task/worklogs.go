@@ -410,13 +410,9 @@ func sprintNotClosed(tx *gorm.DB, id uuid.UUID) error {
 // записи не обходят лимит. Берётся после строки задачи — никто не ждёт задачу, держа эту блокировку
 // раньше неё. exclude — изменяемая запись (её прежние минуты не считаются).
 func checkDailyLimit(tx *gorm.DB, userID uuid.UUID, date time.Time, minutes int, exclude uuid.UUID) error {
-	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('worklog-day:' || ?))`, userID.String()).Error; err != nil {
-		return fmt.Errorf("task: worklog lock: %w", err)
-	}
-	var used int
-	if err := tx.Raw(`SELECT COALESCE(sum(minutes), 0) FROM worklogs WHERE user_id = ? AND work_date = ? AND id <> ?`,
-		userID, date.Format(time.DateOnly), exclude).Scan(&used).Error; err != nil {
-		return fmt.Errorf("task: worklog day sum: %w", err)
+	used, err := dayUsed(tx, userID, date, exclude)
+	if err != nil {
+		return err
 	}
 	if used+minutes > dailyLimitMinutes {
 		return apierr.Conflict(apierr.CodeDailyLimitExceeded, "За один день можно списать не больше 24 часов").
@@ -424,6 +420,20 @@ func checkDailyLimit(tx *gorm.DB, userID uuid.UUID, date time.Time, minutes int,
 			With("available_minutes", max(dailyLimitMinutes-used, 0))
 	}
 	return nil
+}
+
+// dayUsed — минуты пользователя за дату по всем задачам без записи exclude, под advisory-блокировкой
+// пользователя до конца транзакции (повторный захват в той же транзакции не ждёт).
+func dayUsed(tx *gorm.DB, userID uuid.UUID, date time.Time, exclude uuid.UUID) (int, error) {
+	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('worklog-day:' || ?))`, userID.String()).Error; err != nil {
+		return 0, fmt.Errorf("task: worklog lock: %w", err)
+	}
+	var used int
+	if err := tx.Raw(`SELECT COALESCE(sum(minutes), 0) FROM worklogs WHERE user_id = ? AND work_date = ? AND id <> ?`,
+		userID, date.Format(time.DateOnly), exclude).Scan(&used).Error; err != nil {
+		return 0, fmt.Errorf("task: worklog day sum: %w", err)
+	}
+	return used, nil
 }
 
 // refreshSpent — spent_minutes = сумма записей задачи (§3.3). Версия задачи не растёт: запись

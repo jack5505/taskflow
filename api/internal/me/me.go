@@ -19,6 +19,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/notification"
+	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -37,12 +38,12 @@ type MyProject struct {
 }
 
 // Profile — ответ GET /me: пользователь, личные уведомления §8.7 с умолчаниями, проекты и роли,
-// запущенный таймер (появится вместе с таймером §6.4; пока всегда null).
+// запущенный таймер (§6.4; нет — null).
 type Profile struct {
 	*user.User
 	NotificationSettings map[string]bool `json:"notification_settings"`
 	Projects             []MyProject     `json:"projects"`
-	Timer                any             `json:"timer" swaggertype:"object"`
+	Timer                *task.TimerView `json:"timer" extensions:"x-nullable"`
 }
 
 // Service — профиль и уведомления текущего пользователя.
@@ -62,7 +63,11 @@ func (s *Service) Profile(ctx context.Context, u *user.User) (*Profile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("me: projects: %w", err)
 	}
-	return &Profile{User: u, NotificationSettings: user.EffectiveNotifications(u.NotificationSettings), Projects: projects}, nil
+	timer, err := task.CurrentTimer(ctx, s.db, u.ID, s.now())
+	if err != nil {
+		return nil, err
+	}
+	return &Profile{User: u, NotificationSettings: user.EffectiveNotifications(u.NotificationSettings), Projects: projects, Timer: timer}, nil
 }
 
 // Update — PATCH /me: имя, часовой пояс, личные уведомления §8.7 (частичный объект).

@@ -90,7 +90,7 @@ export interface MeProfile {
   projects?: MeMyProject[];
   telegram_user_id?: number;
   telegram_username?: string;
-  timer?: object;
+  timer?: TaskTimerView | null;
   timezone?: string;
   updated_at?: string;
 }
@@ -396,6 +396,33 @@ export interface TaskTask {
   type?: "task" | "bug" | "feature";
   updated_at?: string;
   version?: number;
+}
+
+export interface TaskTimerStart {
+  stopped?: TaskTimerStop;
+  timer?: TaskTimerView;
+}
+
+export interface TaskTimerStop {
+  auto_stopped?: boolean;
+  /** @example "47m" */
+  duration?: string;
+  /** @example 47 */
+  minutes?: number;
+  /** @example "TM-42" */
+  task_key?: string;
+  trimmed?: boolean;
+  worklogs?: TaskWorklogView[];
+}
+
+export interface TaskTimerView {
+  /** @example 2820 */
+  elapsed_seconds?: number;
+  started_at?: string;
+  task_id?: string;
+  /** @example "TM-42" */
+  task_key?: string;
+  title?: string;
 }
 
 export interface TaskWorklogView {
@@ -1129,6 +1156,24 @@ export class Api<
       }),
 
     /**
+     * @description Запись времени source = timer, длительность округляется вверх до минуты; меньше минуты — записи нет. Через полночь по поясу пользователя — две записи на разные даты. Запись сверх дневного лимита 24 часа обрезается до остатка (trimmed, событие timer.trimmed), остатка нет — записи нет (§6.4).
+     *
+     * @tags timer
+     * @name V1MeTimerStopCreate
+     * @summary Остановить таймер
+     * @request POST:/api/v1/me/timer/stop
+     * @secure
+     */
+    v1MeTimerStopCreate: (params: RequestParams = {}) =>
+      this.request<TaskTimerStop, ApierrResponse>({
+        path: `/api/v1/me/timer/stop`,
+        method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
      * No description
      *
      * @tags system
@@ -1800,6 +1845,24 @@ export class Api<
     v1TasksTakeCreate: (taskKey: string, params: RequestParams = {}) =>
       this.request<TaskTask, ApierrResponse>({
         path: `/api/v1/tasks/${taskKey}/take`,
+        method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Исполнитель задачи в статусе in_progress (§6.4). У пользователя один таймер: запущенный на другой задаче останавливается с записью времени (поле stopped). Повторный старт на той же задаче — 409 TIMER_ALREADY_RUNNING (в details — timer). Таймер останавливается сам: при уходе задачи из in_progress, смене исполнителя, удалении задачи, деактивации пользователя, архивации проекта и через 12 часов (timer.auto_stopped).
+     *
+     * @tags timer
+     * @name V1TasksTimerStartCreate
+     * @summary Запустить таймер
+     * @request POST:/api/v1/tasks/{task_key}/timer/start
+     * @secure
+     */
+    v1TasksTimerStartCreate: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskTimerStart, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/timer/start`,
         method: "POST",
         secure: true,
         format: "json",
