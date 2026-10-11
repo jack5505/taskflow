@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -271,9 +272,9 @@ func (h *Handlers) close(c *gin.Context) {
 		return
 	}
 	var target *uuid.UUID
-	if req.MoveOpenTo != "backlog" {
+	if !strings.EqualFold(strings.TrimSpace(req.MoveOpenTo), "backlog") {
 		t, err := uuid.Parse(req.MoveOpenTo)
-		if err != nil {
+		if err != nil || len(req.MoveOpenTo) != 36 { // только канонический UUID, без {…} и urn:uuid:
 			httpserver.Abort(c, fieldError("move_open_to", "backlog или id запланированного спринта"))
 			return
 		}

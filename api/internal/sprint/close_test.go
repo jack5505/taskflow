@@ -44,7 +44,8 @@ func TestCloseWithThreeOpenTasks(t *testing.T) {
 	require.NotNil(t, sp["closed_at"])
 	sum := b["summary"].(map[string]any)
 	require.EqualValues(t, 1, sum["done"])
-	require.EqualValues(t, 5, sum["total"])
+	require.EqualValues(t, 4, sum["total"], "готово 1 из 4: отменённая не считается")
+	require.EqualValues(t, 105, sum["estimate_minutes"], "оценки готовой и незакрытых")
 	require.EqualValues(t, 3, sum["moved"])
 	require.ElementsMatch(t, []any{open[0], open[1], open[2]}, sum["moved_keys"])
 
@@ -91,4 +92,26 @@ func TestCloseToBacklogAndValidation(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.EqualValues(t, 1, b["summary"].(map[string]any)["moved"])
 	require.Nil(t, f.sprintOf(t, k), "в бэклог")
+}
+
+// Ревью #98: «Backlog» без учёта регистра; удалённая незакрытая задача уходит вместе с остальными;
+// для не активного спринта — 409, даже с плохой целью.
+func TestCloseReviewFixes(t *testing.T) {
+	f := newFixture(t)
+	s := f.sprint(t, `{`+dates+`}`)
+	live := f.task(t, s, "")
+	gone := f.task(t, s, "")
+	rec, b := f.do(t, "POST", "/api/v1/sprints/"+s+"/close", f.manager, `{"move_open_to":"00000000-0000-4000-8000-000000000000"}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "не активный — 409 раньше ошибки цели")
+	require.Equal(t, "not_active", reason(b))
+	rec, _ = f.do(t, "POST", "/api/v1/sprints/"+s+"/start", f.manager, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	rec, _ = f.do(t, "DELETE", "/api/v1/tasks/"+gone, f.manager, "")
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	rec, _ = f.do(t, "POST", "/api/v1/sprints/"+s+"/close", f.manager, `{"move_open_to":"Backlog"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Nil(t, f.sprintOf(t, live))
+	var sprintID *string
+	require.NoError(t, f.db.Raw(`SELECT sprint_id::text FROM tasks WHERE key = ?`, gone).Scan(&sprintID).Error)
+	require.Nil(t, sprintID, "удалённая незакрытая тоже ушла из закрытого спринта")
 }

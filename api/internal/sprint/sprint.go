@@ -299,8 +299,8 @@ func (s *Service) locked(ctx context.Context, u *user.User, id uuid.UUID, fn fun
 }
 
 // lockedWith — locked с ещё одним спринтом (цель переноса при завершении): строки обоих спринтов
-// и их задач FOR UPDATE в порядке id, затем проект. Цель не найдена или из другого проекта — 400
-// по полю move_open_to.
+// и их задач FOR UPDATE в порядке id, затем проект. Цель не найдена или из другого проекта —
+// other == nil; ошибку выбирает fn.
 func (s *Service) lockedWith(ctx context.Context, u *user.User, id uuid.UUID, otherID *uuid.UUID,
 	fn func(*gorm.DB, *Sprint, *Sprint, *project.Project) error) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -323,6 +323,8 @@ func (s *Service) lockedWith(ctx context.Context, u *user.User, id uuid.UUID, ot
 		if sp == nil {
 			return ErrNotFound
 		}
+		// Задачи спринтов — раньше проекта: тот же порядок, что у правок задач (задача → проект).
+		// Если поднять блокировку проекта выше, вернётся deadlock с параллельными правками задач.
 		if err := tx.Exec(`SELECT id FROM tasks WHERE sprint_id IN ? ORDER BY id FOR UPDATE`, ids).Error; err != nil {
 			return fmt.Errorf("sprint: lock tasks: %w", err)
 		}
@@ -346,8 +348,8 @@ func (s *Service) lockedWith(ctx context.Context, u *user.User, id uuid.UUID, ot
 		if err := project.EnsureWritable(p); err != nil {
 			return err
 		}
-		if otherID != nil && (other == nil || other.ProjectID != sp.ProjectID) {
-			return fieldError("move_open_to", "нет такого спринта в проекте")
+		if other != nil && other.ProjectID != sp.ProjectID {
+			other = nil // чужой спринт — как несуществующий; решает fn, в нужном месте порядка ответов
 		}
 		return fn(tx, sp, other, p)
 	})
