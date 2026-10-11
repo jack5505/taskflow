@@ -26,6 +26,9 @@ var statusNames = map[string]string{
 	StatusDone: "Готово", StatusCancelled: "Отменена",
 }
 
+// StatusName — название статуса для сообщений бота: «В работе», «Готово».
+func StatusName(status string) string { return statusNames[status] }
+
 // transitions — допустимые переходы §4; всё остальное — 409 INVALID_TRANSITION.
 var transitions = map[string]map[string]bool{
 	StatusTodo:       {StatusInProgress: true, StatusCancelled: true},
@@ -52,6 +55,9 @@ func ErrInvalidTransition(from, to string) error {
 // TransitionInput — смена статуса: to, причина (для доработки и отмены) и исполнитель
 // (для переоткрытия задачи, чей исполнитель деактивирован).
 type TransitionInput struct {
+	// From — ожидаемый текущий статус (кнопки бота §8.7: «Принять» и «Вернуть» — только из review);
+	// задача в другом статусе — 409 INVALID_TRANSITION. Пусто — без проверки.
+	From       string
 	To         string
 	Comment    string
 	AssigneeID *uuid.UUID
@@ -252,7 +258,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 	if _, ok := statusNames[to]; !ok {
 		return fieldError("to", "todo, in_progress, review, done или cancelled")
 	}
-	if !transitions[from][to] {
+	if !transitions[from][to] || (in.From != "" && in.From != from) {
 		return ErrInvalidTransition(from, to)
 	}
 	uid := a.user.ID
