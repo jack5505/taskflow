@@ -1,0 +1,468 @@
+import { useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useParams } from "react-router";
+import { api } from "../api";
+import type { TaskTask, TaskUpdateRequest } from "../api/client";
+import { errorText } from "../api/errors";
+import { useMe, useTimeZone } from "../auth/hooks";
+import { boardQueryKey } from "../board/cards";
+import { TransitionDialog } from "../board/TransitionDialog";
+import {
+  STATUSES,
+  canTransition,
+  transitionLabel,
+  transitionPrompt,
+  type Status,
+  type TransitionPrompt,
+} from "../board/transitions";
+import { statusLabel } from "../lib/status";
+import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
+import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
+import { Attachments } from "./Attachments";
+import { Comments } from "./Comments";
+import { commentsQueryKey, historyQueryKey, taskQueryKey } from "./keys";
+import { ConflictDialog, type Conflict } from "./ConflictDialog";
+import { describeHistory, type ValueContext } from "./history";
+import { MarkdownEditor, MarkdownView } from "./Markdown";
+import { buildPatch, ifMatchBase, ifMatch, isEmptyPatch, versionConflict, type Edits } from "./patch";
+import { taskPerms } from "./perms";
+import { InlineEdit, TaskFields, type Save, type SaveResult } from "./TaskFields";
+
+
+type Tab = "comments" | "history" | "attachments" | "worklog";
+const tabs: { id: Tab; label: string }[] = [
+  { id: "attachments", label: "Вложения" },
+  { id: "comments", label: "Комментарии" },
+  { id: "worklog", label: "Журнал времени" },
+  { id: "history", label: "История" },
+];
+
+interface DialogState extends TransitionPrompt {
+  to: Status;
+}
+
+/** Описание задачи: Markdown с предпросмотром; правка — по кнопке «Изменить». */
+function Description({
+  task,
+  editable,
+  saving,
+  onSave,
+}: {
+  task: TaskTask;
+  editable: boolean;
+  saving: boolean;
+  onSave: (d: string, base: TaskTask) => Promise<SaveResult>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  // Версия, с которой начата правка: за минуты набора текста задачу могли изменить.
+  const [base, setBase] = useState<TaskTask>(task);
+  const [busy, setBusy] = useState(false);
+  if (draft === null)
+    return (
+      <>
+        {task.description ? <MarkdownView source={task.description} /> : <p className="muted">Описания нет.</p>}
+        {editable && (
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              setBase(task);
+              setDraft(task.description ?? "");
+            }}
+          >
+            Изменить описание
+          </button>
+        )}
+      </>
+    );
+  return (
+    <form
+      className="form"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        const r = await onSave(draft, base);
+        setBusy(false);
+        if (r !== "error") setDraft(null);
+      }}
+    >
+      <MarkdownEditor label="Описание" value={draft} onChange={setDraft} maxLength={20000} rows={12} autoFocus disabled={busy} />
+      <div className="actions">
+        <button type="submit" className="primary" disabled={busy}>
+          {busy ? "Сохраняем…" : "Сохранить"}
+        </button>
+        <button type="button" disabled={busy} onClick={() => setDraft(null)}>
+          Отмена
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function History({ taskKey, ctx }: { taskKey: string; ctx: ValueContext }) {
+  const history = useQuery({
+    queryKey: historyQueryKey(taskKey),
+    queryFn: async ({ signal }) => (await api.api.v1TasksHistoryList(taskKey, { signal })).data ?? [],
+  });
+  if (history.isPending) return <p className="muted">Загрузка…</p>;
+  if (history.isError) return <p role="alert">{errorText(history.error)}</p>;
+  if (history.data.length === 0) return <p className="muted">Изменений нет.</p>;
+  return (
+    <table className="table history">
+      <thead>
+        <tr>
+          <th>Когда</th>
+          <th>Кто</th>
+          <th>Изменение</th>
+        </tr>
+      </thead>
+      <tbody>
+        {history.data.map((h) => {
+          const line = describeHistory(h, ctx);
+          return (
+            <tr key={line.id}>
+              <td className="nowrap">{line.when}</td>
+              <td>
+                {line.who}
+                {line.source && <span className="badge">{line.source}</span>}
+              </td>
+              <td>
+                {line.text}
+                {line.note && <div className="muted">{line.note}</div>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** Карточка задачи (ТЗ §7.5): /tasks/{key}. */
+export function TaskPage() {
+  const { key = "" } = useParams();
+  // Ключ задачи — «{ключ проекта}-{номер}» (§3.3).
+  const projectKey = key.replace(/-\d+$/, "");
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const me = useMe();
+  const timeZone = useTimeZone();
+
+  const task = useQuery({
+    queryKey: taskQueryKey(key),
+    queryFn: async ({ signal }) => (await api.api.v1TasksDetail(key, { signal })).data,
+  });
+  const project = useProject(projectKey);
+  const members = useProjectMembers(projectKey);
+  const { sprint: activeSprint } = useActiveSprint(projectKey, project.data);
+
+  const [tab, setTab] = useState<Tab>("comments");
+  const [actionError, setActionError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const statusMenu = useRef<HTMLDetailsElement>(null);
+
+  const actor = actorFor(me.data, project.data);
+  const archived = project.data?.is_archived === true;
+  const t = task.data;
+  const perms = t ? taskPerms(t, actor, { archived, admin: me.data?.is_system_admin === true }) : null;
+  const readOnly = archived || !!t?.deleted_at;
+
+  const memberList = useMemo(() => members.data ?? [], [members.data]);
+  const ctx: ValueContext = useMemo(() => {
+    const names = new Map(memberList.map((m) => [m.user_id, m.display_name || m.email || "Без имени"]));
+    return {
+      userName: (id) => names.get(id),
+      sprintName: (id) => (id === activeSprint?.id ? activeSprint.name : undefined),
+      timeZone,
+    };
+  }, [memberList, activeSprint, timeZone]);
+
+  /** После любого изменения: новая задача в кэше, история и списки других экранов устарели. */
+  // Версии, которые получились из наших же сохранений и переходов в этой вкладке.
+  const ownVersions = useRef(new Set<number>());
+  const changed = (next?: TaskTask) => {
+    if (next?.version !== undefined) ownVersions.current.add(next.version);
+    if (next) queryClient.setQueryData(taskQueryKey(key), next);
+    void queryClient.invalidateQueries({ queryKey: historyQueryKey(key) });
+    void queryClient.invalidateQueries({ queryKey: boardQueryKey(projectKey), refetchType: "none" });
+    void queryClient.invalidateQueries({ queryKey: projectsQueryKey, refetchType: "none" });
+    void queryClient.invalidateQueries({ queryKey: myTasksQueryKey, refetchType: "none" });
+  };
+
+  // PATCH с If-Match версии, от которой шла правка. 409 VERSION_CONFLICT — в кэш актуальную
+  // задачу, а свою правку — в окно конфликта: пользователь решит, повторять ли её (§3.3).
+  const save = useMutation({
+    // shownBase — версия, от которой пользователь начинал правку: при повторном конфликте
+    // сравнение в окне по-прежнему идёт от неё, а не от промежуточной версии.
+    mutationFn: async (v: { base: TaskTask; patch: TaskUpdateRequest; shownBase?: TaskTask }) =>
+      (await api.api.v1TasksPartialUpdate(key, v.patch, { headers: ifMatch(v.base.version) })).data,
+    onSuccess: (next) => {
+      setConflict(null);
+      changed(next);
+    },
+    onError: (e, v) => {
+      const current = versionConflict(e);
+      if (current) {
+        queryClient.setQueryData(taskQueryKey(key), current);
+        void queryClient.invalidateQueries({ queryKey: historyQueryKey(key) });
+        setConflict({ base: v.shownBase ?? v.base, current, patch: v.patch });
+      } else if (!conflict) {
+        setSaveError(errorText(e));
+      }
+    },
+  });
+
+  const saveEdits: Save = async (edits: Edits, opened: TaskTask) => {
+    const patch = buildPatch(opened, edits);
+    if (isEmptyPatch(patch)) return "saved";
+    // Пока поле было открыто, задачу могли изменить мы сами (другое поле, переход) — это не
+    // чужая правка: If-Match берём от текущей версии. Если среди новых версий есть чужая — от
+    // открытой, и сервер ответит 409.
+    const base = ifMatchBase(opened, queryClient.getQueryData<TaskTask>(taskQueryKey(key)), ownVersions.current);
+    setSaveError("");
+    try {
+      await save.mutateAsync({ base, patch });
+      return "saved";
+    } catch (e) {
+      return versionConflict(e) ? "conflict" : "error";
+    }
+  };
+
+  const transition = useMutation({
+    mutationFn: async (v: { to: Status; comment?: string; assigneeId?: string }) =>
+      (await api.api.v1TasksTransitionCreate(key, { to: v.to, comment: v.comment, assignee_id: v.assigneeId })).data,
+    onSuccess: (next) => {
+      setDialog(null);
+      changed(next);
+      // Причина возврата или отмены сохраняется комментарием.
+      void queryClient.invalidateQueries({ queryKey: commentsQueryKey(key) });
+    },
+    onError: (e) => {
+      if (!dialog) setActionError(errorText(e));
+    },
+  });
+  const take = useMutation({
+    mutationFn: async () => (await api.api.v1TasksTakeCreate(key)).data,
+    onSuccess: (next) => changed(next),
+    onError: (e) => setActionError(errorText(e)),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.api.v1TasksDelete(key),
+    onSuccess: () => {
+      changed();
+      queryClient.removeQueries({ queryKey: taskQueryKey(key) });
+      void navigate(`/projects/${projectKey}`);
+    },
+    onError: (e) => setActionError(errorText(e)),
+  });
+  const restore = useMutation({
+    mutationFn: async () => (await api.api.v1TasksRestoreCreate(key)).data,
+    onSuccess: (next) => changed(next),
+    onError: (e) => setActionError(errorText(e)),
+  });
+
+  if (task.isPending) return <p className="muted">Загрузка…</p>;
+  if (task.isError || !t || !perms)
+    return (
+      <section>
+        <p role="alert">{task.isError ? errorText(task.error) : "Задача не найдена"}</p>
+        <Link to="/">← К проектам</Link>
+      </section>
+    );
+
+  const status = (t.status ?? "todo") as Status;
+  const transitions =
+    actor && !readOnly
+      ? STATUSES.filter(
+          (to) =>
+            to !== status &&
+            canTransition({ status, assigneeId: t.assignee_id, reporterId: t.reporter_id }, to, actor),
+        )
+      : [];
+
+  const startTransition = (to: Status) => {
+    if (statusMenu.current) statusMenu.current.open = false;
+    setActionError("");
+    transition.reset();
+    const assigneeActive = t.assignee_id ? memberList.find((m) => m.user_id === t.assignee_id)?.is_active : undefined;
+    const prompt = transitionPrompt(status, to, assigneeActive);
+    if (prompt) setDialog({ to, ...prompt });
+    else transition.mutate({ to });
+  };
+
+  const busy = transition.isPending || take.isPending || remove.isPending || restore.isPending;
+
+  return (
+    <section className="task-page">
+      <nav className="muted" aria-label="Путь">
+        <Link to={`/projects/${projectKey}`}>
+          {projectKey}
+          {project.data?.name ? ` — ${project.data.name}` : ""}
+        </Link>
+      </nav>
+
+      {t.deleted_at && <p className="notice">Задача удалена. Восстановить может администратор системы.</p>}
+      {archived && <p className="notice">Проект в архиве: карточка только для чтения.</p>}
+
+      <div className="task-header">
+        <span className="card-key">{t.key}</span>
+        <h2 className="task-heading">
+          <InlineEdit
+            editable={perms.edit}
+            label="Название"
+            initial={t.title ?? ""}
+            validate={(v) => {
+              const n = [...v.trim()].length;
+              return n < 1 || n > 200 ? "Название — от 1 до 200 символов" : "";
+            }}
+            task={t}
+            disabled={save.isPending}
+            onSave={(v, base) => saveEdits({ title: v }, base)}
+          >
+            {t.title}
+          </InlineEdit>
+        </h2>
+        <div className="task-buttons">
+          {transitions.length > 0 ? (
+            <details className="dropdown" ref={statusMenu}>
+              <summary aria-label={`Статус: ${statusLabel(status)}. Сменить`}>{statusLabel(status)}</summary>
+              <div className="dropdown-menu" role="menu">
+                {transitions.map((to) => (
+                  <button key={to} type="button" role="menuitem" className="menu-item" disabled={busy} onClick={() => startTransition(to)}>
+                    {transitionLabel(status, to)} <span className="muted">→ {statusLabel(to)}</span>
+                  </button>
+                ))}
+              </div>
+            </details>
+          ) : (
+            <span className="badge status-badge">{statusLabel(status)}</span>
+          )}
+          {perms.take && (
+            <button
+              type="button"
+              className="primary"
+              disabled={busy}
+              onClick={() => {
+                setActionError("");
+                take.mutate();
+              }}
+            >
+              {take.isPending ? "Берём…" : "Взять в работу"}
+            </button>
+          )}
+          {perms.remove && (
+            <button
+              type="button"
+              className="danger"
+              disabled={busy}
+              onClick={() => window.confirm(`Удалить задачу ${t.key}?`) && remove.mutate()}
+            >
+              Удалить
+            </button>
+          )}
+          {perms.restore && (
+            <button type="button" disabled={busy} onClick={() => restore.mutate()}>
+              Восстановить
+            </button>
+          )}
+        </div>
+      </div>
+
+      {actionError && <p role="alert">{actionError}</p>}
+      {saveError && (
+        <p role="alert">
+          Не сохранено: {saveError}{" "}
+          <button type="button" className="link" onClick={() => setSaveError("")}>
+            Скрыть
+          </button>
+        </p>
+      )}
+
+      <div className="task-layout">
+        <div className="task-main">
+          <section className="block">
+            <h3>Описание</h3>
+            <Description
+              task={t}
+              editable={perms.edit}
+              saving={save.isPending}
+              onSave={(d, base) => saveEdits({ description: d }, base)}
+            />
+          </section>
+
+          <nav className="tabs" role="tablist" aria-label="Разделы задачи">
+            {tabs.map((x) => (
+              <button
+                key={x.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === x.id}
+                className={tab === x.id ? "tab active" : "tab"}
+                onClick={() => setTab(x.id)}
+              >
+                {x.label}
+              </button>
+            ))}
+          </nav>
+          <div className="tab-body" role="tabpanel">
+            {tab === "comments" && (
+              <Comments
+                taskKey={key}
+                actor={actor}
+                canWrite={perms.comment}
+                archived={readOnly}
+                timeZone={timeZone}
+              />
+            )}
+            {tab === "history" && <History taskKey={key} ctx={ctx} />}
+            {tab === "attachments" && (
+              <Attachments taskKey={key} actor={actor} canWrite={perms.comment} archived={readOnly} timeZone={timeZone} />
+            )}
+            {/* API записей времени ещё нет — вкладка без запросов. */}
+            {tab === "worklog" && <p className="muted">Скоро</p>}
+          </div>
+        </div>
+
+        <aside className="task-side panel">
+          <TaskFields
+            task={t}
+            perms={perms}
+            members={memberList}
+            ctx={ctx}
+            activeSprint={activeSprint}
+            timeZone={timeZone}
+            saving={save.isPending}
+            onSave={saveEdits}
+          />
+        </aside>
+      </div>
+
+      {dialog && (
+        <TransitionDialog
+          task={t}
+          to={dialog.to}
+          comment={dialog.comment}
+          chooseAssignee={dialog.chooseAssignee}
+          activeMembers={memberList.filter((m) => m.is_active !== false)}
+          pending={transition.isPending}
+          error={transition.isError ? errorText(transition.error) : ""}
+          onCancel={() => setDialog(null)}
+          onSubmit={(comment, assigneeId) => transition.mutate({ to: dialog.to, comment, assigneeId })}
+        />
+      )}
+
+      {conflict && (
+        <ConflictDialog
+          conflict={conflict}
+          ctx={ctx}
+          pending={save.isPending}
+          error={save.isError && !versionConflict(save.error) ? errorText(save.error) : ""}
+          onRetry={(patch) => save.mutate({ base: conflict.current, patch, shownBase: conflict.base })}
+          onDiscard={() => setConflict(null)}
+        />
+      )}
+    </section>
+  );
+}
