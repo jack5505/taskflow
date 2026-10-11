@@ -157,15 +157,27 @@ func openDB(ctx context.Context, cfg *config.Config) (*gorm.DB, error) {
 	return db.Open(openCtx, cfg.DatabaseURL)
 }
 
-// runWorker: релей outbox и сервер asynq (ТЗ §9.4, §10.1). Миграции применяет api.
+// runWorker: релей outbox и сервер asynq (ТЗ §9.4, §10.1). Миграции применяет api, поэтому воркер
+// сначала ждёт, пока схема догонит бинарник (issue #137): иначе при выкатке с новой миграцией
+// первый проход фоновых задач падал бы на ещё не созданных таблицах. Предел ожидания больше,
+// чем deploy/deploy.sh ждёт /health; по таймауту воркер выходит с ошибкой и перезапускается.
 func runWorker(ctx context.Context, cfg *config.Config) error {
 	g, err := openDB(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = db.Close(g) }()
+
+	waitCtx, cancel := context.WithTimeout(ctx, migrationsWait)
+	defer cancel()
+	if err := db.WaitForMigrations(waitCtx, g, migrations.FS, 2*time.Second); err != nil {
+		return err
+	}
 	return worker.Run(ctx, cfg, g)
 }
+
+// migrationsWait — сколько воркер ждёт миграций api при старте.
+const migrationsWait = 5 * time.Minute
 
 // startMonitor — оповещения администраторам §10.3 (база, Redis, воркер, диск) в личный чат бота;
 // без бота — только записи уровня ERROR в логе.

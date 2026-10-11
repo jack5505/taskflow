@@ -14,6 +14,7 @@ import (
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -113,6 +114,99 @@ func Version(ctx context.Context, databaseURL string, src fs.FS) (version uint, 
 		return 0, false, err
 	}
 	return v, true, nil
+}
+
+// LatestVersion возвращает номер самой свежей миграции в src — версию схемы, которую ждёт бинарник.
+func LatestVersion(src fs.FS) (uint, error) {
+	d, err := iofs.New(src, ".")
+	if err != nil {
+		return 0, fmt.Errorf("migrations source: %w", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	v, err := d.First()
+	if err != nil {
+		return 0, fmt.Errorf("migrations source: %w", err)
+	}
+	for {
+		next, err := d.Next(v)
+		if errors.Is(err, fs.ErrNotExist) {
+			return v, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("migrations source: %w", err)
+		}
+		v = next
+	}
+}
+
+// WaitForMigrations ждёт, пока версия схемы в базе станет не ниже последней миграции из src
+// и не будет «грязной» (issue #137). Миграции применяет api при старте (ТЗ §10.2); воркер,
+// запущенный раньше, иначе ходил бы в таблицы, которых ещё нет. Схема новее бинарника — норма:
+// миграции вперёд-совместимые (CONTRIBUTING §8). Ошибки чтения версии не прерывают ожидание —
+// база может перезапускаться; предел задаёт ctx.
+func WaitForMigrations(ctx context.Context, g *gorm.DB, src fs.FS, poll time.Duration) error {
+	want, err := LatestVersion(src)
+	if err != nil {
+		return err
+	}
+	var (
+		cur     uint
+		dirty   bool
+		lastErr error
+		logged  bool
+	)
+wait:
+	for {
+		v, d, err := schemaVersion(ctx, g)
+		if err != nil && ctx.Err() != nil {
+			// Запрос прерван таймаутом ожидания — в ошибке остаётся последнее прочитанное состояние.
+			break
+		}
+		cur, dirty, lastErr = v, d, err
+		if lastErr == nil && cur >= want && !dirty {
+			if logged {
+				slog.Info("db: migrations ready", "version", cur)
+			}
+			return nil
+		}
+		if !logged {
+			slog.Info("db: waiting for migrations", "version", cur, "want", want, "dirty", dirty, "err", lastErr)
+			logged = true
+		}
+		select {
+		case <-ctx.Done():
+			break wait
+		case <-time.After(poll):
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("wait for migrations %d: %w", want, lastErr)
+	}
+	return fmt.Errorf("wait for migrations: schema version %d (dirty=%t), want %d: %w", cur, dirty, want, ctx.Err())
+}
+
+// schemaVersion — текущая версия схемы и флаг dirty; пока таблицы версий нет — 0 без ошибки.
+// Читает schema_migrations напрямую, а не через golang-migrate: тот при открытии берёт
+// advisory-блокировку без учёта ctx и ждал бы, пока api закончит миграции.
+func schemaVersion(ctx context.Context, g *gorm.DB) (uint, bool, error) {
+	sqlDB, err := g.DB()
+	if err != nil {
+		return 0, false, err
+	}
+	var (
+		v     int64
+		dirty bool
+	)
+	err = sqlDB.QueryRowContext(ctx, `SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&v, &dirty)
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.Is(err, sql.ErrNoRows), errors.As(err, &pgErr) && pgErr.Code == "42P01":
+		return 0, false, nil
+	case err != nil:
+		return 0, false, fmt.Errorf("schema version: %w", err)
+	}
+	return uint(v), dirty, nil
 }
 
 // openPool открывает *sql.DB через pgx с таймаутом подключения и проверяет его в пределах ctx.
