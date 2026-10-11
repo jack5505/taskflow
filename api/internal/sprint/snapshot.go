@@ -27,13 +27,21 @@ const snapshotStats = `SELECT count(*) FILTER (WHERE t.status IN ('todo', 'in_pr
 // снимок за дату один (ключ sprint_id + date), повторный вызов в тот же день ничего не пишет.
 // Дни до start_date не снимаются. Возвращает число новых снимков.
 func Snapshot(ctx context.Context, db *gorm.DB, now time.Time) (int64, error) {
-	res := db.WithContext(ctx).Exec(`INSERT INTO sprint_daily_snapshots (sprint_id, date, open_tasks, open_estimate_minutes, done_tasks)
+	return snapshotYesterday(db.WithContext(ctx), now, nil)
+}
+
+// snapshotYesterday — снимок за вчера по поясу проекта для активных спринтов (only — только этот).
+// Спринты, у которых снимок за вчера уже есть, отсеиваются до подсчёта задач: воркер ходит раз
+// в минуту, и почти всегда делать ему нечего.
+func snapshotYesterday(db *gorm.DB, now time.Time, only *uuid.UUID) (int64, error) {
+	res := db.Exec(`INSERT INTO sprint_daily_snapshots (sprint_id, date, open_tasks, open_estimate_minutes, done_tasks)
 		SELECT s.id, d.day, c.open_tasks, c.open_estimate_minutes, c.done_tasks
 		FROM sprints s JOIN projects p ON p.id = s.project_id AND p.deleted_at IS NULL
 		CROSS JOIN LATERAL (SELECT (?::timestamptz AT TIME ZONE p.timezone)::date - 1 AS day) d
 		CROSS JOIN LATERAL (`+snapshotStats+`) c
-		WHERE s.state = 'active' AND d.day >= s.start_date
-		ON CONFLICT (sprint_id, date) DO NOTHING`, now)
+		WHERE s.state = 'active' AND d.day >= s.start_date AND (CAST(? AS uuid) IS NULL OR s.id = ?)
+			AND NOT EXISTS (SELECT 1 FROM sprint_daily_snapshots x WHERE x.sprint_id = s.id AND x.date = d.day)
+		ON CONFLICT (sprint_id, date) DO NOTHING`, now, only, only)
 	if res.Error != nil {
 		return 0, fmt.Errorf("sprint: snapshot: %w", res.Error)
 	}
@@ -42,7 +50,11 @@ func Snapshot(ctx context.Context, db *gorm.DB, now time.Time) (int64, error) {
 
 // snapshotOnClose — снимок в момент закрытия (§3.8) на сегодняшнюю дату по поясу проекта, в
 // транзакции закрытия и до переноса незакрытых задач. Заменяет снимок того же дня, если он был.
+// Если спринт закрывают сразу после полуночи, раньше прохода воркера, снимок за вчера делается здесь же.
 func snapshotOnClose(tx *gorm.DB, sprintID uuid.UUID, now time.Time) error {
+	if _, err := snapshotYesterday(tx, now, &sprintID); err != nil {
+		return err
+	}
 	if err := tx.Exec(`INSERT INTO sprint_daily_snapshots (sprint_id, date, open_tasks, open_estimate_minutes, done_tasks)
 		SELECT s.id, (?::timestamptz AT TIME ZONE p.timezone)::date, c.open_tasks, c.open_estimate_minutes, c.done_tasks
 		FROM sprints s JOIN projects p ON p.id = s.project_id

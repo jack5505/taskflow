@@ -97,7 +97,7 @@ func (s *Service) Report(ctx context.Context, u *user.User, id uuid.UUID) (*Repo
 
 	var changes []Change
 	if err := db.Raw(`SELECT l.task_id, t.key, t.title, l.user_id AS "by", l.created_at AS "at", l.action
-		FROM sprint_log l JOIN tasks t ON t.id = l.task_id
+		FROM sprint_log l JOIN tasks t ON t.id = l.task_id AND t.deleted_at IS NULL
 		WHERE l.sprint_id = ? ORDER BY l.created_at, l.id`, id).Scan(&changes).Error; err != nil {
 		return nil, fmt.Errorf("sprint: report log: %w", err)
 	}
@@ -119,34 +119,26 @@ func (s *Service) Report(ctx context.Context, u *user.User, id uuid.UUID) (*Repo
 }
 
 // spent — списанное время по задачам спринта (§5.6) с разбивкой по тем, кто списывал. Задачи
-// спринта — те, что в нём сейчас, плюс бывшие в нём на старте или добавленные после, если их
-// не убрали после старта (так в отчёт попадают незакрытые, перенесённые при закрытии). У
-// завершённого спринта записи берутся по дату закрытия включительно (по поясу проекта): работа
-// над перенесёнными задачами в следующем спринте сюда не относится. Удалённые задачи не считаются.
+// спринта — все, что были в нём после старта: сейчас, на старте, добавленные или убранные (так в
+// отчёт попадают и незакрытые, перенесённые при закрытии). Записи — за дни спринта: от start_date
+// до даты закрытия включительно по поясу проекта (у активного — без верхней границы). Так работа
+// над задачей в бэклоге и в соседнем спринте сюда не относится. Удалённые задачи не считаются.
 func (s *Service) spent(ctx context.Context, r *Report) error {
-	var until *string
-	if r.Sprint.ClosedAt != nil {
-		if err := s.db.WithContext(ctx).Raw(`SELECT ((?::timestamptz AT TIME ZONE timezone)::date)::text FROM projects WHERE id = ?`,
-			*r.Sprint.ClosedAt, r.Sprint.ProjectID).Scan(&until).Error; err != nil {
-			return fmt.Errorf("sprint: report close date: %w", err)
-		}
-	}
-	if err := s.db.WithContext(ctx).Raw(`WITH last AS (
-			SELECT DISTINCT ON (task_id) task_id, action FROM sprint_log WHERE sprint_id = @s
-			ORDER BY task_id, created_at DESC, id DESC),
+	if err := s.db.WithContext(ctx).Raw(`WITH sp AS (
+			SELECT s.start_date, (s.closed_at AT TIME ZONE p.timezone)::date AS until
+			FROM sprints s JOIN projects p ON p.id = s.project_id WHERE s.id = @s),
 		st AS (
 			SELECT id AS task_id FROM tasks WHERE sprint_id = @s
-			UNION
-			SELECT x.task_id FROM (SELECT task_id FROM sprint_start_scope WHERE sprint_id = @s
-				UNION SELECT task_id FROM sprint_log WHERE sprint_id = @s) x
-			LEFT JOIN last USING (task_id) WHERE last.action IS DISTINCT FROM 'removed')
+			UNION SELECT task_id FROM sprint_start_scope WHERE sprint_id = @s
+			UNION SELECT task_id FROM sprint_log WHERE sprint_id = @s)
 		SELECT w.user_id, u.display_name, SUM(w.minutes) AS minutes
 		FROM worklogs w JOIN st ON st.task_id = w.task_id
 		JOIN tasks t ON t.id = w.task_id AND t.deleted_at IS NULL
 		JOIN users u ON u.id = w.user_id
-		WHERE CAST(@until AS date) IS NULL OR w.work_date <= CAST(@until AS date)
+		CROSS JOIN sp
+		WHERE w.work_date >= sp.start_date AND (sp.until IS NULL OR w.work_date <= sp.until)
 		GROUP BY w.user_id, u.display_name ORDER BY minutes DESC, u.display_name, w.user_id`,
-		map[string]any{"s": r.Sprint.ID, "until": until}).Scan(&r.Spent).Error; err != nil {
+		map[string]any{"s": r.Sprint.ID}).Scan(&r.Spent).Error; err != nil {
 		return fmt.Errorf("sprint: report spent: %w", err)
 	}
 	for i := range r.Spent {

@@ -104,9 +104,10 @@ func TestSprintReport(t *testing.T) {
 
 	f.worklog(t, done, f.managerU.ID, 90, "2026-10-13")
 	f.worklog(t, open, memberU.ID, 30, "2026-10-14")
-	f.worklog(t, open, memberU.ID, 15, "2026-10-16")  // день закрытия по Ташкенту — считается
-	f.worklog(t, open, memberU.ID, 600, "2026-10-17") // после закрытия, задача уже в бэклоге
-	f.worklog(t, removed, f.managerU.ID, 45, "2026-10-14")
+	f.worklog(t, open, memberU.ID, 15, "2026-10-16")       // день закрытия по Ташкенту — считается
+	f.worklog(t, open, memberU.ID, 600, "2026-10-17")      // после закрытия, задача уже в бэклоге
+	f.worklog(t, removed, f.managerU.ID, 45, "2026-10-14") // убрана после старта, но работа — в дни спринта
+	f.worklog(t, open, memberU.ID, 100, "2026-10-12")      // до старта спринта — не считается
 
 	rec, _ = f.do(t, "GET", "/api/v1/sprints/"+s+"/report", f.outsider, "")
 	require.Equal(t, http.StatusNotFound, rec.Code, "не участник — 404")
@@ -131,12 +132,12 @@ func TestSprintReport(t *testing.T) {
 	require.Equal(t, removed, removedList[0].(map[string]any)["key"])
 	require.Equal(t, f.managerU.ID.String(), removedList[0].(map[string]any)["by"])
 
-	require.EqualValues(t, 135, b["spent_minutes"], "убранная задача и работа после закрытия не считаются")
+	require.EqualValues(t, 180, b["spent_minutes"], "работа до старта и после закрытия не считается")
 	spent := b["spent"].([]any)
 	require.Len(t, spent, 2)
 	require.Equal(t, f.managerU.ID.String(), spent[0].(map[string]any)["user_id"])
-	require.EqualValues(t, 90, spent[0].(map[string]any)["minutes"])
-	require.EqualValues(t, 1.5, spent[0].(map[string]any)["hours"])
+	require.EqualValues(t, 135, spent[0].(map[string]any)["minutes"])
+	require.EqualValues(t, 2.25, spent[0].(map[string]any)["hours"])
 	require.Equal(t, memberU.ID.String(), spent[1].(map[string]any)["user_id"])
 	require.EqualValues(t, 45, spent[1].(map[string]any)["minutes"])
 
@@ -150,9 +151,25 @@ func TestSprintReport(t *testing.T) {
 	require.EqualValues(t, 3.5, point(0)["remaining_hours"], "60 + 30 + 120 минут, убранной нет")
 	require.EqualValues(t, 2.5, point(1)["remaining_hours"])
 	require.EqualValues(t, 1, point(1)["done_tasks"])
-	require.Nil(t, point(2)["remaining_hours"], "за 15-е снимка нет")
+	require.EqualValues(t, 2.5, point(2)["remaining_hours"], "за 15-е воркер не успел — снимок сделан при закрытии")
 	require.EqualValues(t, 2.5, point(3)["remaining_hours"], "снимок закрытия")
 	require.Nil(t, point(4)["remaining_hours"])
+}
+
+// Ревью #109: закрытие сразу после полуночи по поясу проекта, раньше прохода воркера, — снимок
+// за вчера делается в транзакции закрытия, точка последнего дня не пропадает.
+func TestCloseJustAfterMidnightSnapshotsYesterday(t *testing.T) {
+	f := newFixture(t)
+	require.NoError(t, f.db.Model(&project.Project{}).Where("id = ?", f.p.ID).Update("timezone", "Asia/Tashkent").Error)
+	s := f.sprint(t, `{`+dates14+`}`)
+	f.task(t, s, "60")
+	rec, _ := f.do(t, "POST", "/api/v1/sprints/"+s+"/start", f.manager, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	svc := sprint.NewService(f.db, project.NewService(f.db)).
+		WithClock(func() time.Time { return time.Date(2026, 10, 26, 19, 0, 20, 0, time.UTC) }) // 27.10 00:00:20 в Ташкенте
+	_, _, err := svc.Close(context.Background(), f.managerU, uuid.MustParse(s), nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string][3]int{"2026-10-26": {1, 60, 0}, "2026-10-27": {1, 60, 0}}, f.snapshots(t, s))
 }
 
 // Активный спринт: «сейчас» — задачи спринта в данный момент; без снимков точки пустые.
