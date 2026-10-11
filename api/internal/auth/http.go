@@ -44,6 +44,8 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", h.logout)
 	g.POST("/logout-all", h.RequireAuth(), h.logoutAll)
+	g.POST("/password-reset", h.passwordReset)
+	g.POST("/password-set", h.passwordSet)
 }
 
 type loginRequest struct {
@@ -152,6 +154,59 @@ func (h *Handlers) logoutAll(c *gin.Context) {
 		return
 	}
 	h.clearCookie(c)
+	c.Status(http.StatusNoContent)
+}
+
+type passwordResetRequest struct {
+	Email string `json:"email" binding:"required,email,max=254"`
+}
+
+type passwordSetRequest struct {
+	Token    string `json:"token" binding:"required,max=200"`
+	Password string `json:"password" binding:"required,min=10,max=72"`
+}
+
+// passwordReset — письмо со ссылкой восстановления пароля (ТЗ §7.1, §9.1).
+//
+// @Summary      Восстановить пароль
+// @Description  Отправляет на email ссылку для установки нового пароля (действует 24 часа, одноразовая). Ответ всегда 204, даже если такого пользователя нет; повторный запрос на тот же email в течение минуты письма не шлёт.
+// @Tags         auth
+// @Accept       json
+// @Param        body  body  passwordResetRequest  true  "email"
+// @Success      204
+// @Failure      400  {object}  apierr.Response  "VALIDATION_FAILED"
+// @Router       /api/v1/auth/password-reset [post]
+func (h *Handlers) passwordReset(c *gin.Context) {
+	var req passwordResetRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	if err := h.svc.RequestPasswordReset(c.Request.Context(), req.Email); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// passwordSet — установка пароля по ссылке из письма (ТЗ §7.1, §9.1).
+//
+// @Summary      Задать пароль по ссылке
+// @Description  Токен из ссылки одноразовый: после успешной установки повторно не принимается. Все сессии пользователя отзываются.
+// @Tags         auth
+// @Accept       json
+// @Param        body  body  passwordSetRequest  true  "токен из ссылки и новый пароль (не короче 10 символов)"
+// @Success      204
+// @Failure      400  {object}  apierr.Response  "VALIDATION_FAILED: пароль короче 10 символов; details.fields[token] — ссылка недействительна, использована или истекла"
+// @Router       /api/v1/auth/password-set [post]
+func (h *Handlers) passwordSet(c *gin.Context) {
+	var req passwordSetRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	if err := h.svc.SetPassword(c.Request.Context(), req.Token, req.Password); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
 	c.Status(http.StatusNoContent)
 }
 

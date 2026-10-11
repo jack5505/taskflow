@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/config"
+	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -55,6 +57,9 @@ type Service struct {
 	secret     []byte
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+	baseURL    string
+	mailer     mail.Sender
+	jobs       *asynq.Client
 	now        func() time.Time
 }
 
@@ -65,8 +70,21 @@ func NewService(cfg *config.Config, db *gorm.DB, rdb *redis.Client) *Service {
 		secret:     []byte(cfg.JWTSecret),
 		accessTTL:  cfg.JWTAccessTTL,
 		refreshTTL: cfg.JWTRefreshTTL,
+		baseURL:    cfg.BaseURL,
 		now:        time.Now,
 	}
+}
+
+// WithMailer задаёт, через что уходят письма со ссылками (очередь mail.Queue).
+func (s *Service) WithMailer(m mail.Sender) *Service {
+	s.mailer = m
+	return s
+}
+
+// WithQueue подключает очередь заданий воркера (восстановление пароля в API).
+func (s *Service) WithQueue(c *asynq.Client) *Service {
+	s.jobs = c
+	return s
 }
 
 // WithClock подменяет часы (тесты истечения токенов и блокировки).
@@ -201,9 +219,26 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (*user.U
 }
 
 // CleanupExpired удаляет просроченные и отозванные токены старше refreshTTL (воркер, раз в сутки).
+// Заодно удаляет истёкшие ссылки установки пароля. Всё одной транзакцией.
 func (s *Service) CleanupExpired(ctx context.Context) (int64, error) {
-	res := s.db.WithContext(ctx).Where("expires_at < ? OR revoked_at < ?", s.now(), s.now().Add(-s.refreshTTL)).Delete(&RefreshToken{})
-	return res.RowsAffected, res.Error
+	now := s.now()
+	var n int64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("expires_at < ? OR revoked_at < ?", now, now.Add(-s.refreshTTL)).Delete(&RefreshToken{})
+		if res.Error != nil {
+			return res.Error
+		}
+		links := tx.Where("expires_at < ?", now).Delete(&PasswordToken{})
+		if links.Error != nil {
+			return links.Error
+		}
+		n = res.RowsAffected + links.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (s *Service) issue(ctx context.Context, u *user.User, userAgent string) (*Session, error) {

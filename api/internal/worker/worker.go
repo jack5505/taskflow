@@ -14,6 +14,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/outbox"
 	"github.com/jack5505/taskflow/api/internal/queue"
 )
@@ -41,12 +42,20 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
 
+	smtp, err := mail.NewSMTP(cfg)
+	if err != nil {
+		return fmt.Errorf("worker: %w", err)
+	}
+	authSvc := auth.NewService(cfg, g, rdb).WithMailer(mail.NewQueue(client))
+	mux := d.Mux()
+	mux.Handle(mail.TaskType, mail.Handler(smtp))
+	mux.Handle(auth.TaskPasswordReset, auth.PasswordResetHandler(authSvc))
+
 	srv := queue.NewServer(cfg.RedisAddr, 10)
-	if err := srv.Start(d.Mux()); err != nil {
+	if err := srv.Start(mux); err != nil {
 		return err
 	}
 
-	authSvc := auth.NewService(cfg, g, rdb)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

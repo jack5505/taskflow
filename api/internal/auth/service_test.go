@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
+	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/queue"
 	"github.com/jack5505/taskflow/api/internal/testutil"
 	"github.com/jack5505/taskflow/api/internal/user"
@@ -22,6 +24,7 @@ const password = "correct horse battery"
 
 type fixture struct {
 	svc  *auth.Service
+	mail *captureMailer
 	db   *gorm.DB
 	u    *user.User
 	now  time.Time
@@ -36,8 +39,11 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	f := &fixture{db: g, now: time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)}
-	cfg := &config.Config{JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: 30 * 24 * time.Hour}
-	f.svc = auth.NewService(cfg, g, rdb).WithClock(func() time.Time { return f.now })
+	cfg := &config.Config{BaseURL: "https://tasks.example/", JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: 30 * 24 * time.Hour}
+	f.mail = &captureMailer{}
+	jobs := queue.NewClient(testutil.SharedRedisAddr(t))
+	t.Cleanup(func() { _ = jobs.Close() })
+	f.svc = auth.NewService(cfg, g, rdb).WithClock(func() time.Time { return f.now }).WithMailer(f.mail).WithQueue(jobs)
 	f.tick = func(d time.Duration) { f.now = f.now.Add(d) }
 
 	hash, err := auth.HashPassword(password)
@@ -237,4 +243,23 @@ func ExampleHashPassword() {
 	_, err := auth.HashPassword("short")
 	fmt.Println(err)
 	// Output: пароль короче 10 символов
+}
+
+// captureMailer запоминает письма вместо очереди: очередь проверяется в пакете mail.
+type captureMailer struct {
+	mu   sync.Mutex
+	sent []mail.Message
+}
+
+func (c *captureMailer) Send(_ context.Context, m mail.Message) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sent = append(c.sent, m)
+	return nil
+}
+
+func (c *captureMailer) messages() []mail.Message {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]mail.Message(nil), c.sent...)
 }
