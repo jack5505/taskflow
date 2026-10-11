@@ -169,8 +169,8 @@ func (rt *Router) route(upd *models.Update, out *Queue) (*Request, HandlerFunc) 
 			return nil, nil
 		}
 		h := rt.commands[name]
-		if h == nil {
-			h = rt.commands[UnknownCommand]
+		if h == nil && msg.Chat.Type == models.ChatTypePrivate {
+			h = rt.commands[UnknownCommand] // в группе неизвестные команды игнорируются молча (§8.5)
 		}
 		if h == nil {
 			return nil, nil
