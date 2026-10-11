@@ -20,6 +20,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -145,11 +146,12 @@ func (s *Service) MarkRead(ctx context.Context, u *user.User, ids []uuid.UUID) (
 // Handlers — /api/v1/me.
 type Handlers struct {
 	svc         *Service
+	accounts    *telegram.Accounts
 	requireAuth gin.HandlerFunc
 }
 
-func NewHandlers(svc *Service, requireAuth gin.HandlerFunc) *Handlers {
-	return &Handlers{svc: svc, requireAuth: requireAuth}
+func NewHandlers(svc *Service, accounts *telegram.Accounts, requireAuth gin.HandlerFunc) *Handlers {
+	return &Handlers{svc: svc, accounts: accounts, requireAuth: requireAuth}
 }
 
 func (h *Handlers) Register(api *gin.RouterGroup) {
@@ -158,6 +160,44 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.PATCH("", h.patch)
 	g.GET("/notifications", h.notifications)
 	g.POST("/notifications/read", h.read)
+	g.POST("/telegram-link-code", h.linkCode)
+	g.DELETE("/telegram", h.unlink)
+}
+
+// linkCode — код привязки Telegram.
+//
+// @Summary      Код привязки Telegram
+// @Description  Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный. url пустой, если имя бота не настроено.
+// @Tags         me
+// @Produce      json
+// @Security     BearerAuth
+// @Success      201  {object}  telegram.LinkCode
+// @Failure      401  {object}  apierr.Response
+// @Router       /api/v1/me/telegram-link-code [post]
+func (h *Handlers) linkCode(c *gin.Context) {
+	code, err := h.accounts.IssueLinkCode(c.Request.Context(), auth.CurrentUser(c).ID)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, code)
+}
+
+// unlink — отвязать Telegram.
+//
+// @Summary      Отвязать Telegram
+// @Description  Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start. Без привязки — тоже 204.
+// @Tags         me
+// @Security     BearerAuth
+// @Success      204
+// @Failure      401  {object}  apierr.Response
+// @Router       /api/v1/me/telegram [delete]
+func (h *Handlers) unlink(c *gin.Context) {
+	if err := h.accounts.Unlink(c.Request.Context(), auth.CurrentUser(c).ID); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // get — текущий пользователь.

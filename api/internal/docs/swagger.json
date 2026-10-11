@@ -724,6 +724,62 @@
                 }
             }
         },
+        "/api/v1/me/telegram": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю только на /start. Без привязки — тоже 204.",
+                "tags": [
+                    "me"
+                ],
+                "summary": "Отвязать Telegram",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/me/telegram-link-code": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Одноразовый код из 8 символов (латиница и цифры) на 10 минут и ссылка https://t.me/\u003cбот\u003e?start=\u003cкод\u003e (§8.1). Новый код гасит прежний неиспользованный. url пустой, если имя бота не настроено.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Код привязки Telegram",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/telegram.LinkCode"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/me/timer/stop": {
             "post": {
                 "security": [
@@ -5313,6 +5369,23 @@
                     "format": "date",
                     "maxLength": 40,
                     "example": "2026-10-11"
+                }
+            }
+        },
+        "telegram.LinkCode": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "K7M2X9QD"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "description": "URL — https://t.me/\u003cбот\u003e?start=\u003cкод\u003e; пусто, если имя бота не задано (TELEGRAM_BOT_USERNAME).",
+                    "type": "string",
+                    "example": "https://t.me/taskflow_bot?start=K7M2X9QD"
                 }
             }
         },

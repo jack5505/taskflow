@@ -15,3 +15,6 @@ func (d *Deliverer) Limiter() *Limiter { return d.limit }
 
 // ParseCommand — разбор команды для табличного теста.
 func (rt *Router) ParseCommand(text string) (string, string, bool) { return rt.parseCommand(text) }
+
+// SetClock подменяет часы привязки (истёкший код).
+func (a *Accounts) SetClock(now func() time.Time) { a.now = now }

@@ -1213,6 +1213,19 @@ definitions:
         maxLength: 40
         type: string
     type: object
+  telegram.LinkCode:
+    properties:
+      code:
+        example: K7M2X9QD
+        type: string
+      expires_at:
+        type: string
+      url:
+        description: URL — https://t.me/<бот>?start=<код>; пусто, если имя бота не
+          задано (TELEGRAM_BOT_USERNAME).
+        example: https://t.me/taskflow_bot?start=K7M2X9QD
+        type: string
+    type: object
   user.User:
     properties:
       created_at:
@@ -1753,6 +1766,43 @@ paths:
       summary: Мои задачи
       tags:
       - tasks
+  /api/v1/me/telegram:
+    delete:
+      description: Снимает привязку Telegram (§8.1); после этого бот отвечает пользователю
+        только на /start. Без привязки — тоже 204.
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отвязать Telegram
+      tags:
+      - me
+  /api/v1/me/telegram-link-code:
+    post:
+      description: Одноразовый код из 8 символов (латиница и цифры) на 10 минут и
+        ссылка https://t.me/<бот>?start=<код> (§8.1). Новый код гасит прежний неиспользованный.
+        url пустой, если имя бота не настроено.
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/telegram.LinkCode'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Код привязки Telegram
+      tags:
+      - me
   /api/v1/me/timer/stop:
     post:
       description: |-
