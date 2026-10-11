@@ -47,7 +47,8 @@ a:hover {
   text-decoration: underline;
 }
 
-input {
+input,
+textarea {
   font: inherit;
   padding: 7px 10px;
   border: 1px solid var(--border);
@@ -56,7 +57,8 @@ input {
   color: inherit;
 }
 
-input:focus {
+input:focus,
+textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
@@ -172,4 +174,159 @@ button.primary:hover:not(:disabled) {
 
 .content h2 {
   margin-bottom: 12px;
+}
+
+/* Список проектов и «Мои задачи» (ТЗ §7.2) */
+.block {
+  margin-bottom: 32px;
+}
+
+.block-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.content .block-head h2 {
+  margin-bottom: 0;
+}
+
+.block-head .primary {
+  margin-left: auto;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.table th,
+.table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th {
+  font-weight: 600;
+  background: var(--bg);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.overdue {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.card.clickable {
+  cursor: pointer;
+}
+
+.card.clickable:hover,
+.card.clickable:focus-visible {
+  border-color: var(--accent);
+}
+
+.card h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+}
+
+.badge {
+  padding: 0 8px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.card-stats {
+  display: flex;
+  gap: 24px;
+  margin: 0;
+}
+
+.card-stats dt {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.card-stats dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.card button {
+  align-self: flex-start;
+}
+
+.panel {
+  max-width: 520px;
+  margin-bottom: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.form .hint {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.form [role="alert"] {
+  font-weight: 400;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
 }
