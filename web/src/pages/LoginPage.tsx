@@ -30,10 +30,13 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
 
   const login = useMutation({
-    mutationFn: async () => (await api.api.v1AuthLoginCreate({ email: email.trim(), password })).data,
-    onSuccess: (session) => {
-      if (!session.access_token) return;
-      signIn(session.access_token);
+    mutationFn: async () => {
+      const r = await api.api.v1AuthLoginCreate({ email: email.trim(), password });
+      if (!r.data?.access_token) throw new Error("Сервер не вернул токен");
+      return r.data.access_token;
+    },
+    onSuccess: (token) => {
+      signIn(token);
       navigate(state?.from ?? "/", { replace: true });
     },
   });

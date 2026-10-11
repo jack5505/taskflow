@@ -3,6 +3,7 @@ import { createAuthFetch } from "./authFetch";
 
 function setup(opts: { refreshTo?: string | null; token?: string | null } = {}) {
   let token: string | null = opts.token ?? "old";
+  let epoch = 0;
   const calls: { url: string; auth: string | null }[] = [];
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
@@ -19,10 +20,14 @@ function setup(opts: { refreshTo?: string | null; token?: string | null } = {}) 
   const onRefreshed = vi.fn((t: string | null) => {
     token = t;
   });
-  const af = createAuthFetch({ baseFetch, getToken: () => token, refresh, onRefreshed });
+  const af = createAuthFetch({ baseFetch, getToken: () => token, getEpoch: () => epoch, refresh, onRefreshed });
   const call = (url = "/api/v1/me", auth: string | null = `Bearer ${token}`) =>
     af.fetch(url, { headers: auth ? { Authorization: auth } : {} });
-  return { af, call, calls, refresh, onRefreshed, release, setToken: (t: string) => (token = t) };
+  const signOut = () => {
+    epoch++;
+    token = null;
+  };
+  return { af, call, calls, refresh, onRefreshed, release, signOut, setToken: (t: string) => (token = t) };
 }
 
 describe("createAuthFetch", () => {
@@ -56,12 +61,58 @@ describe("createAuthFetch", () => {
     expect(s.calls).toHaveLength(1);
   });
 
-  it("исключение в refresh считается неудачей", async () => {
+  it("временный сбой refresh не завершает сессию", async () => {
     const s = setup();
     s.refresh.mockRejectedValueOnce(new Error("сеть"));
     const r = await s.call();
     expect(r.status).toBe(401);
-    expect(s.onRefreshed).toHaveBeenCalledWith(null);
+    expect(s.onRefreshed).not.toHaveBeenCalled();
+    s.release();
+    await expect(s.af.refreshOnce()).resolves.toBe("new"); // следующая попытка — новый refresh
+  });
+
+  it("refresh, завершившийся после выхода, сессию не возвращает", async () => {
+    const s = setup();
+    const pending = s.call();
+    await vi.waitFor(() => expect(s.refresh).toHaveBeenCalled());
+    s.signOut();
+    s.release();
+    expect((await pending).status).toBe(401);
+    expect(s.onRefreshed).not.toHaveBeenCalled();
+  });
+
+  it("ответ прежней сессии не повторяется от новой", async () => {
+    const s = setup();
+    let respond!: (r: Response) => void;
+    const baseFetch = vi.fn(() => new Promise<Response>((r) => (respond = r)));
+    let epoch = 0;
+    const af = createAuthFetch({
+      baseFetch,
+      getToken: () => "other",
+      getEpoch: () => epoch,
+      refresh: s.refresh,
+      onRefreshed: s.onRefreshed,
+    });
+    const pending = af.fetch("/api/v1/me", { headers: { Authorization: "Bearer old" } });
+    epoch++; // выход и вход другим пользователем, пока запрос летел
+    respond(new Response(null, { status: 401 }));
+    expect((await pending).status).toBe(401);
+    expect(baseFetch).toHaveBeenCalledTimes(1);
+    expect(s.refresh).not.toHaveBeenCalled();
+  });
+
+  it("idle ждёт идущий refresh", async () => {
+    const s = setup();
+    const pending = s.call();
+    await vi.waitFor(() => expect(s.refresh).toHaveBeenCalled());
+    let done = false;
+    const idle = s.af.idle().then(() => (done = true));
+    await Promise.resolve();
+    expect(done).toBe(false);
+    s.release();
+    await idle;
+    await pending;
+    expect(done).toBe(true);
   });
 
   it("запрос без Authorization (вход) не обновляется", async () => {

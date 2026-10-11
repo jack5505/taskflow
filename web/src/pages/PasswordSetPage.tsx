@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { api } from "../api";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
+import { signOut } from "../auth/session";
 
 const MIN_PASSWORD = 10; // ТЗ §7.1
 
@@ -17,8 +18,11 @@ export function PasswordSetPage() {
 
   const set = useMutation({
     mutationFn: () => api.api.v1AuthPasswordSetCreate({ token, password }),
-    onSuccess: () =>
-      navigate("/login", { replace: true, state: { notice: "Пароль задан. Войдите с новым паролем." } }),
+    onSuccess: () => {
+      // Сервер отозвал все сессии пользователя; открытую в этой вкладке тоже закрываем.
+      signOut("logout");
+      navigate("/login", { replace: true, state: { notice: "Пароль задан. Войдите с новым паролем." } });
+    },
   });
 
   const fields = fieldErrors(parseApiError(set.error));
