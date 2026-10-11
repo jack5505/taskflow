@@ -27,6 +27,8 @@ func NewHandlers(svc *Service, projects *project.Service, requireAuth gin.Handle
 
 func (h *Handlers) Register(api *gin.RouterGroup) {
 	api.POST("/projects/:key/tasks", h.requireAuth, h.create)
+	api.GET("/projects/:key/tasks", h.requireAuth, h.list)
+	api.GET("/me/tasks", h.requireAuth, h.mine)
 	t := api.Group("/tasks", h.requireAuth)
 	t.GET("/:task_key", h.get)
 	t.PATCH("/:task_key", h.update)
@@ -289,4 +291,109 @@ func (h *Handlers) update(c *gin.Context) {
 		return
 	}
 	respond(c, http.StatusOK, t)
+}
+
+// multi — значения параметра, повторённого и/или через запятую.
+func multi(c *gin.Context, name string) []string {
+	var out []string
+	for _, v := range c.QueryArray(name) {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+func idFilter(c *gin.Context, name string) (IDFilter, error) {
+	var f IDFilter
+	for _, v := range multi(c, name) {
+		if v == "null" {
+			f.Null = true
+			continue
+		}
+		id, err := uuid.Parse(v)
+		if err != nil {
+			return f, fieldError(name, "UUID или null")
+		}
+		f.IDs = append(f.IDs, id)
+	}
+	return f, nil
+}
+
+// list — задачи проекта.
+//
+// @Summary      Задачи проекта
+// @Description  Фильтры (повторяемые или через запятую): status, type, priority; assignee_id и sprint_id — UUID или null (без исполнителя / бэклог); label; q — поиск по ключу (с начала) и названию. include_deleted — только администратор. Порядок — ручной порядок секции (position), затем номер; limit до 200 (по умолчанию 50), следующая страница — cursor из next_cursor. overdue — срок прошёл по поясу проекта, а задача не закрыта.
+// @Tags         tasks
+// @Produce      json
+// @Security     BearerAuth
+// @Param        key              path      string    true   "ключ проекта"
+// @Param        status           query     []string  false  "статусы"  collectionFormat(multi)
+// @Param        type             query     []string  false  "типы"  collectionFormat(multi)
+// @Param        priority         query     []string  false  "приоритеты"  collectionFormat(multi)
+// @Param        assignee_id      query     []string  false  "исполнители; null — без исполнителя"  collectionFormat(multi)
+// @Param        sprint_id        query     []string  false  "спринты; null — бэклог"  collectionFormat(multi)
+// @Param        label            query     string    false  "метка"
+// @Param        q                query     string    false  "поиск по ключу и названию"
+// @Param        include_deleted  query     bool      false  "с удалёнными (администратор)"
+// @Param        limit            query     int       false  "до 200"
+// @Param        cursor           query     string    false  "курсор следующей страницы"
+// @Success      200              {object}  Page
+// @Failure      400              {object}  apierr.Response  "VALIDATION_FAILED"
+// @Failure      401              {object}  apierr.Response
+// @Failure      403              {object}  apierr.Response  "FORBIDDEN: include_deleted не администратору"
+// @Failure      404              {object}  apierr.Response  "NOT_FOUND"
+// @Router       /api/v1/projects/{key}/tasks [get]
+func (h *Handlers) list(c *gin.Context) {
+	a, err := h.projects.Access(c.Request.Context(), auth.CurrentUser(c), c.Param("key"))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	f := ListFilter{Status: multi(c, "status"), Type: multi(c, "type"), Priority: multi(c, "priority"),
+		Label: c.Query("label"), Q: c.Query("q"), Cursor: c.Query("cursor")}
+	if f.Assignee, err = idFilter(c, "assignee_id"); err == nil {
+		f.Sprint, err = idFilter(c, "sprint_id")
+	}
+	if err == nil && c.Query("include_deleted") != "" {
+		if f.IncludeDeleted, err = strconv.ParseBool(c.Query("include_deleted")); err != nil {
+			err = fieldError("include_deleted", "true или false")
+		}
+	}
+	if err == nil && c.Query("limit") != "" {
+		if f.Limit, err = strconv.Atoi(c.Query("limit")); err != nil || f.Limit == 0 {
+			err = fieldError("limit", "от 1 до 200")
+		}
+	}
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	page, err := h.svc.List(c.Request.Context(), a, f)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, page)
+}
+
+// mine — мои открытые задачи по всем проектам.
+//
+// @Summary      Мои задачи
+// @Description  Открытые задачи текущего пользователя по всем его проектам (§7.2), по сроку: без срока — в конце, просроченные — сверху.
+// @Tags         tasks
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {array}   MyTask
+// @Failure      401  {object}  apierr.Response
+// @Router       /api/v1/me/tasks [get]
+func (h *Handlers) mine(c *gin.Context) {
+	list, err := h.svc.Mine(c.Request.Context(), auth.CurrentUser(c))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, list)
 }

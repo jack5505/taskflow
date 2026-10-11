@@ -204,6 +204,55 @@ export interface TaskHistoryView {
   user_id?: string;
 }
 
+export interface TaskListItem {
+  assignee_id?: string;
+  completed_at?: string;
+  created_at?: string;
+  deleted_at?: string;
+  description?: string;
+  /** @example "2026-10-31" */
+  due_date?: string;
+  estimate_minutes?: number;
+  id?: string;
+  /** @example "TM-42" */
+  key?: string;
+  labels?: string[];
+  number?: number;
+  overdue?: boolean;
+  position?: number;
+  priority?: "low" | "medium" | "high" | "critical";
+  project_id?: string;
+  reporter_id?: string;
+  spent_minutes?: number;
+  sprint_id?: string;
+  started_at?: string;
+  status?: "todo" | "in_progress" | "review" | "done" | "cancelled";
+  title?: string;
+  type?: "task" | "bug" | "feature";
+  updated_at?: string;
+  version?: number;
+}
+
+export interface TaskMyTask {
+  /** @example "2026-10-31" */
+  due_date?: string;
+  estimate_minutes?: number;
+  key?: string;
+  overdue?: boolean;
+  project_key?: string;
+  project_name?: string;
+  spent_minutes?: number;
+  sprint_id?: string;
+  status?: string;
+  title?: string;
+  updated_at?: string;
+}
+
+export interface TaskPage {
+  items?: TaskListItem[];
+  next_cursor?: string;
+}
+
 export interface TaskTask {
   assignee_id?: string;
   completed_at?: string;
@@ -780,6 +829,24 @@ export class Api<
       }),
 
     /**
+     * @description Открытые задачи текущего пользователя по всем его проектам (§7.2), по сроку: без срока — в конце, просроченные — сверху.
+     *
+     * @tags tasks
+     * @name V1MeTasksList
+     * @summary Мои задачи
+     * @request GET:/api/v1/me/tasks
+     * @secure
+     */
+    v1MeTasksList: (params: RequestParams = {}) =>
+      this.request<TaskMyTask[], ApierrResponse>({
+        path: `/api/v1/me/tasks`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
      * No description
      *
      * @tags system
@@ -1017,6 +1084,50 @@ export class Api<
       this.request<ProjectView, ApierrResponse>({
         path: `/api/v1/projects/${key}/restore`,
         method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Фильтры (повторяемые или через запятую): status, type, priority; assignee_id и sprint_id — UUID или null (без исполнителя / бэклог); label; q — поиск по ключу (с начала) и названию. include_deleted — только администратор. Порядок — ручной порядок секции (position), затем номер; limit до 200 (по умолчанию 50), следующая страница — cursor из next_cursor. overdue — срок прошёл по поясу проекта, а задача не закрыта.
+     *
+     * @tags tasks
+     * @name V1ProjectsTasksList
+     * @summary Задачи проекта
+     * @request GET:/api/v1/projects/{key}/tasks
+     * @secure
+     */
+    v1ProjectsTasksList: (
+      key: string,
+      query?: {
+        /** статусы */
+        status?: string[];
+        /** типы */
+        type?: string[];
+        /** приоритеты */
+        priority?: string[];
+        /** исполнители; null — без исполнителя */
+        assignee_id?: string[];
+        /** спринты; null — бэклог */
+        sprint_id?: string[];
+        /** метка */
+        label?: string;
+        /** поиск по ключу и названию */
+        q?: string;
+        /** с удалёнными (администратор) */
+        include_deleted?: boolean;
+        /** до 200 */
+        limit?: number;
+        /** курсор следующей страницы */
+        cursor?: string;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskPage, ApierrResponse>({
+        path: `/api/v1/projects/${key}/tasks`,
+        method: "GET",
+        query: query,
         secure: true,
         format: "json",
         ...params,

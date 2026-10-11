@@ -110,6 +110,7 @@ func TestRightsTable(t *testing.T) {
 			{"Удалять проекты", "DELETE", proj, ""},
 			{"Восстанавливать проект", "POST", proj + "/restore", ""},
 			{"Архивировать проект", "PATCH", proj, `{"is_archived":true}`},
+			{"Смотреть корзину (удалённые задачи)", "GET", proj + "/tasks?include_deleted=true", ""},
 			{"Заводить пользователей", "POST", "/api/v1/users", `{"email":"x@example.com","display_name":"X"}`},
 			{"Деактивировать пользователей", "PATCH", "/api/v1/users/" + member, `{"is_active":false}`},
 		},
@@ -127,6 +128,7 @@ func TestRightsTable(t *testing.T) {
 			{"Деактивировать пользователей", "PATCH", "/api/v1/users/" + member, `{"is_active":false}`},
 			{"Список пользователей (только админ и менеджер)", "GET", "/api/v1/users", ""},
 			{"Назначать исполнителя (при создании задачи)", "POST", proj + "/tasks", `{"title":"X","assignee_id":"` + member + `"}`},
+			{"Смотреть корзину (удалённые задачи)", "GET", proj + "/tasks?include_deleted=true", ""},
 		},
 	}
 	tokens := map[string]string{"manager": w.manager, "member": w.member}
@@ -151,6 +153,7 @@ func TestRightsTable(t *testing.T) {
 		{"Создание задачи", "POST", proj + "/tasks", `{"title":"X"}`},
 		{"Карточка задачи", "GET", taskPath, ""},
 		{"История задачи", "GET", taskPath + "/history", ""},
+		{"Список задач", "GET", proj + "/tasks", ""},
 		{"Карточка проекта", "GET", proj, ""},
 		{"Изменение проекта", "PATCH", proj, `{"name":"X"}`},
 		{"Участники", "GET", proj + "/members", ""},
