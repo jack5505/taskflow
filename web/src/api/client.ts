@@ -262,6 +262,21 @@ export interface TaskTransitionRequest {
   to: "todo" | "in_progress" | "review" | "done" | "cancelled";
 }
 
+export interface TaskUpdateRequest {
+  /** @format uuid */
+  assignee_id?: string | null;
+  description?: string | null;
+  /** @example "2026-10-31" */
+  due_date?: string | null;
+  estimate_minutes?: number | null;
+  labels?: string[];
+  priority?: "low" | "medium" | "high" | "critical";
+  /** @format uuid */
+  sprint_id?: string | null;
+  title?: string;
+  type?: "task" | "bug" | "feature";
+}
+
 export interface UserUser {
   created_at?: string;
   display_name?: string;
@@ -1045,6 +1060,30 @@ export class Api<
         path: `/api/v1/tasks/${taskKey}`,
         method: "GET",
         secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Меняются только переданные поля; null очищает необязательное поле; поле status — 400 (статус меняется через /transition). Заголовок If-Match — ETag карточки ("5"), список ETag или *; сравнение сильное, W/"5" — 400. Если задачу уже изменили — 409 VERSION_CONFLICT, в details.current актуальная задача. Права (§2): автор, исполнитель или менеджер; исполнитель (активный участник) и спринт (не завершённый) — только менеджер; задачу из завершённого спринта не переносят; оценку задачи, которая была в работе (в том числе потом отменённой), — только менеджер. Исполнителя нельзя менять в закрытой задаче и снимать с задачи в работе (§4).
+     *
+     * @tags tasks
+     * @name V1TasksPartialUpdate
+     * @summary Изменить задачу
+     * @request PATCH:/api/v1/tasks/{task_key}
+     * @secure
+     */
+    v1TasksPartialUpdate: (
+      taskKey: string,
+      body: TaskUpdateRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<TaskTask, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}`,
+        method: "PATCH",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),
