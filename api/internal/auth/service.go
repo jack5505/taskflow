@@ -95,38 +95,46 @@ func (s *Service) WithClock(now func() time.Time) *Service {
 	return s
 }
 
-// Login проверяет блокировку, пароль и активность, выпускает пару токенов.
+// Login проверяет блокировку, пароль и активность, выпускает пару токенов. Попытка
+// засчитывается до проверки пароля (lockout.take): параллельные запросы не проверят больше
+// maxFailures паролей за окно. Верный пароль счётчик сбрасывает.
 func (s *Service) Login(ctx context.Context, email, password, userAgent string) (*Session, error) {
-	if locked, wait, err := s.lock.locked(ctx, email); err != nil {
+	n, locked, wait, err := s.lock.take(ctx, email)
+	if err != nil {
 		return nil, err
-	} else if locked {
+	}
+	if locked {
 		return nil, ErrLocked.With("retry_after_seconds", int(wait.Seconds()))
 	}
 
 	var u user.User
-	err := s.db.WithContext(ctx).Where("email = ?", email).First(&u).Error
+	err = s.db.WithContext(ctx).Where("email = ?", email).First(&u).Error
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		// Хеш сравниваем и для несуществующего email: время ответа не выдаёт, есть ли пользователь.
 		CheckPassword(dummyHash(), password)
-		return nil, s.failed(ctx, email)
+		return nil, s.failed(ctx, email, n)
 	case err != nil:
 		return nil, fmt.Errorf("auth: find user: %w", err)
 	}
 	if !CheckPassword(u.PasswordHash, password) {
-		return nil, s.failed(ctx, email)
+		return nil, s.failed(ctx, email, n)
+	}
+	// Пароль верный — это не неудача, даже если пользователь деактивирован: попытку,
+	// засчитанную take, снимаем вместе со счётчиком.
+	if err := s.lock.reset(ctx, email); err != nil {
+		return nil, err
 	}
 	if !u.IsActive {
 		return nil, ErrUserInactive
 	}
-	if err := s.lock.reset(ctx, email); err != nil {
-		return nil, err
-	}
 	return s.issue(ctx, &u, userAgent)
 }
 
-func (s *Service) failed(ctx context.Context, email string) error {
-	if err := s.lock.fail(ctx, email); err != nil {
+// failed — неверный email или пароль: попытка уже засчитана take, с maxFailures-й неудачи
+// блокировка держится ровно lockoutWindow.
+func (s *Service) failed(ctx context.Context, email string, n int64) error {
+	if err := s.lock.takeFailed(ctx, email, n); err != nil {
 		return err
 	}
 	return ErrBadCredentials

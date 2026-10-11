@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -110,6 +111,45 @@ func TestLockoutAfterTenFailures(t *testing.T) {
 	retry, _ := e.Details["retry_after_seconds"].(int)
 	require.Greater(t, retry, 0)
 	require.LessOrEqual(t, retry, 15*60)
+}
+
+// Параллельный перебор (#149): из 30 одновременных попыток с неверным паролем проверяется
+// ровно 10, остальные сразу получают блокировку; после этого закрыт и вход с верным паролем.
+func TestLockoutUnderConcurrency(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	errs := make([]error, 30)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = f.svc.Login(ctx, f.u.Email, "wrong", "")
+		}()
+	}
+	wg.Wait()
+	checked := 0
+	for _, err := range errs {
+		if errors.Is(err, auth.ErrBadCredentials) {
+			checked++
+		} else {
+			require.ErrorIs(t, err, auth.ErrLocked)
+		}
+	}
+	require.Equal(t, 10, checked)
+	_, err := f.svc.Login(ctx, f.u.Email, password, "")
+	require.ErrorIs(t, err, auth.ErrLocked)
+}
+
+// Верный пароль деактивированного пользователя — не неудача: попытки не копятся в блокировку.
+func TestInactiveCorrectPasswordDoesNotLock(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	require.NoError(t, f.db.Model(f.u).Update("is_active", false).Error)
+	for i := 0; i < 12; i++ {
+		_, err := f.svc.Login(ctx, f.u.Email, password, "")
+		require.ErrorIs(t, err, auth.ErrUserInactive, "попытка %d", i+1)
+	}
 }
 
 // Успешный вход сбрасывает счётчик: 9 неудач, успех, снова 9 неудач — блокировки нет.
