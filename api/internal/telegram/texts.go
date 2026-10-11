@@ -38,6 +38,15 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "group_bot_removed"}}Бота удалили из группы{{with .Title}} «{{.}}»{{end}}, Telegram-группа отключена от {{if gt (len .Projects) 1}}проектов{{else}}проекта{{end}}:
 {{range .Projects}}{{.Key}} «{{.Name}}»
 {{end}}Подключить группу снова можно в настройках проекта → Telegram{{end}}
+
+{{- /* Карточка задачи в группе, §8.3 (HTML Telegram: данные экранируются функцией html) */}}
+{{define "card"}}🆕 Новая задача {{html .Key}} · {{.Type}} · Приоритет: {{.Priority}}
+<b>{{html .Title}}</b>
+
+Автор: {{html .Reporter}}
+{{with .Details}}{{range $i, $d := .}}{{if $i}} · {{end}}{{html $d}}{{end}}
+{{end}}Статус: {{.Status}} · Исполнитель: {{html .Assignee}}{{end}}
+{{define "card_deleted"}}🗑 Задача удалена: {{html .Key}} «{{html .Title}}»{{end}}
 {{- /* Личные уведомления, §8.7. Обычный текст без разметки. */}}
 {{define "p_assigned"}}📌 Вас назначили исполнителем {{.Key}} «{{.Title}}» — {{.By}}{{end}}
 {{define "p_rework"}}🔁 {{.Key}} «{{.Title}}» возвращена на доработку — {{.By}}: {{.Comment}}{{end}}
@@ -103,3 +112,11 @@ func Text(name string, data any) string {
 	}
 	return b.String()
 }
+
+// Названия перечислений задачи — как в веб-интерфейсе (§3.3, §4).
+var (
+	typeLabels     = map[string]string{"task": "Задача", "bug": "Ошибка", "feature": "Новая функция"}
+	priorityLabels = map[string]string{"low": "Низкий", "medium": "Средний", "high": "Высокий", "critical": "Критический"}
+	statusLabels   = map[string]string{"todo": "К выполнению", "in_progress": "В работе", "review": "На проверке",
+		"done": "Готово", "cancelled": "Отменена"}
+)

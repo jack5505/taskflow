@@ -119,13 +119,15 @@ type Router struct {
 	// chatUpdate — служебные обновления чата (§8.2): бота удалили из группы, группа стала
 	// супергруппой, группу переименовали. Без middleware: отправитель тут не важен.
 	chatUpdate HandlerFunc
+	// kinds — сообщения, которые собираются при отправке (карточка задачи §8.3).
+	kinds map[string]KindHooks
 }
 
 // NewRouter — роутер бота с именем botUsername: команды вида /take@другой_бот в группе
 // адресованы не нам и пропускаются.
 func NewRouter(botUsername string) *Router {
 	return &Router{botUsername: strings.TrimPrefix(botUsername, "@"),
-		commands: map[string]HandlerFunc{}, callbacks: map[string]HandlerFunc{}}
+		commands: map[string]HandlerFunc{}, callbacks: map[string]HandlerFunc{}, kinds: map[string]KindHooks{}}
 }
 
 // Command регистрирует команду name (без «/»).
@@ -137,6 +139,9 @@ func (rt *Router) Callback(action string, h HandlerFunc) { rt.callbacks[action] 
 // ChatUpdate регистрирует обработчик служебных обновлений чата: my_chat_member и сообщений
 // с migrate_to_chat_id, migrate_from_chat_id, new_chat_title. Middleware к нему не применяются.
 func (rt *Router) ChatUpdate(h HandlerFunc) { rt.chatUpdate = h }
+
+// Kind регистрирует вид сообщений, которые отправитель собирает по текущим данным (Message.Kind).
+func (rt *Router) Kind(name string, h KindHooks) { rt.kinds[name] = h }
 
 // Text регистрирует обработчик обычного текста (не команды) в личном чате: ответ на вопрос бота,
 // например причина возврата на доработку (§8.7). Текст в группах бот не читает (§8.2).
