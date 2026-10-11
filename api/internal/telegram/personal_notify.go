@@ -115,14 +115,12 @@ func containsID(ids []uuid.UUID, id uuid.UUID) bool {
 	return false
 }
 
-// notify ставит в очередь одно сообщение каждому получателю.
-func (p *Personal) notify(ctx context.Context, to []recipient, text string, kb func(recipient) *models.InlineKeyboardMarkup) error {
+// notify ставит в очередь одно сообщение каждому получателю. Если очередь отказала на середине,
+// событие повторится и первые получатели могут получить сообщение дважды: доставка «хотя бы раз»,
+// как у всех обработчиков событий (повтор возможен только при сбое Redis).
+func (p *Personal) notify(ctx context.Context, to []recipient, text string, kb *models.InlineKeyboardMarkup) error {
 	for _, r := range to {
-		m := Message{Op: OpSend, ChatID: r.ChatID, Text: text}
-		if kb != nil {
-			m.Keyboard = kb(r)
-		}
-		if err := p.out.Send(ctx, m, 0); err != nil {
+		if err := p.out.Send(ctx, Message{Op: OpSend, ChatID: r.ChatID, Text: text, Keyboard: kb}, 0); err != nil {
 			return err
 		}
 	}
@@ -185,6 +183,9 @@ func (p *Personal) taskAssigned(ctx context.Context, env events.Envelope) error 
 		Scan(&status).Error; err != nil {
 		return fmt.Errorf("telegram: task status: %w", err)
 	}
+	if status == "" {
+		return nil // задачу уже удалили — назначение неактуально, а «Открыть» вело бы на 404
+	}
 	var row []models.InlineKeyboardButton
 	if status == task.StatusTodo {
 		// Та же кнопка, что под карточкой задачи в группе (§8.4, §8.8: take:<task_id>).
@@ -192,7 +193,7 @@ func (p *Personal) taskAssigned(ctx context.Context, env events.Envelope) error 
 	}
 	row = append(row, p.openButton(e.Key))
 	return p.notify(ctx, to, Text("p_assigned", taskText{Key: e.Key, Title: e.Title, By: by}),
-		func(recipient) *models.InlineKeyboardMarkup { return keyboard(row...) })
+		keyboard(row...))
 }
 
 // taskTransitioned — доработка (исполнителю), принята или отменена (исполнителю и автору),
@@ -238,13 +239,11 @@ func (p *Personal) taskTransitioned(ctx context.Context, env events.Envelope) er
 	}
 	text := Text(tmpl, taskText{Key: e.Key, Title: e.Title, By: by, Comment: e.Comment})
 	if tmpl != "p_review" {
-		return p.notify(ctx, to, text, func(recipient) *models.InlineKeyboardMarkup { return keyboard(p.openButton(e.Key)) })
+		return p.notify(ctx, to, text, keyboard(p.openButton(e.Key)))
 	}
 	// §8.7: автор, который и исполнитель, свою задачу не принимает (§4) — кнопки «Принять» нет.
 	ownTask := e.AssigneeID != nil && *e.AssigneeID == e.ReporterID
-	return p.notify(ctx, to, text, func(recipient) *models.InlineKeyboardMarkup {
-		return p.reviewKeyboard(e.TaskID, e.Key, !ownTask)
-	})
+	return p.notify(ctx, to, text, p.reviewKeyboard(e.TaskID, e.Key, !ownTask))
 }
 
 // reviewKeyboard — кнопки уведомления «отправлена на проверку».
@@ -282,7 +281,7 @@ func (p *Personal) commentCreated(ctx context.Context, env events.Envelope) erro
 		return err
 	}
 	return p.notify(ctx, to, Text("p_comment", taskText{Key: e.Key, Title: e.Title, By: by, Body: e.Body}),
-		func(recipient) *models.InlineKeyboardMarkup { return keyboard(p.openButton(e.Key)) })
+		keyboard(p.openButton(e.Key)))
 }
 
 // taskDeleted — «Ваша задача удалена» исполнителю и автору, кроме удалившего. Кнопки «Открыть»
@@ -321,7 +320,7 @@ func (p *Personal) timerStopped(ctx context.Context, env events.Envelope) error 
 		return err
 	}
 	text := Text("p_timer_stopped", map[string]string{"Key": e.Key, "Title": e.Title, "Spent": duration.Format(e.Minutes)})
-	return p.notify(ctx, to, text, func(recipient) *models.InlineKeyboardMarkup { return keyboard(p.openButton(e.Key)) })
+	return p.notify(ctx, to, text, keyboard(p.openButton(e.Key)))
 }
 
 // worklogTrimmed — запись таймера обрезана по дневному лимиту 24 часа (§6.4); владельцу таймера.
@@ -345,7 +344,7 @@ func (p *Personal) worklogTrimmed(ctx context.Context, env events.Envelope) erro
 	}
 	text := Text("p_worklog_trimmed", map[string]string{"Key": e.Key, "Title": e.Title, "Date": date,
 		"Spent": duration.Format(e.Written), "Requested": duration.Format(e.Requested)})
-	return p.notify(ctx, to, text, func(recipient) *models.InlineKeyboardMarkup { return keyboard(p.openButton(e.Key)) })
+	return p.notify(ctx, to, text, keyboard(p.openButton(e.Key)))
 }
 
 // membership — добавили в проект, исключили, сменили роль; кроме собственного действия.

@@ -49,6 +49,7 @@ var texts = template.Must(template.New("bot").Parse(`
 {{define "p_mark_accepted"}}✅ Принята{{end}}
 {{define "p_mark_reworked"}}🔁 Возвращена на доработку{{end}}
 {{define "p_not_in_review"}}Задача {{.Key}} уже не на проверке, статус: {{.Status}}{{end}}
+{{define "p_rework_forbidden"}}Вернуть на доработку может автор задачи или менеджер проекта{{end}}
 {{define "p_task_not_found"}}Задача не найдена{{end}}
 {{define "p_archived"}}Проект {{.Key}} в архиве, изменения недоступны{{end}}
 `))

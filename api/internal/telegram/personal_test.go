@@ -295,12 +295,20 @@ func TestReviewOwnTaskHasNoAccept(t *testing.T) {
 	b.move(t, b.member, tk.Key, task.StatusInProgress, "")
 	b.move(t, b.member, tk.Key, task.StatusReview, "")
 	b.press(b.member, "rework:"+tk.ID.String(), 2, "x")
-	b.messages(t)
+	require.Equal(t, "Вернуть на доработку может автор задачи или менеджер проекта", b.alert(t))
 	b.say(b.member, "Причина возврата")
-	require.Equal(t, []string{"Этот переход вам недоступен"}, texts(b.messages(t)))
+	require.Empty(t, b.messages(t), "причину не ждём")
 	require.Equal(t, task.StatusReview, b.status(t, tk.Key))
 
+	// Чужой проект: ключ задачи не раскрывается.
+	outsider := b.linked(t, "Посторонний")
+	b.press(outsider, "rework:"+tk.ID.String(), 2, "x")
+	require.Equal(t, "Задача не найдена", b.alert(t))
+	b.press(outsider, "accept:"+tk.ID.String(), 2, "x")
+	require.Equal(t, "Задача не найдена", b.alert(t))
+
 	// Неизвестная задача.
+	b.messages(t)
 	b.press(b.manager, "accept:"+uuid.NewString(), 3, "x")
 	require.Equal(t, "Задача не найдена", b.alert(t))
 	b.press(b.manager, "rework:bad", 3, "x")
@@ -418,4 +426,43 @@ func texts(ms []telegram.Message) []string {
 		out = append(out, strings.TrimSpace(m.Text))
 	}
 	return out
+}
+
+// Ожидание причины не переживает смену статуса: принятую задачу текст не переоткрывает.
+func TestReworkReasonAfterAccept(t *testing.T) {
+	b := newPersonalBot(t)
+	review := func() *task.Task {
+		tk := b.create(t, &b.member.ID)
+		b.move(t, b.member, tk.Key, task.StatusInProgress, "")
+		b.move(t, b.member, tk.Key, task.StatusReview, "")
+		return tk
+	}
+	// Задачу приняли в вебе, пока бот ждал причину.
+	tk := review()
+	b.press(b.manager, "rework:"+tk.ID.String(), 1, "x")
+	b.move(t, b.manager, tk.Key, task.StatusDone, "")
+	b.messages(t)
+	b.say(b.manager, "Всё-таки вернуть")
+	require.Equal(t, []string{"Задача " + tk.Key + " уже не на проверке, статус: Готово"}, texts(b.messages(t)))
+	require.Equal(t, task.StatusDone, b.status(t, tk.Key))
+
+	// «Вернуть», затем «Принять» той же задачи: ожидание снимается.
+	tk = review()
+	b.press(b.manager, "rework:"+tk.ID.String(), 1, "x")
+	b.press(b.manager, "accept:"+tk.ID.String(), 1, "x")
+	require.Equal(t, task.StatusDone, b.status(t, tk.Key))
+	b.messages(t)
+	b.say(b.manager, "спасибо, всё ок")
+	require.Empty(t, b.messages(t))
+}
+
+// Назначение на задачу, удалённую до обработки события, не приходит.
+func TestAssignedDeletedTask(t *testing.T) {
+	b := newPersonalBot(t)
+	tk := b.create(t, &b.member.ID)
+	require.NoError(t, b.tasks.Delete(context.Background(), b.manager, tk.Key))
+	b.dispatch(t)
+	inbox := b.inbox(t)
+	require.Len(t, inbox[b.tg[b.member.ID]], 1)
+	require.True(t, strings.HasPrefix(inbox[b.tg[b.member.ID]][0].Text, "🗑"), "только об удалении")
 }

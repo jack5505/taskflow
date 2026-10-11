@@ -16,6 +16,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // Действия кнопок уведомления «отправлена на проверку» (§8.7, callback_data <действие>:<task_id>).
@@ -43,57 +44,93 @@ type awaitReason struct {
 
 func awaitKey(tgID int64) string { return "tg:await-reason:" + strconv.FormatInt(tgID, 10) }
 
-// taskKey — ключ неудалённой задачи по id из callback_data; "" — нет такой.
-func (p *Personal) taskKey(ctx context.Context, data string) (key, status string, err error) {
-	id, perr := uuid.Parse(data)
-	if perr != nil {
-		return "", "", nil
+// reviewTask — задача из callback_data глазами нажавшего.
+type reviewTask struct {
+	Key, Status string
+	CanReturn   bool // автор задачи, менеджер проекта или администратор (§4: review → in_progress)
+}
+
+// findTask — неудалённая задача по id из callback_data, если u — участник её проекта или
+// администратор; иначе nil, как 404 у сервиса: ключ чужой задачи не раскрывается.
+func (p *Personal) findTask(ctx context.Context, u *user.User, data string) (*reviewTask, error) {
+	id, err := uuid.Parse(data)
+	if err != nil {
+		return nil, nil
 	}
-	var row struct{ Key, Status string }
-	if err := p.db.WithContext(ctx).Raw(`SELECT key, status FROM tasks WHERE id = ? AND deleted_at IS NULL`, id).
-		Scan(&row).Error; err != nil {
-		return "", "", fmt.Errorf("telegram: task by id: %w", err)
+	var rows []reviewTask
+	if err := p.db.WithContext(ctx).Raw(`SELECT t.key, t.status,
+			(t.reporter_id = @user OR m.role = 'manager' OR @admin) AS can_return
+		FROM tasks t JOIN projects pr ON pr.id = t.project_id AND pr.deleted_at IS NULL
+		LEFT JOIN project_members m ON m.project_id = t.project_id AND m.user_id = @user
+		WHERE t.id = @id AND t.deleted_at IS NULL AND (m.user_id IS NOT NULL OR @admin)`,
+		map[string]any{"id": id, "user": u.ID, "admin": u.IsSystemAdmin}).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("telegram: task by id: %w", err)
 	}
-	return row.Key, row.Status, nil
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
 }
 
 // acceptButton — «Принять»: переход review → done от имени нажавшего по правилам §4 (права
 // проверяются сервисом при каждом нажатии, §8.8). Повторное нажатие — «уже не на проверке».
 func (p *Personal) acceptButton(ctx context.Context, r *Request) error {
-	key, _, err := p.taskKey(ctx, r.Data)
+	t, err := p.findTask(ctx, r.User, r.Data)
 	if err != nil {
 		return err
 	}
-	if key == "" {
+	if t == nil {
 		return r.Answer(ctx, Text("p_task_not_found", nil), true)
 	}
-	if _, err := p.tasks.Transition(ctx, r.User, key, task.TransitionInput{To: task.StatusDone}); err != nil {
-		text, ferr := transitionError(key, err)
+	in := task.TransitionInput{From: task.StatusReview, To: task.StatusDone}
+	if _, err := p.tasks.Transition(ctx, r.User, t.Key, in); err != nil {
+		text, ferr := transitionError(t.Key, err)
 		if ferr != nil {
 			return ferr
 		}
 		return r.Answer(ctx, text, true)
 	}
+	p.forgetReason(ctx, r.From.ID, t.Key)
 	if m := r.Update.CallbackQuery.Message.Message; m != nil {
-		p.markDone(ctx, r.Chat.ID, m.ID, m.Text, key, "p_mark_accepted")
+		p.markDone(ctx, r.Chat.ID, m.ID, m.Text, t.Key, "p_mark_accepted")
 	}
-	return r.Answer(ctx, Text("p_accept_done", map[string]string{"Key": key}), false)
+	return r.Answer(ctx, Text("p_accept_done", map[string]string{"Key": t.Key}), false)
+}
+
+// forgetReason — после «Принять» ожидание причины возврата той же задачи больше не нужно:
+// иначе следующее обычное сообщение пошло бы причиной. Ошибка — только в лог.
+func (p *Personal) forgetReason(ctx context.Context, tgID int64, key string) {
+	raw, err := p.rdb.Get(ctx, awaitKey(tgID)).Bytes()
+	if err != nil {
+		return
+	}
+	var st awaitReason
+	if json.Unmarshal(raw, &st) == nil && st.Key != key {
+		return
+	}
+	if err := p.rdb.Del(ctx, awaitKey(tgID)).Err(); err != nil {
+		slog.Warn("telegram: await state", "err", err)
+	}
 }
 
 // reworkButton — «Вернуть»: запоминает задачу и просит причину следующим сообщением (§8.7).
-// Сам переход — в reworkReason; права проверяются там же, сервисом.
+// Права и статус проверяются при нажатии, чтобы не просить причину зря; сам переход — в
+// reworkReason, где сервис проверяет их ещё раз.
 func (p *Personal) reworkButton(ctx context.Context, r *Request) error {
-	key, status, err := p.taskKey(ctx, r.Data)
+	t, err := p.findTask(ctx, r.User, r.Data)
 	if err != nil {
 		return err
 	}
-	if key == "" {
+	if t == nil {
 		return r.Answer(ctx, Text("p_task_not_found", nil), true)
 	}
-	if status != task.StatusReview {
-		return r.Answer(ctx, Text("p_not_in_review", map[string]string{"Key": key, "Status": task.StatusName(status)}), true)
+	if t.Status != task.StatusReview {
+		return r.Answer(ctx, Text("p_not_in_review", map[string]string{"Key": t.Key, "Status": task.StatusName(t.Status)}), true)
 	}
-	st := awaitReason{UserID: r.User.ID, Key: key, ChatID: r.Chat.ID}
+	if !t.CanReturn {
+		return r.Answer(ctx, Text("p_rework_forbidden", nil), true)
+	}
+	st := awaitReason{UserID: r.User.ID, Key: t.Key, ChatID: r.Chat.ID}
 	if m := r.Update.CallbackQuery.Message.Message; m != nil {
 		st.MessageID, st.Text = m.ID, m.Text
 	}
@@ -104,7 +141,7 @@ func (p *Personal) reworkButton(ctx context.Context, r *Request) error {
 	if err := p.rdb.Set(ctx, awaitKey(r.From.ID), raw, ReasonTTL).Err(); err != nil {
 		return fmt.Errorf("telegram: await state: %w", err)
 	}
-	return r.Reply(ctx, Text("p_rework_prompt", map[string]string{"Key": key}))
+	return r.Reply(ctx, Text("p_rework_prompt", map[string]string{"Key": t.Key}))
 }
 
 // reworkReason — обычный текст в личном чате. Если бот ждёт причину возврата — переход
@@ -125,7 +162,7 @@ func (p *Personal) reworkReason(ctx context.Context, r *Request) error {
 	if utf8.RuneCountInString(r.Args) < minReason {
 		return r.Reply(ctx, Text("p_rework_short", nil)) // ждём дальше
 	}
-	_, err = p.tasks.Transition(ctx, r.User, st.Key, task.TransitionInput{To: task.StatusInProgress, Comment: r.Args})
+	_, err = p.tasks.Transition(ctx, r.User, st.Key, task.TransitionInput{From: task.StatusReview, To: task.StatusInProgress, Comment: r.Args})
 	var ae *apierr.Error
 	if err != nil && errors.As(err, &ae) && ae.Code == apierr.CodeValidation {
 		// Причина не подошла (например, длиннее 5000 символов) — ждём другую.
