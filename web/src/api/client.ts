@@ -1176,6 +1176,23 @@ export class Api<
       }),
 
     /**
+     * @description Мягкое удаление (§4): задача пропадает с доски, из бэклога, поиска и бота; записи времени остаются в отчётах. Менеджер проекта или администратор. Восстановление — POST /tasks/{key}/restore (администратор).
+     *
+     * @tags tasks
+     * @name V1TasksDelete
+     * @summary Удалить задачу
+     * @request DELETE:/api/v1/tasks/{task_key}
+     * @secure
+     */
+    v1TasksDelete: (taskKey: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
      * @description Меняются только переданные поля; null очищает необязательное поле; поле status — 400 (статус меняется через /transition). Заголовок If-Match — ETag карточки ("5"), список ETag или *; сравнение сильное, W/"5" — 400. Если задачу уже изменили — 409 VERSION_CONFLICT, в details.current актуальная задача. Права (§2): автор, исполнитель или менеджер; исполнитель (активный участник) и спринт (не завершённый) — только менеджер; задачу из завершённого спринта не переносят; оценку задачи, которая была в работе (в том числе потом отменённой), — только менеджер. Исполнителя нельзя менять в закрытой задаче и снимать с задачи в работе (§4).
      *
      * @tags tasks
@@ -1212,6 +1229,24 @@ export class Api<
       this.request<TaskHistoryView[], ApierrResponse>({
         path: `/api/v1/tasks/${taskKey}/history`,
         method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Только администратор системы (§2). Не удалённая задача возвращается без изменений.
+     *
+     * @tags tasks
+     * @name V1TasksRestoreCreate
+     * @summary Восстановить задачу
+     * @request POST:/api/v1/tasks/{task_key}/restore
+     * @secure
+     */
+    v1TasksRestoreCreate: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskTask, ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/restore`,
+        method: "POST",
         secure: true,
         format: "json",
         ...params,

@@ -32,6 +32,8 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	t := api.Group("/tasks", h.requireAuth)
 	t.GET("/:task_key", h.get)
 	t.PATCH("/:task_key", h.update)
+	t.DELETE("/:task_key", h.delete)
+	t.POST("/:task_key/restore", h.restore)
 	t.GET("/:task_key/history", h.history)
 	t.POST("/:task_key/transition", h.transition)
 	t.POST("/:task_key/take", h.take)
@@ -396,4 +398,48 @@ func (h *Handlers) mine(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, list)
+}
+
+// delete — мягкое удаление задачи.
+//
+// @Summary      Удалить задачу
+// @Description  Мягкое удаление (§4): задача пропадает с доски, из бэклога, поиска и бота; записи времени остаются в отчётах. Менеджер проекта или администратор. Восстановление — POST /tasks/{key}/restore (администратор).
+// @Tags         tasks
+// @Security     BearerAuth
+// @Param        task_key  path  string  true  "ключ задачи"
+// @Success      204
+// @Failure      401  {object}  apierr.Response
+// @Failure      403  {object}  apierr.Response  "FORBIDDEN: не менеджер"
+// @Failure      404  {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409  {object}  apierr.Response  "PROJECT_ARCHIVED"
+// @Router       /api/v1/tasks/{task_key} [delete]
+func (h *Handlers) delete(c *gin.Context) {
+	if err := h.svc.Delete(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key")); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// restore — восстановление удалённой задачи.
+//
+// @Summary      Восстановить задачу
+// @Description  Только администратор системы (§2). Не удалённая задача возвращается без изменений.
+// @Tags         tasks
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string  true  "ключ задачи"
+// @Success      200       {object}  Task
+// @Failure      401       {object}  apierr.Response
+// @Failure      403       {object}  apierr.Response  "FORBIDDEN: не администратор"
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409       {object}  apierr.Response  "PROJECT_ARCHIVED"
+// @Router       /api/v1/tasks/{task_key}/restore [post]
+func (h *Handlers) restore(c *gin.Context) {
+	t, err := h.svc.Restore(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	respond(c, http.StatusOK, t)
 }

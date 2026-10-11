@@ -42,6 +42,9 @@ const (
 	UserUpdated     = "user.updated"
 	UserDeactivated = "user.deactivated"
 	UserActivated   = "user.activated"
+
+	TaskDeleted  = "task.deleted"
+	TaskRestored = "task.restored"
 )
 
 // Entry — строка таблицы audit_logs.
