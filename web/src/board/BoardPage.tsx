@@ -249,6 +249,11 @@ export function BoardPage() {
           <Link className="tab" to={`/projects/${key}/backlog`}>
             Бэклог
           </Link>
+          {actor?.manager && (
+            <Link className="tab" to={`/projects/${key}/settings`}>
+              Настройки
+            </Link>
+          )}
         </nav>
         {sprint && (
           <span className="muted sprint-info">
