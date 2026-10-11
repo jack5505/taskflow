@@ -24,7 +24,7 @@ log() { echo "[loadtest $(date +%H:%M:%S)] $*" >&2; }
 # Каталог проекта compose — временный: в нём свой .env, настоящий .env стенда не читается.
 dc() { docker compose -p "$PROJECT" -f "$ROOT/docker-compose.yml" --project-directory "$WORK" "$@"; }
 
-# shellcheck disable=SC2329  # вызывается из trap EXIT
+# shellcheck disable=SC2317,SC2329  # вызывается из trap EXIT
 cleanup() {
   if [[ ${KEEP:-} == 1 ]]; then
     log "KEEP=1: стенд оставлен — docker compose -p $PROJECT …; удаление: docker compose -p $PROJECT down -v && docker image rm $IMAGE $IMAGE-build"
