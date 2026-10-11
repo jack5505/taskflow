@@ -253,7 +253,8 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	if err := audit.Write(tx, audit.Record{Action: audit.UserDeactivated, EntityType: "user", EntityID: u.ID.String()}); err != nil {
 		return err
 	}
-	return events.Publish(tx, events.UserDeactivated, map[string]any{"user_id": u.ID, "released_tasks": released})
+	by, _ := audit.From(tx.Statement.Context)
+	return events.Publish(tx, events.UserDeactivated, map[string]any{"user_id": u.ID, "released_tasks": released, "by": by})
 }
 
 // changed — значения полей пользователя до и после для журнала; только реально меняющиеся.

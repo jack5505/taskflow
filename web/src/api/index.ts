@@ -80,4 +80,15 @@ export async function logout(): Promise<void> {
   }
 }
 
+/**
+ * «Выйти везде» (§7.8, §9.1): сервер отзывает все refresh-токены пользователя и стирает cookie.
+ * В отличие от logout, при ошибке сессию не сбрасываем: сессии на других устройствах живы,
+ * и пользователь должен увидеть, что команда не выполнена.
+ */
+export async function logoutAll(): Promise<void> {
+  await auth.idle();
+  await api.api.v1AuthLogoutAllCreate();
+  signOut("logout");
+}
+
 export type { HttpResponse, RequestParams } from "./client";
