@@ -133,38 +133,46 @@ func TestAlertKindsAndDisk(t *testing.T) {
 	require.Len(t, e.alertsTo(chat), 4)
 }
 
-// Сигнал воркера: нет ключа — сбой; свежая метка — норма; метка старше минуты — сбой.
+// Сигнал воркера: нет ключа — сбой с первого прохода; метка опоздала больше чем на два интервала —
+// сбой с момента последнего сигнала, оповещение через минуту после него.
 func TestAlertWorkerHeartbeat(t *testing.T) {
 	e := newEnv(t)
 	_, chat := alertAdmin(t)
 	g := testutil.SharedDB(t)
-	c := &clock{t: time.Now()}
-	a := telegram.NewAlerter(g, e.api)
-	a.SetClock(c.now)
-	m := telegram.NewMonitor(a, g, e.rdb, t.TempDir())
-	m.SetClock(c.now)
-	m.SetDisk(func() (int, error) { return 10, nil })
+	c := &clock{t: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
+	monitor := func() *telegram.Monitor {
+		a := telegram.NewAlerter(g, e.api)
+		a.SetClock(c.now)
+		m := telegram.NewMonitor(a, g, e.rdb, t.TempDir())
+		m.SetClock(c.now)
+		m.SetDisk(func() (int, error) { return 10, nil })
+		return m
+	}
 	ctx := context.Background()
 
+	m := monitor()
 	m.Tick(ctx)
 	c.advance(time.Minute)
 	m.Tick(ctx)
 	require.Len(t, e.alertsTo(chat), 1, "воркер не подавал сигнал минуту")
-	require.Contains(t, e.alertsTo(chat)[0], "воркер не отвечает")
+	require.Contains(t, e.alertsTo(chat)[0], "нет сигнала воркера")
 
+	m = monitor() // новый процесс API — свой отсчёт частоты
 	hbCtx, stop := context.WithCancel(ctx)
-	go telegram.Heartbeat(hbCtx, e.rdb)
+	go telegram.Heartbeat(hbCtx, e.rdb, c.now) // метка — часы теста
 	require.Eventually(t, func() bool { return e.rdb.Exists(ctx, telegram.HeartbeatKey).Val() == 1 }, 5*time.Second, 50*time.Millisecond)
 	stop()
-	c.t = time.Now()
-	c.advance(2 * time.Minute) // база и Redis живы: проверка самих сигналов
+	last := c.t
+	c.advance(20 * time.Second)
 	m.Tick(ctx)
-	c.advance(time.Minute)
+	c.advance(25 * time.Second) // 45 с без сигнала: сбой, но меньше минуты
 	m.Tick(ctx)
-	require.Len(t, e.alertsTo(chat), 1, "старая метка — сбой, но 10 минут с прошлого оповещения не прошло")
-	c.advance(10 * time.Minute)
+	require.Len(t, e.alertsTo(chat), 1)
+	c.advance(20 * time.Second) // 65 с с последнего сигнала
 	m.Tick(ctx)
-	require.Len(t, e.alertsTo(chat), 2)
+	alerts := e.alertsTo(chat)
+	require.Len(t, alerts, 2, "минута отсчитывается от последнего сигнала, а не от первого замеченного сбоя")
+	require.Contains(t, alerts[1], "воркер не отвечает с "+last.Format("15:04:05")+" UTC")
 }
 
 // Сообщение отброшено после 5 неудачных попыток — оповещение администраторам (§10.3).
@@ -180,8 +188,9 @@ func TestAlertOnDroppedMessage(t *testing.T) {
 	require.Contains(t, alerts[0], "сообщение в чат 42 не отправлено после 5 попыток")
 }
 
-// База недоступна — оповещение уходит по последнему известному списку администраторов.
-func TestAlertUsesCachedAdmins(t *testing.T) {
+// Список администраторов монитор берёт, пока база жива: PostgreSQL падает первым же сбоем после
+// старта — оповещение всё равно доходит.
+func TestAlertPostgresDownUsesListFromMonitor(t *testing.T) {
 	e := newEnv(t)
 	g, _ := testutil.TempDB(t)
 	u := user.New(testutil.UniqueEmail(t), "x", "Админ")
@@ -191,11 +200,56 @@ func TestAlertUsesCachedAdmins(t *testing.T) {
 	require.NoError(t, g.Create(u).Error)
 	chat := strconv.FormatInt(tg, 10)
 
+	c := &clock{t: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
 	a := telegram.NewAlerter(g, e.api)
-	require.True(t, a.Notify(context.Background(), telegram.AlertRedis, "первое"))
+	a.SetClock(c.now)
+	m := telegram.NewMonitor(a, g, e.rdb, t.TempDir())
+	m.SetClock(c.now)
+	m.SetCheck(telegram.AlertRedis, healthy)
+	m.SetCheck(telegram.AlertWorker, healthy)
+	m.SetDisk(func() (int, error) { return 10, nil })
+	ctx := context.Background()
+
+	m.Tick(ctx) // база жива — список получателей прочитан
 	sqlDB, err := g.DB()
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close()) // PostgreSQL недоступен
-	require.True(t, a.Notify(context.Background(), telegram.AlertPostgres, "база недоступна"))
-	require.Equal(t, []string{"первое", "база недоступна"}, e.alertsTo(chat))
+	for range 6 {
+		c.advance(15 * time.Second)
+		m.Tick(ctx)
+	}
+	alerts := e.alertsTo(chat)
+	require.Len(t, alerts, 1)
+	require.Contains(t, alerts[0], "PostgreSQL недоступен")
+}
+
+// Оповещение, которое никому не дошло (нет получателей, Telegram отказал), не занимает период:
+// следующая попытка уходит сразу.
+func TestAlertUndeliveredDoesNotSilence(t *testing.T) {
+	e := newEnv(t)
+	g, _ := testutil.TempDB(t)
+	a := telegram.NewAlerter(g, e.api)
+	ctx := context.Background()
+	require.False(t, a.Notify(ctx, telegram.AlertDisk, "диск"), "получателей нет")
+
+	u := user.New(testutil.UniqueEmail(t), "x", "Админ")
+	u.IsSystemAdmin = true
+	tg := rand.Int64N(1<<40) + 1
+	u.TelegramUserID = &tg
+	require.NoError(t, g.Create(u).Error)
+	chat := strconv.FormatInt(tg, 10)
+	e.tg.Respond("sendMessage", `{"ok":false,"error_code":502,"description":"Bad Gateway"}`)
+	require.False(t, a.Notify(ctx, telegram.AlertDisk, "диск"), "Telegram отказал")
+	require.True(t, a.Notify(ctx, telegram.AlertDisk, "диск"))
+	require.False(t, a.Notify(ctx, telegram.AlertDisk, "диск"), "дошло — следующее через сутки")
+	require.Len(t, e.alertsTo(chat), 2, "попытка с отказом и успешная")
+
+	require.True(t, telegram.NewAlerter(g, nil).Notify(ctx, telegram.AlertRedis, "без бота — только лог"))
+}
+
+// Диск: каталога вложений ещё нет — замер по существующему родителю, как у df.
+func TestAlertDiskUsage(t *testing.T) {
+	used, err := telegram.DiskUsage(t.TempDir() + "/attachments/not/yet")
+	require.NoError(t, err)
+	require.True(t, used >= 0 && used <= 100, used)
 }

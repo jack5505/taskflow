@@ -152,7 +152,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	wg.Go(func() {
 		runDaily(ctx, "due reminders cleanup", func(ctx context.Context) (int64, error) { return notification.CleanupDue(ctx, g, time.Now()) })
 	})
-	wg.Go(func() { telegram.Heartbeat(ctx, rdb) }) // сигнал «воркер жив» для оповещений §10.3
+	wg.Go(func() { telegram.Heartbeat(ctx, rdb, time.Now) }) // сигнал «воркер жив» для оповещений §10.3
 	slog.Info("worker: started", "redis", cfg.RedisAddr)
 
 	<-ctx.Done()

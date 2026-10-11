@@ -168,15 +168,16 @@ func runWorker(ctx context.Context, cfg *config.Config) error {
 }
 
 // startMonitor — оповещения администраторам §10.3 (база, Redis, воркер, диск) в личный чат бота;
-// без бота оповещать некуда — только логи.
+// без бота — только записи уровня ERROR в логе.
 func startMonitor(ctx context.Context, cfg *config.Config, g *gorm.DB, rdb *redis.Client) {
-	if !cfg.TelegramEnabled() {
-		return
+	var api telegram.API
+	if cfg.TelegramEnabled() {
+		b, err := telegram.NewBot(cfg)
+		if err != nil {
+			slog.Error("alert: bot", "err", err)
+		} else {
+			api = b
+		}
 	}
-	b, err := telegram.NewBot(cfg)
-	if err != nil {
-		slog.Error("alert: bot", "err", err)
-		return
-	}
-	go telegram.NewMonitor(telegram.NewAlerter(g, b), g, rdb, cfg.AttachmentsDir).Run(ctx)
+	go telegram.NewMonitor(telegram.NewAlerter(g, api), g, rdb, cfg.AttachmentsDir).Run(ctx)
 }

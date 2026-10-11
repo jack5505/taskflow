@@ -36,7 +36,12 @@ func (a *Alerter) SetClock(now func() time.Time) { a.now = now }
 func (m *Monitor) SetClock(now func() time.Time) { m.now = now }
 
 // SetCheck подменяет проверку kind (недоступный Redis в тесте).
-func (m *Monitor) SetCheck(kind string, check func(context.Context) error) { m.checks[kind] = check }
+func (m *Monitor) SetCheck(kind string, check func(context.Context) error) {
+	m.checks[kind] = func(ctx context.Context) (time.Time, error) { return time.Time{}, check(ctx) }
+}
+
+// DiskUsage — замер заполнения диска (каталог, которого ещё нет).
+func DiskUsage(dir string) (int, error) { return diskUsage(dir) }
 
 // SetDisk подменяет замер заполнения диска.
 func (m *Monitor) SetDisk(disk func() (int, error)) { m.disk = disk }

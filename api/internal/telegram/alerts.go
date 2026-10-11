@@ -2,8 +2,10 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -55,7 +57,9 @@ func NewAlerter(db *gorm.DB, api API) *Alerter {
 }
 
 // Notify шлёт оповещение типа kind, если такое не уходило последние 10 минут (диск — сутки).
-// Возвращает, ушло ли оповещение.
+// Отсчёт периода начинается, только если оповещение дошло хотя бы до одного администратора:
+// при сбое Telegram или пустом списке получателей следующий проход попробует снова. Без бота
+// (api == nil) оповещение только пишется в лог ошибок. Возвращает, ушло ли оповещение.
 func (a *Alerter) Notify(ctx context.Context, kind, text string) bool {
 	a.mu.Lock()
 	period := alertPeriod
@@ -63,47 +67,73 @@ func (a *Alerter) Notify(ctx context.Context, kind, text string) bool {
 		period = diskAlertPeriod
 	}
 	now := a.now()
-	if last, ok := a.last[kind]; ok && now.Sub(last) < period {
+	prev, seen := a.last[kind]
+	if seen && now.Sub(prev) < period {
 		a.mu.Unlock()
 		return false
 	}
-	a.last[kind] = now
+	a.last[kind] = now // занимаем тип, пока идёт отправка: параллельный вызов не продублирует
 	a.mu.Unlock()
 
 	slog.Error("alert", "kind", kind, "text", text)
-	for _, chat := range a.recipients(ctx) {
-		sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-		_, err := a.api.SendMessage(sendCtx, &bot.SendMessageParams{ChatID: chat, Text: text})
-		cancel()
-		if err != nil {
-			slog.Error("alert: send", "kind", kind, "chat_id", chat, "err", err)
+	delivered := a.api == nil
+	if a.api != nil {
+		for _, chat := range a.recipients(ctx) {
+			sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+			_, err := a.api.SendMessage(sendCtx, &bot.SendMessageParams{ChatID: chat, Text: text})
+			cancel()
+			if err != nil {
+				slog.Error("alert: send", "kind", kind, "chat_id", chat, "err", err)
+				continue
+			}
+			delivered = true
 		}
 	}
-	return true
+	if !delivered {
+		a.mu.Lock()
+		if seen {
+			a.last[kind] = prev
+		} else {
+			delete(a.last, kind)
+		}
+		a.mu.Unlock()
+	}
+	return delivered
+}
+
+// Refresh перечитывает список получателей; Monitor зовёт его на каждом проходе, пока база доступна,
+// чтобы при её падении список уже был.
+func (a *Alerter) Refresh(ctx context.Context) error {
+	var ids []int64
+	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := a.db.WithContext(qctx).Raw(`SELECT telegram_user_id FROM users
+		WHERE is_system_admin AND is_active AND telegram_user_id IS NOT NULL ORDER BY id`).Scan(&ids).Error; err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.admins = ids
+	a.mu.Unlock()
+	return nil
 }
 
 // recipients — Telegram активных администраторов; база недоступна — последний известный список.
 func (a *Alerter) recipients(ctx context.Context) []int64 {
-	var ids []int64
-	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	err := a.db.WithContext(qctx).Raw(`SELECT telegram_user_id FROM users
-		WHERE is_system_admin AND is_active AND telegram_user_id IS NOT NULL ORDER BY id`).Scan(&ids).Error
+	if err := a.Refresh(ctx); err != nil {
+		slog.Warn("alert: admins from cache", "err", err)
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if err != nil {
-		slog.Warn("alert: admins from cache", "err", err)
-		return a.admins
-	}
-	a.admins = ids
-	return ids
+	return a.admins
 }
 
 // Monitor — проверки §10.3 в процессе API: PostgreSQL, Redis, сигнал воркера, диск. Сбой длиннее
 // минуты — оповещение (не чаще раза в 10 минут на тип); восстановление сбрасывает отсчёт.
 type Monitor struct {
 	alerts *Alerter
-	checks map[string]func(context.Context) error
+	// checks — проверки; ненулевое время в ответе — известное начало сбоя (последний сигнал
+	// воркера), иначе началом считается первый проход, на котором проверка не прошла.
+	checks map[string]func(context.Context) (time.Time, error)
 	disk   func() (int, error) // заполнение диска, %
 	now    func() time.Time
 	since  map[string]time.Time // с какого момента сбой
@@ -112,27 +142,28 @@ type Monitor struct {
 // NewMonitor — проверки базы, Redis и воркера; disk — каталог на диске сервера (вложения).
 func NewMonitor(alerts *Alerter, db *gorm.DB, rdb *redis.Client, dir string) *Monitor {
 	m := &Monitor{alerts: alerts, now: time.Now, since: map[string]time.Time{}}
-	m.checks = map[string]func(context.Context) error{
-		AlertPostgres: func(ctx context.Context) error {
+	m.checks = map[string]func(context.Context) (time.Time, error){
+		AlertPostgres: func(ctx context.Context) (time.Time, error) {
 			sqlDB, err := db.DB()
 			if err != nil {
-				return err
+				return time.Time{}, err
 			}
-			return sqlDB.PingContext(ctx)
+			return time.Time{}, sqlDB.PingContext(ctx)
 		},
-		AlertRedis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
-		AlertWorker: func(ctx context.Context) error {
+		AlertRedis: func(ctx context.Context) (time.Time, error) { return time.Time{}, rdb.Ping(ctx).Err() },
+		AlertWorker: func(ctx context.Context) (time.Time, error) {
 			at, err := rdb.Get(ctx, HeartbeatKey).Time()
 			if err == redis.Nil {
-				return fmt.Errorf("нет сигнала воркера")
+				return time.Time{}, fmt.Errorf("нет сигнала воркера")
 			}
 			if err != nil {
-				return nil // Redis недоступен — это отдельный сбой, о воркере судить нельзя
+				return time.Time{}, nil // Redis недоступен — это отдельный сбой, о воркере судить нельзя
 			}
-			if age := m.now().Sub(at); age > downThreshold {
-				return fmt.Errorf("последний сигнал воркера %s назад", age.Round(time.Second))
+			if m.now().Sub(at) > HeartbeatInterval*2 {
+				// Сигнал запоздал: сбой идёт с последнего сигнала, минута отсчитывается от него.
+				return at, fmt.Errorf("последний сигнал воркера в %s UTC", at.UTC().Format("15:04:05"))
 			}
-			return nil
+			return time.Time{}, nil
 		},
 	}
 	m.disk = func() (int, error) { return diskUsage(dir) }
@@ -158,17 +189,26 @@ func (m *Monitor) Tick(ctx context.Context) {
 	now := m.now()
 	for _, kind := range []string{AlertPostgres, AlertRedis, AlertWorker} {
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := m.checks[kind](cctx)
+		known, err := m.checks[kind](cctx)
 		cancel()
 		if err == nil {
 			delete(m.since, kind)
+			if kind == AlertPostgres {
+				if err := m.alerts.Refresh(ctx); err != nil {
+					slog.Warn("alert: admins", "err", err)
+				}
+			}
 			continue
 		}
 		since, ok := m.since[kind]
+		if !known.IsZero() {
+			since, ok = known, true
+		}
 		if !ok {
 			m.since[kind] = now
 			continue
 		}
+		m.since[kind] = since
 		if now.Sub(since) >= downThreshold {
 			m.alerts.Notify(ctx, kind, Text("alert_"+kind, map[string]any{"Since": since, "Err": err.Error()}))
 		}
@@ -180,26 +220,35 @@ func (m *Monitor) Tick(ctx context.Context) {
 	}
 }
 
-// diskUsage — заполнение файловой системы каталога dir, %.
+// diskUsage — заполнение файловой системы каталога dir, %, как у df: занято / (занято +
+// доступно непривилегированным), резерв root не считается занятым. Каталога ещё нет (вложений
+// не было) — замер по ближайшему существующему родителю на той же файловой системе.
 func diskUsage(dir string) (int, error) {
 	var st syscall.Statfs_t
-	if err := syscall.Statfs(dir, &st); err != nil {
-		return 0, err
+	for {
+		err := syscall.Statfs(dir, &st)
+		if err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if !errors.Is(err, syscall.ENOENT) || parent == dir {
+			return 0, err
+		}
+		dir = parent
 	}
-	total := st.Blocks * uint64(st.Bsize)
-	if total == 0 {
+	used := st.Blocks - st.Bfree
+	if used+st.Bavail == 0 {
 		return 0, nil
 	}
-	free := st.Bavail * uint64(st.Bsize)
-	return int((total - free) * 100 / total), nil
+	return int((used*100 + used + st.Bavail - 1) / (used + st.Bavail)), nil
 }
 
-// Heartbeat — сигнал воркера для Monitor: метка времени в Redis каждые 15 секунд.
-func Heartbeat(ctx context.Context, rdb *redis.Client) {
+// Heartbeat — сигнал воркера для Monitor: метка времени now() в Redis каждые 15 секунд.
+func Heartbeat(ctx context.Context, rdb *redis.Client, now func() time.Time) {
 	t := time.NewTicker(HeartbeatInterval)
 	defer t.Stop()
 	for {
-		if err := rdb.Set(ctx, HeartbeatKey, time.Now(), HeartbeatTTL).Err(); err != nil && ctx.Err() == nil {
+		if err := rdb.Set(ctx, HeartbeatKey, now(), HeartbeatTTL).Err(); err != nil && ctx.Err() == nil {
 			slog.Warn("worker: heartbeat", "err", err)
 		}
 		select {
