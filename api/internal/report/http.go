@@ -31,7 +31,7 @@ type timeQuery struct {
 	Project  string `form:"project" json:"project" binding:"max=10"`
 	SprintID string `form:"sprint_id" json:"sprint_id" binding:"omitempty,uuid"`
 	UserID   string `form:"user_id" json:"user_id" binding:"omitempty,uuid"`
-	GroupBy  string `form:"group_by" json:"group_by" binding:"omitempty,oneof=user task"`
+	GroupBy  string `form:"group_by" json:"group_by" binding:"max=10"` // значения проверяет сервис (его зовёт и бот)
 	Format   string `form:"format" json:"format" binding:"omitempty,oneof=json csv"`
 }
 
@@ -46,7 +46,7 @@ func optUUID(s string) *uuid.UUID {
 // timeReport — отчёт по времени.
 //
 // @Summary      Отчёт по времени
-// @Description  ТЗ §6.6. Период from–to включительно (ГГГГ-ММ-ДД), по умолчанию текущая неделя пн–вс по поясу пользователя, не длиннее 366 дней. Фильтры: project (ключ), sprint_id (задачи, которые сейчас в спринте), user_id.
+// @Description  ТЗ §6.6. Период from–to включительно (ГГГГ-ММ-ДД), по умолчанию текущая неделя пн–вс по поясу пользователя; задана одна граница — вторая на 6 дней от неё. Не длиннее 366 дней. Фильтры: project (ключ), sprint_id (задачи, которые сейчас в спринте), user_id.
 // @Description  group_by=user — строка на пользователя, столбец на день (days, weekend — выходные), итоги по строке (total_minutes) и по столбцу (day_totals). group_by=task — строка на задачу: ключ, название, исполнитель, статус, оценка, списано за период и всего (всего — в пределах того же фильтра по пользователю и прав); deleted — удалённая задача (§4).
 // @Description  Права (§2): администратор системы — все проекты; менеджер — все записи своих проектов; исполнитель — только свои записи (user_id другого — 403). Чужой проект или спринт — 404. Удалённые проекты в отчёт не входят, архивные — входят.
 // @Description  format=csv — файл для русского Excel: UTF-8 с BOM, разделитель «;», часы с десятичной запятой (2,50), даты dd.mm.yyyy, итоговая строка «Итого».

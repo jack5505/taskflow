@@ -2,6 +2,7 @@ package report_test
 
 import (
 	"context"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,17 +27,27 @@ const (
 )
 
 // TestReportLoad — §10.1 и критерий issue #34: отчёт за месяц при 1 000 000 записей быстрее 3 с.
-// Отдельная база (данные не мешают остальным тестам пакета), строки генерирует сам PostgreSQL
-// через generate_series. Время меряется по вызову сервиса: SQL, раскладка по дням, CSV.
+// Отдельная база в общем контейнере пакета (данные не мешают остальным тестам, удаляется в конце),
+// строки генерирует сам PostgreSQL через generate_series. Время меряется по вызову сервиса: SQL,
+// раскладка по дням, CSV.
 func TestReportLoad(t *testing.T) {
 	ctx := context.Background()
-	dsn := testutil.FreshDSN(t)
+	shared := testutil.SharedDB(t)
+	name := "report_load_" + strconv.FormatInt(testutil.Next(), 10)
+	require.NoError(t, shared.Exec(`CREATE DATABASE `+name).Error)
+	u, err := url.Parse(testutil.SharedDSN(t))
+	require.NoError(t, err)
+	u.Path = "/" + name
+	dsn := u.String()
 	mctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	require.NoError(t, db.Migrate(mctx, dsn, migrations.FS))
 	g, err := db.Open(mctx, dsn)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close(g) })
+	t.Cleanup(func() {
+		_ = db.Close(g)
+		_ = shared.Exec(`DROP DATABASE ` + name + ` WITH (FORCE)`).Error
+	})
 	sqlDB, err := g.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1) // временные таблицы u_map и t_map живут в одном соединении
@@ -58,9 +69,11 @@ func TestReportLoad(t *testing.T) {
 			SELECT id, 'load' || n || '@example.com', 'x', 'Пользователь ' || n, n = 1 FROM u_map`,
 		`INSERT INTO projects (key, name) SELECT 'L' || chr(65 + n / 26) || chr(65 + n % 26), 'Проект ' || n
 			FROM generate_series(0, ` + strconv.Itoa(loadProjects-1) + `) n`,
-		// Пользователь 2 — менеджер всех проектов, 3 — исполнитель во всех.
+		// Пользователь 2 — менеджер всех проектов, 3 — исполнитель во всех, 4 — менеджер в половине
+		// проектов и исполнитель в остальных.
 		`INSERT INTO project_members (project_id, user_id, role)
-			SELECT p.id, u.id, CASE u.n WHEN 2 THEN 'manager' ELSE 'member' END FROM projects p, u_map u WHERE u.n IN (2, 3)`,
+			SELECT p.id, u.id, CASE WHEN u.n = 2 OR (u.n = 4 AND p.key < 'LB') THEN 'manager' ELSE 'member' END
+			FROM projects p, u_map u WHERE u.n IN (2, 3, 4)`,
 		`CREATE TEMP TABLE t_map AS SELECT n, gen_random_uuid() AS id FROM generate_series(0, ` + strconv.Itoa(loadTasks-1) + `) n`,
 		// Сначала записи, потом задачи: spent_minutes (сумма записей) — сразу при вставке.
 		`INSERT INTO worklogs (task_id, user_id, minutes, work_date, source)
@@ -93,7 +106,7 @@ func TestReportLoad(t *testing.T) {
 		require.NoError(t, g.Raw(`SELECT u.* FROM users u JOIN u_map m ON m.id = u.id WHERE m.n = ?`, i).Scan(&u).Error)
 		return &u
 	}
-	admin, manager, member := actor(1), actor(2), actor(3)
+	admin, manager, member, mixed := actor(1), actor(2), actor(3), actor(4)
 	var key string
 	require.NoError(t, g.Raw(`SELECT min(key) FROM projects`).Scan(&key).Error)
 
@@ -111,6 +124,7 @@ func TestReportLoad(t *testing.T) {
 			return q
 		}},
 		{"менеджер, все проекты, по пользователям", manager, func(q report.Query) report.Query { return q }},
+		{"менеджер и исполнитель, по задачам", mixed, func(q report.Query) report.Query { q.GroupBy = report.GroupByTask; return q }},
 		{"исполнитель, по задачам", member, func(q report.Query) report.Query { q.GroupBy = report.GroupByTask; return q }},
 	} {
 		start := time.Now()

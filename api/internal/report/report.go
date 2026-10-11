@@ -5,6 +5,7 @@ package report
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -120,6 +121,9 @@ type filter struct {
 	// restricted — видны не все записи задач (фильтр по пользователю или «только свои»):
 	// «списано всего» тогда считается по видимым записям, а не из tasks.spent_minutes.
 	restricted bool
+	// managed — проекты, где видны все записи, при смешанных правах без фильтра по пользователю:
+	// у их задач «всего» берётся из spent_minutes без подзапроса.
+	managed []uuid.UUID
 }
 
 func (f *filter) add(cond string, args ...any) {
@@ -150,11 +154,17 @@ func (s *Service) Time(ctx context.Context, u *user.User, q Query) (*Report, err
 	}
 	r := &Report{From: from.Format(time.DateOnly), To: to.Format(time.DateOnly), GroupBy: q.GroupBy,
 		Days: []Day{}, Users: []UserRow{}, DayTotals: []int{}, Tasks: []TaskRow{}}
-	if q.GroupBy == GroupByUser {
-		err = s.byUser(ctx, f, from, to, r)
-	} else {
-		err = s.byTask(ctx, f, from, to, r)
-	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// JIT PostgreSQL на агрегатах отчёта тратит на компиляцию больше, чем сам запрос
+		// (до секунды на 1 000 000 записей) — для отчёта он выключен.
+		if err := tx.Exec(`SET LOCAL jit = off`).Error; err != nil {
+			return fmt.Errorf("report: jit: %w", err)
+		}
+		if q.GroupBy == GroupByUser {
+			return byUser(tx, f, from, to, r)
+		}
+		return byTask(tx, f, from, to, r)
+	}, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +174,7 @@ func (s *Service) Time(ctx context.Context, u *user.User, q Query) (*Report, err
 
 // period — границы отчёта (даты в UTC-полночь, как work_date из базы). По умолчанию — текущая
 // неделя понедельник–воскресенье по поясу пользователя (§6.6, §11 п. 7: неделя с понедельника).
+// Задана одна граница — вторая отсчитывается от неё на неделю (7 дней включительно).
 func (s *Service) period(u *user.User, fromS, toS string) (from, to time.Time, err error) {
 	loc, lerr := time.LoadLocation(u.Timezone)
 	if lerr != nil {
@@ -182,6 +193,12 @@ func (s *Service) period(u *user.User, fromS, toS string) (from, to time.Time, e
 		if to, err = time.Parse(time.DateOnly, toS); err != nil {
 			return from, to, fieldError("to", "дата ГГГГ-ММ-ДД")
 		}
+	}
+	switch {
+	case fromS != "" && toS == "":
+		to = from.AddDate(0, 0, 6)
+	case fromS == "" && toS != "":
+		from = to.AddDate(0, 0, -6)
 	}
 	if to.Before(from) {
 		return from, to, fieldError("to", "не раньше from")
@@ -265,11 +282,11 @@ func (s *Service) scope(ctx context.Context, u *user.User, q Query) (*filter, er
 			f.add("false")
 		}
 		// Только управляемые проекты — видны все записи их задач, «всего» = spent_minutes.
-		f.restricted = len(own) > 0
+		f.restricted, f.managed = len(own) > 0, managed
 	}
 	if q.UserID != nil {
 		f.add("w.user_id = ?", *q.UserID)
-		f.restricted = true
+		f.restricted, f.managed = true, nil
 	}
 	return f, nil
 }
@@ -278,7 +295,7 @@ func (s *Service) scope(ctx context.Context, u *user.User, q Query) (*filter, er
 const base = `FROM worklogs w JOIN tasks t ON t.id = w.task_id JOIN projects p ON p.id = t.project_id
 	WHERE w.work_date BETWEEN ? AND ? AND `
 
-func (s *Service) byUser(ctx context.Context, f *filter, from, to time.Time, r *Report) error {
+func byUser(tx *gorm.DB, f *filter, from, to time.Time, r *Report) error {
 	var cells []struct {
 		UserID   uuid.UUID
 		UserName string
@@ -286,7 +303,7 @@ func (s *Service) byUser(ctx context.Context, f *filter, from, to time.Time, r *
 		Minutes  int
 	}
 	args := append([]any{from, to}, f.args...)
-	if err := s.db.WithContext(ctx).Raw(`SELECT a.user_id, u.display_name AS user_name, a.work_date, a.minutes
+	if err := tx.Raw(`SELECT a.user_id, u.display_name AS user_name, a.work_date, a.minutes
 		FROM (SELECT w.user_id, w.work_date, SUM(w.minutes) AS minutes `+base+f.where()+`
 			GROUP BY w.user_id, w.work_date) a
 		JOIN users u ON u.id = a.user_id`, args...).Scan(&cells).Error; err != nil {
@@ -326,15 +343,19 @@ func (s *Service) byUser(ctx context.Context, f *filter, from, to time.Time, r *
 	return nil
 }
 
-func (s *Service) byTask(ctx context.Context, f *filter, from, to time.Time, r *Report) error {
+func byTask(tx *gorm.DB, f *filter, from, to time.Time, r *Report) error {
 	total := "t.spent_minutes"
 	args := append([]any{from, to}, f.args...)
 	if f.restricted {
 		// Те же условия без периода; w внутри подзапроса — записи этой задачи.
 		total = `(SELECT COALESCE(SUM(w.minutes), 0) FROM worklogs w WHERE w.task_id = t.id AND ` + f.where() + `)`
+		if len(f.managed) > 0 {
+			total = `CASE WHEN t.project_id IN ? THEN t.spent_minutes ELSE ` + total + ` END`
+			args = append(args, f.managed)
+		}
 		args = append(args, f.args...)
 	}
-	if err := s.db.WithContext(ctx).Raw(`WITH period AS (
+	if err := tx.Raw(`WITH period AS (
 			SELECT w.task_id, SUM(w.minutes) AS minutes `+base+f.where()+` GROUP BY w.task_id)
 		SELECT t.id AS task_id, t.key, t.title, t.assignee_id, au.display_name AS assignee_name, t.status,
 			t.estimate_minutes, pr.minutes AS period_minutes, `+total+` AS total_minutes,

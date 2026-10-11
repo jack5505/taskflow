@@ -270,6 +270,21 @@ func TestByTask(t *testing.T) {
 	require.Len(t, r.Tasks, 2)
 	require.Equal(t, 30, r.Tasks[0].TotalMinutes)
 
+	// Менеджер A и исполнитель B без фильтра проекта: по A «всего» — всё время задачи, по B — своё.
+	w.join(t, w.b, w.manager, project.RoleMember)
+	tb, kb := w.task(t, w.b, "В проекте B", &w.manager, nil, nil)
+	w.log(t, tb, w.manager, "2026-10-08", 20)
+	w.log(t, tb, w.member, "2026-10-08", 40)
+	r = w.ok(t, w.manager, week+"&group_by=task")
+	require.Len(t, r.Tasks, 3)
+	byKey := map[string]report.TaskRow{}
+	for _, row := range r.Tasks {
+		byKey[row.Key] = row
+	}
+	require.Equal(t, 190, byKey[k1].TotalMinutes)
+	require.Equal(t, 20, byKey[kb].PeriodMinutes)
+	require.Equal(t, 20, byKey[kb].TotalMinutes)
+
 	// Удалённый проект исчезает из отчётов (§3.2), архивный — остаётся.
 	require.NoError(t, w.db.Exec(`UPDATE projects SET is_archived = true WHERE id = ?`, w.a.ID).Error)
 	r = w.ok(t, w.admin, week+"&group_by=task&project="+w.a.Key)
@@ -329,6 +344,11 @@ func TestValidation(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 	// Ровно 366 дней — можно.
 	w.ok(t, w.manager, "from=2025-10-11&to=2026-10-11")
+	// Одна граница — вторая на неделю от неё.
+	r := w.ok(t, w.manager, "from=2026-12-01")
+	require.Equal(t, "2026-12-07", r.To)
+	r = w.ok(t, w.manager, "to=2025-01-07")
+	require.Equal(t, "2025-01-01", r.From)
 }
 
 // Период по умолчанию — текущая неделя пн–вс по поясу пользователя (§6.6).
