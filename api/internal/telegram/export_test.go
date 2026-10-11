@@ -1,6 +1,9 @@
 package telegram
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // SetClock подменяет часы и срок подтверждения кнопки (тест медленного обработчика).
 func (p *Processor) SetClock(now func() time.Time, ackAfter time.Duration) {
@@ -25,3 +28,20 @@ func SetCommandsPause(d time.Duration) func() {
 	setCommandsPause = func(int) time.Duration { return d }
 	return func() { setCommandsPause = old }
 }
+
+// SetClock подменяет часы оповещений (период 10 минут и сутки).
+func (a *Alerter) SetClock(now func() time.Time) { a.now = now }
+
+// SetClock подменяет часы монитора (сбой дольше минуты).
+func (m *Monitor) SetClock(now func() time.Time) { m.now = now }
+
+// SetCheck подменяет проверку kind (недоступный Redis в тесте).
+func (m *Monitor) SetCheck(kind string, check func(context.Context) error) {
+	m.checks[kind] = func(ctx context.Context) (time.Time, error) { return time.Time{}, check(ctx) }
+}
+
+// DiskUsage — замер заполнения диска (каталог, которого ещё нет).
+func DiskUsage(dir string) (int, error) { return diskUsage(dir) }
+
+// SetDisk подменяет замер заполнения диска.
+func (m *Monitor) SetDisk(disk func() (int, error)) { m.disk = disk }

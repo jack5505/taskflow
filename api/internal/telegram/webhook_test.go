@@ -129,7 +129,7 @@ func TestRedeliveredUpdateRunsHandlerOnce(t *testing.T) {
 		return r.Reply(ctx, "Списано")
 	})
 	mux := asynq.NewServeMux()
-	telegram.Mount(mux, e.api, rt, e.rdb, e.jobs)
+	telegram.Mount(mux, e.api, rt, e.rdb, e.jobs, nil)
 	srv := queue.NewServer(e.addr, 2)
 	require.NoError(t, srv.Start(mux))
 	t.Cleanup(srv.Shutdown)
