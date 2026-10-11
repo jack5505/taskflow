@@ -35,6 +35,11 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	t.DELETE("/:task_key", h.delete)
 	t.POST("/:task_key/restore", h.restore)
 	t.POST("/:task_key/move", h.move)
+	t.GET("/:task_key/comments", h.comments)
+	t.POST("/:task_key/comments", h.addComment)
+	c := api.Group("/comments", h.requireAuth)
+	c.PATCH("/:id", h.updateComment)
+	c.DELETE("/:id", h.deleteComment)
 	t.GET("/:task_key/history", h.history)
 	t.POST("/:task_key/transition", h.transition)
 	t.POST("/:task_key/take", h.take)
@@ -478,4 +483,125 @@ func (h *Handlers) move(c *gin.Context) {
 		return
 	}
 	respond(c, http.StatusOK, t)
+}
+
+type commentRequest struct {
+	Body string `json:"body" binding:"required,max=20000"` // 1–5000 после обрезки пробелов — сервис
+}
+
+// comments — комментарии задачи.
+//
+// @Summary      Комментарии
+// @Tags         comments
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string  true  "ключ задачи"
+// @Success      200       {array}   CommentView
+// @Failure      401       {object}  apierr.Response
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Router       /api/v1/tasks/{task_key}/comments [get]
+func (h *Handlers) comments(c *gin.Context) {
+	list, err := h.svc.Comments(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+// addComment — новый комментарий.
+//
+// @Summary      Добавить комментарий
+// @Description  Любой участник проекта (§2). Markdown, 1–5000 символов (§3.6). Событие comment.created.
+// @Tags         comments
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string          true  "ключ задачи"
+// @Param        body      body      commentRequest  true  "текст"
+// @Success      201       {object}  CommentView
+// @Failure      400       {object}  apierr.Response  "VALIDATION_FAILED"
+// @Failure      401       {object}  apierr.Response
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409       {object}  apierr.Response  "PROJECT_ARCHIVED"
+// @Router       /api/v1/tasks/{task_key}/comments [post]
+func (h *Handlers) addComment(c *gin.Context) {
+	var req commentRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	v, err := h.svc.AddComment(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"), req.Body)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, v)
+}
+
+func commentID(c *gin.Context) (uuid.UUID, bool) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpserver.Abort(c, ErrCommentNotFound)
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+// updateComment — правка комментария.
+//
+// @Summary      Изменить комментарий
+// @Description  Автор комментария или менеджер проекта (§3.6).
+// @Tags         comments
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      string          true  "id комментария"
+// @Param        body  body      commentRequest  true  "новый текст"
+// @Success      200   {object}  CommentView
+// @Failure      400   {object}  apierr.Response  "VALIDATION_FAILED"
+// @Failure      401   {object}  apierr.Response
+// @Failure      403   {object}  apierr.Response  "FORBIDDEN: чужой комментарий"
+// @Failure      404   {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409   {object}  apierr.Response  "PROJECT_ARCHIVED"
+// @Router       /api/v1/comments/{id} [patch]
+func (h *Handlers) updateComment(c *gin.Context) {
+	id, ok := commentID(c)
+	if !ok {
+		return
+	}
+	var req commentRequest
+	if !httpserver.Bind(c, &req) {
+		return
+	}
+	v, err := h.svc.UpdateComment(c.Request.Context(), auth.CurrentUser(c), id, req.Body)
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// deleteComment — удаление комментария.
+//
+// @Summary      Удалить комментарий
+// @Description  Автор комментария или менеджер проекта (§2: чужие — только менеджер).
+// @Tags         comments
+// @Security     BearerAuth
+// @Param        id  path  string  true  "id комментария"
+// @Success      204
+// @Failure      401  {object}  apierr.Response
+// @Failure      403  {object}  apierr.Response  "FORBIDDEN: чужой комментарий"
+// @Failure      404  {object}  apierr.Response  "NOT_FOUND"
+// @Failure      409  {object}  apierr.Response  "PROJECT_ARCHIVED"
+// @Router       /api/v1/comments/{id} [delete]
+func (h *Handlers) deleteComment(c *gin.Context) {
+	id, ok := commentID(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteComment(c.Request.Context(), auth.CurrentUser(c), id); err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

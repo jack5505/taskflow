@@ -353,6 +353,30 @@ definitions:
         maxLength: 64
         type: string
     type: object
+  task.CommentView:
+    properties:
+      author_id:
+        type: string
+      author_name:
+        type: string
+      body:
+        type: string
+      created_at:
+        type: string
+      edited:
+        type: boolean
+      id:
+        type: string
+      source:
+        enum:
+        - web
+        - telegram
+        type: string
+      task_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
   task.HistoryView:
     properties:
       created_at:
@@ -547,6 +571,15 @@ definitions:
         type: string
       version:
         type: integer
+    type: object
+  task.commentRequest:
+    properties:
+      body:
+        description: 1–5000 после обрезки пробелов — сервис
+        maxLength: 20000
+        type: string
+    required:
+    - body
     type: object
   task.createRequest:
     properties:
@@ -867,6 +900,87 @@ paths:
       summary: Обновить access-токен
       tags:
       - auth
+  /api/v1/comments/{id}:
+    delete:
+      description: 'Автор комментария или менеджер проекта (§2: чужие — только менеджер).'
+      parameters:
+      - description: id комментария
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: чужой комментарий'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Удалить комментарий
+      tags:
+      - comments
+    patch:
+      consumes:
+      - application/json
+      description: Автор комментария или менеджер проекта (§3.6).
+      parameters:
+      - description: id комментария
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: новый текст
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.commentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/task.CommentView'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: чужой комментарий'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Изменить комментарий
+      tags:
+      - comments
   /api/v1/me:
     get:
       description: Текущий пользователь, его личные уведомления §8.7 (все ключи, с
@@ -1714,6 +1828,81 @@ paths:
       summary: Изменить задачу
       tags:
       - tasks
+  /api/v1/tasks/{task_key}/comments:
+    get:
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/task.CommentView'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Комментарии
+      tags:
+      - comments
+    post:
+      consumes:
+      - application/json
+      description: Любой участник проекта (§2). Markdown, 1–5000 символов (§3.6).
+        Событие comment.created.
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      - description: текст
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/task.commentRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/task.CommentView'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Добавить комментарий
+      tags:
+      - comments
   /api/v1/tasks/{task_key}/history:
     get:
       parameters:
