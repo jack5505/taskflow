@@ -126,6 +126,12 @@ var texts = template.Must(template.New("bot").Parse(`
 …и другие: /tasks{{end}}{{end}}
 {{define "ev_sprint_closed"}}🏁 {{.Name}} завершён: готово {{.Done}} из {{.Total}}, перенесено {{.Moved}}, списано {{.Spent}}{{end}}
 {{define "button_take_key"}}Взять {{.}}{{end}}
+
+{{- /* Команды по задачам, §8.4, §8.5 */}}
+{{define "cmd_usage"}}Формат: {{.}}{{end}}
+{{define "cmd_choose_project"}}К группе подключено несколько проектов: {{range $i, $p := .Projects}}{{if $i}}, {{end}}{{$p.Key}}{{end}}. Укажите ключ задачи: {{.Cmd}} {{(index .Projects 0).Key}}-{{.Num}}{{end}}
+{{define "not_project_member"}}Вы не участник проекта {{.ProjectKey}}{{end}}
+{{define "taken_reply"}}🛠 {{.Key}} «{{.Title}}» взята в работу{{end}}
 {{- /* Личные уведомления, §8.7. Обычный текст без разметки. */}}
 {{define "p_assigned"}}📌 Вас назначили исполнителем {{.Key}} «{{.Title}}» — {{.By}}{{end}}
 {{define "p_rework"}}🔁 {{.Key}} «{{.Title}}» возвращена на доработку — {{.By}}: {{.Comment}}{{end}}

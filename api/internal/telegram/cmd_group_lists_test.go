@@ -28,7 +28,9 @@ func newListBot(t *testing.T) *listBot {
 	t.Helper()
 	b := &listBot{cmdBot: newCmdBot(t, func(rt *telegram.Router) {
 		g := testutil.SharedDB(t)
-		telegram.RegisterGroupLists(rt, g, telegram.NewGroups(g, "TaskBot"))
+		groups, projects := telegram.NewGroups(g, "TaskBot"), project.NewService(g)
+		telegram.RegisterGroupLists(rt, g, groups)
+		telegram.RegisterTake(rt, telegram.NewTaskCommands(g, task.NewService(g, projects), projects, groups))
 	})}
 	var err error
 	b.other, err = b.projects.Create(context.Background(), project.CreateInput{Key: testutil.UniqueKey(t), Name: "Второй"})
@@ -178,4 +180,28 @@ func textsOf(msgs []telegram.Message) []string {
 		out = append(out, m.Text)
 	}
 	return out
+}
+
+// Кнопка «Взять» под списком /tasks берёт задачу в работу (§8.4, обработчик take:<task_id>).
+func TestTasksCommandTakeButton(t *testing.T) {
+	b := newListBot(t)
+	tk := b.task(t, b.pr, b.sprint(t, b.pr, "Спринт 7"), "Экспорт", "high")
+	msgs := b.cmd(t, "/tasks "+b.pr.Key)
+	require.Len(t, msgs[0].Keyboard.InlineKeyboard, 1)
+	button := msgs[0].Keyboard.InlineKeyboard[0][0]
+
+	upd := callbackUpdate(b.chat, button.CallbackData)
+	upd.CallbackQuery.From.ID = b.tg[b.member.ID]
+	b.p.Handle(context.Background(), upd, time.Now())
+	b.messages(t)
+
+	var got task.Task
+	require.NoError(t, b.g.First(&got, "id = ?", tk.ID).Error)
+	require.Equal(t, task.StatusInProgress, got.Status)
+	require.Equal(t, b.member.ID, *got.AssigneeID)
+	require.Len(t, b.env.tg.Calls("answerCallbackQuery"), 1)
+
+	// После взятия задача из списка уходит.
+	msgs = b.cmd(t, "/tasks "+b.pr.Key)
+	require.Equal(t, "📋 Свободные задачи "+b.pr.Key+" «Тайм-менеджмент»: нет", msgs[0].Text)
 }

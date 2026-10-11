@@ -49,7 +49,8 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
 	notification.Register(d, g)
-	tasks := task.NewService(g, project.NewService(g))
+	projects := project.NewService(g)
+	tasks := task.NewService(g, projects)
 	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }
 	// Архивация и удаление проекта останавливают его таймеры (§3.2) на момент события.
 	for _, typ := range []string{events.ProjectArchived, events.ProjectDeleted} {
@@ -88,12 +89,14 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 		rt := telegram.NewRouter(cfg.TelegramBotUsername)
 		telegram.RegisterAccount(rt, accounts, rdb)
 		telegram.RegisterPrivateCommands(rt, tasks)
-		telegram.RegisterGroupLists(rt, g, telegram.NewGroups(g, cfg.TelegramBotUsername))
-		telegram.RegisterNewTask(rt, project.NewService(g), tasks, telegram.NewGroups(g, cfg.TelegramBotUsername), cfg.BaseURL)
-		telegram.RegisterGroups(rt, telegram.NewGroups(g, cfg.TelegramBotUsername), rdb)
+		groups := telegram.NewGroups(g, cfg.TelegramBotUsername)
+		telegram.RegisterGroupLists(rt, g, groups)
+		telegram.RegisterNewTask(rt, projects, tasks, groups, cfg.BaseURL)
+		telegram.RegisterGroups(rt, groups, rdb)
 		telegram.RegisterCards(rt, d, telegram.NewCards(g, telegram.NewQueue(client), cfg.BaseURL))
 		telegram.RegisterGroupEvents(rt, d, telegram.NewGroupEvents(g, rdb, telegram.NewQueue(client)))
 		telegram.RegisterPersonal(rt, d, g, tasks, rdb, client, cfg.BaseURL)
+		telegram.RegisterTake(rt, telegram.NewTaskCommands(g, tasks, projects, groups))
 		telegram.RegisterHelp(rt)
 		telegram.Mount(mux, b, rt, rdb, client)
 		digest = telegram.NewDigest(g, client, cfg.BaseURL)
