@@ -10,6 +10,7 @@ React 18, TypeScript, Vite, TanStack Query, dnd-kit для перетаскив�
 npm ci            установка
 npm run dev       Vite, /api проксируется на localhost:8100
 npm run lint      oxlint
+npm test          Vitest (юнит-тесты, *.test.ts рядом с кодом)
 npm run build     tsc -b && vite build → ../api/internal/web/dist (встраивается в бинарник Go)
 ```
 
