@@ -162,6 +162,11 @@ func (c *Cards) render(ctx context.Context, m *Message) (bool, error) {
 	}
 	m.ChatID, m.HTML = *r.ChatID, true
 	switch {
+	case m.Op == OpSend && m.Republish:
+		// /task (§8.5): новая карточка становится текущей; прежнюю (Replaces) удалит sent.
+		if r.Deleted {
+			return false, nil
+		}
 	case m.Op == OpSend && m.Replaces != 0:
 		if r.TelegramMessageID == nil || *r.TelegramMessageID != m.Replaces || r.Deleted {
 			return false, nil // карточку уже заменили или задачу удалили
@@ -180,6 +185,18 @@ func (c *Cards) render(ctx context.Context, m *Message) (bool, error) {
 	return true, nil
 }
 
+// Show — карточка задачи для показа в любом чате (/task в личном чате): без запоминания
+// сообщения; ChatID заполняет вызывающий. Задачи нет — nil.
+func (c *Cards) Show(ctx context.Context, taskID string) (*Message, error) {
+	r, err := c.load(ctx, taskID)
+	if err != nil || r == nil {
+		return nil, err
+	}
+	m := &Message{Op: OpSend, HTML: true}
+	m.Text, m.Keyboard = c.content(r)
+	return m, nil
+}
+
 // content — текст и кнопки карточки; удалённая задача — «Задача удалена» без кнопок (§4).
 func (c *Cards) content(r *cardRow) (string, *models.InlineKeyboardMarkup) {
 	if r.Deleted {
@@ -195,6 +212,13 @@ func (c *Cards) sent(ctx context.Context, m Message, msg *models.Message) error 
 	if msg != nil {
 		if err := c.db.WithContext(ctx).Exec(`UPDATE tasks SET telegram_message_id = ? WHERE id = ?`, msg.ID, m.Ref).Error; err != nil {
 			return fmt.Errorf("telegram: card message id: %w", err)
+		}
+		if m.Replaces != 0 {
+			// Прежняя карточка больше не правится — убираем её, чтобы не висела с устаревшим
+			// статусом и кнопкой. Сообщение старше 48 часов Telegram удалить не даст — это не ошибка.
+			if err := c.out.Send(ctx, Message{Op: OpDelete, ChatID: m.ChatID, MessageID: m.Replaces}, 0); err != nil {
+				return err
+			}
 		}
 	}
 	r, err := c.load(ctx, m.Ref)

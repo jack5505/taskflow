@@ -175,7 +175,7 @@ func TestCardReplacedWhenEditRefused(t *testing.T) {
 	_, err := b.tasks.Transition(context.Background(), b.manager, tk.Key, task.TransitionInput{To: "cancelled", Comment: "не нужна"})
 	require.NoError(t, err)
 	b.events(t)
-	require.Equal(t, 2, b.flush(t), "правка, затем новое сообщение")
+	require.Equal(t, 3, b.flush(t), "правка, новое сообщение, удаление прежнего")
 	sends := b.tg.Calls("sendMessage")
 	require.Len(t, sends, 2)
 	require.Contains(t, sends[1].Params["text"], "Статус: Отменена")
