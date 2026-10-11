@@ -21,6 +21,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/outbox"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/queue"
+	"github.com/jack5505/taskflow/api/internal/sprint"
 	"github.com/jack5505/taskflow/api/internal/task"
 )
 
@@ -98,6 +99,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 			return notification.Cleanup(ctx, g, time.Now())
 		})
 	}()
+	wg.Go(func() { sprint.RunSnapshots(ctx, g) }) // снимки спринтов в 00:00 по поясу проекта (§3.8)
 	go func() {
 		defer wg.Done()
 		runEvery(ctx, "timers stop", time.Minute, stopTimers)

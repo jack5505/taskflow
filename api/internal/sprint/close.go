@@ -26,7 +26,8 @@ type Summary struct {
 
 // Close — завершение активного спринта (§5.4). Незакрытые задачи (todo, in_progress, review)
 // переносятся в бэклог (moveTo == nil) или в запланированный спринт этого проекта; done и
-// cancelled остаются. Спринт переходит в closed, заполняется closed_at; событие sprint.closed.
+// cancelled остаются. Спринт переходит в closed, заполняется closed_at; снимок спринта на момент
+// закрытия (§3.8); событие sprint.closed.
 func (s *Service) Close(ctx context.Context, u *user.User, id uuid.UUID, moveTo *uuid.UUID) (*View, *Summary, error) {
 	var v *View
 	var sum Summary
@@ -41,6 +42,10 @@ func (s *Service) Close(ctx context.Context, u *user.User, id uuid.UUID, moveTo 
 				COALESCE(SUM(estimate_minutes), 0) AS estimate_minutes, COALESCE(SUM(spent_minutes), 0) AS spent_minutes
 			FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL AND status <> 'cancelled'`, sp.ID).Scan(&sum).Error; err != nil {
 			return fmt.Errorf("sprint: summary: %w", err)
+		}
+		// Снимок закрытия (§3.8) — до переноса: незакрытые на момент закрытия попадают в берндаун.
+		if err := snapshotOnClose(tx, sp.ID, s.now()); err != nil {
+			return err
 		}
 		// Удалённые незакрытые — тоже: иначе восстановление вернуло бы их в закрытый спринт (§5.4).
 		keys, err := task.MoveSprintTasks(tx, p.ID, sp.ID, moveTo, task.SprintMove{OnlyOpen: true, IncludeDeleted: true}, u.ID)

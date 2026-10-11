@@ -221,10 +221,55 @@ export interface ProjectUpdateRequest {
   timezone?: string;
 }
 
+export interface SprintChange {
+  at?: string;
+  /** null — система */
+  by?: string | null;
+  key?: string;
+  task_id?: string;
+  title?: string;
+}
+
+export interface SprintPoint {
+  /** @example "2026-10-13" */
+  date?: string;
+  done_tasks?: number | null;
+  /** @example 36 */
+  ideal_hours?: number;
+  open_estimate_minutes?: number | null;
+  open_tasks?: number | null;
+  /** @example 30.5 */
+  remaining_hours?: number | null;
+}
+
+export interface SprintReport {
+  /** Added, Removed — задачи, добавленные и убранные после старта (журнал спринта §5.3). */
+  added?: SprintChange[];
+  /** Burndown — по точке на каждый день спринта, от start_date до end_date включительно. */
+  burndown?: SprintPoint[];
+  /** Current — задачи и сумма оценок сейчас; у завершённого — на момент закрытия. */
+  current?: SprintTotals;
+  removed?: SprintChange[];
+  /** Spent — списанное время по задачам спринта с разбивкой по исполнителям, SpentMinutes — итог. */
+  spent?: SprintSpent[];
+  spent_minutes?: number;
+  sprint?: SprintView;
+  /** Start — объём на старте (§5.2), не меняется. */
+  start?: SprintScope;
+}
+
 export interface SprintScope {
   estimate_minutes?: number;
   tasks?: number;
   without_estimate?: number;
+}
+
+export interface SprintSpent {
+  display_name?: string;
+  /** @example 2.5 */
+  hours?: number;
+  minutes?: number;
+  user_id?: string;
 }
 
 export interface SprintSummary {
@@ -234,6 +279,11 @@ export interface SprintSummary {
   moved_keys?: string[];
   spent_minutes?: number;
   total?: number;
+}
+
+export interface SprintTotals {
+  estimate_minutes?: number;
+  tasks?: number;
 }
 
 export interface SprintView {
@@ -1605,6 +1655,24 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Участник проекта (§5.6, §9.2); только active и closed, у planned — 409 INVALID_TRANSITION (details.reason = planned). Объём на старте (без оценки: without_estimate) и сейчас (у завершённого — на момент закрытия), задачи, добавленные и убранные после старта, списанное время по исполнителям, берндаун: точка на каждый день спринта из ежедневных снимков (remaining_hours = null — снимка за день нет) и идеальная прямая от объёма на старте до нуля.
+     *
+     * @tags sprints
+     * @name V1SprintsReportList
+     * @summary Отчёт по спринту
+     * @request GET:/api/v1/sprints/{id}/report
+     * @secure
+     */
+    v1SprintsReportList: (id: string, params: RequestParams = {}) =>
+      this.request<SprintReport, ApierrResponse>({
+        path: `/api/v1/sprints/${id}/report`,
+        method: "GET",
+        secure: true,
         format: "json",
         ...params,
       }),
