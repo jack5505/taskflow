@@ -47,8 +47,6 @@ var texts = template.Must(template.New("bot").Parse(`
 {{with .Details}}{{range $i, $d := .}}{{if $i}} · {{end}}{{html $d}}{{end}}
 {{end}}Статус: {{.Status}} · Исполнитель: {{html .Assignee}}{{end}}
 {{define "card_deleted"}}🗑 Задача удалена: {{html .Key}} «{{html .Title}}»{{end}}
-{{define "button_take"}}Взять в работу{{end}}
-{{define "button_open"}}Открыть{{end}}
 
 {{- /* Сообщения в группу по событиям, §8.6 (без разметки) */}}
 {{define "ev_taken"}}🛠 {{.Key}} «{{.Title}}» взята в работу — {{.Assignee}}{{end}}
@@ -67,6 +65,58 @@ var texts = template.Must(template.New("bot").Parse(`
 …и другие: /tasks{{end}}{{end}}
 {{define "ev_sprint_closed"}}🏁 {{.Name}} завершён: готово {{.Done}} из {{.Total}}, перенесено {{.Moved}}, списано {{.Spent}}{{end}}
 {{define "button_take_key"}}Взять {{.}}{{end}}
+{{- /* Личные уведомления, §8.7. Обычный текст без разметки. */}}
+{{define "p_assigned"}}📌 Вас назначили исполнителем {{.Key}} «{{.Title}}» — {{.By}}{{end}}
+{{define "p_rework"}}🔁 {{.Key}} «{{.Title}}» возвращена на доработку — {{.By}}: {{.Comment}}{{end}}
+{{define "p_accepted"}}✅ {{.Key}} «{{.Title}}» принята — {{.By}}{{end}}
+{{define "p_cancelled"}}❌ {{.Key}} «{{.Title}}» отменена — {{.By}}: {{.Comment}}{{end}}
+{{define "p_comment"}}💬 {{.By}} к {{.Key}} «{{.Title}}»: {{.Body}}{{end}}
+{{define "p_review"}}🔍 {{.Key}} «{{.Title}}» отправлена на проверку — {{.By}}{{end}}
+{{define "p_timer_stopped"}}⏹ Таймер на {{.Key}} «{{.Title}}» остановлен автоматически через 12 часов, списано {{.Spent}}{{end}}
+{{define "p_worklog_trimmed"}}✂️ Запись таймера на {{.Key}} «{{.Title}}» за {{.Date}} обрезана по дневному лимиту 24 часа: списано {{.Spent}} из {{.Requested}}{{end}}
+{{define "p_task_deleted"}}🗑 {{.Key}} «{{.Title}}» удалена — {{.By}}{{end}}
+{{define "p_member_added"}}👥 Вас добавили в проект {{.Key}} «{{.Name}}», роль: {{.Role}} — {{.By}}{{end}}
+{{define "p_member_removed"}}👥 Вас исключили из проекта {{.Key}} «{{.Name}}» — {{.By}}{{end}}
+{{define "p_member_role"}}👥 Ваша роль в проекте {{.Key}} «{{.Name}}» изменена: {{.OldRole}} → {{.Role}} — {{.By}}{{end}}
+{{define "role_manager"}}менеджер{{end}}
+{{define "role_member"}}участник{{end}}
+{{define "btn_take"}}Взять в работу{{end}}
+{{define "btn_open"}}Открыть{{end}}
+{{define "btn_accept"}}Принять{{end}}
+{{define "btn_rework"}}Вернуть{{end}}
+{{define "p_rework_prompt"}}Напишите следующим сообщением причину возврата {{.Key}} на доработку (не короче 5 символов){{end}}
+{{define "p_rework_short"}}Причина слишком короткая: нужно не меньше 5 символов. Напишите её ещё раз{{end}}
+{{define "p_accept_done"}}{{.Key}} принята{{end}}
+{{define "p_rework_done"}}{{.Key}} возвращена на доработку{{end}}
+{{define "p_mark_accepted"}}✅ Принята{{end}}
+{{define "p_mark_reworked"}}🔁 Возвращена на доработку{{end}}
+{{define "p_not_in_review"}}Задача {{.Key}} уже не на проверке, статус: {{.Status}}{{end}}
+{{define "p_rework_forbidden"}}Вернуть на доработку может автор задачи или менеджер проекта{{end}}
+{{define "p_task_not_found"}}Задача не найдена{{end}}
+{{define "p_archived"}}Проект {{.Key}} в архиве, изменения недоступны{{end}}
+
+{{- /* По расписанию: напоминания о сроке (§8.7) и ежедневная сводка в группу (§8.6). */}}
+{{define "p_due_tomorrow"}}⏰ Срок {{.Key}} «{{.Title}}» завтра, {{.Date}}{{end}}
+{{define "p_overdue"}}⚠️ Срок {{.Key}} «{{.Title}}» просрочен: {{.Date}}{{end}}
+{{define "daily_summary"}}📊 Сводка {{.Key}} «{{.Name}}» на {{.Date}}
+{{with .Sprint}}
+🏃 {{.Name}}{{if .Dates}}: {{.Dates}}{{end}}
+{{.Statuses}}
+Списано {{.Spent}} из {{.Estimate}}
+{{else}}
+Нет активного спринта
+{{end}}
+{{- if .Overdue}}
+⚠️ Просрочено:
+{{- range .Overdue}}
+{{.Key}} «{{.Title}}» — {{.Assignee}}, срок {{.Due}}
+{{- end}}
+{{- if .More}}
+и ещё {{.More}}
+{{- end}}
+{{- else}}
+Просроченных задач нет
+{{- end}}{{end}}
 `))
 
 // Text — текст по имени шаблона. Ошибка шаблона — ошибка кода; она пишется в лог,

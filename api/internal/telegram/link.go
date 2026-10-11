@@ -45,6 +45,8 @@ func RequireLinked(accounts *Accounts) Middleware {
 			if u != nil {
 				r.User = u
 				ctx = audit.WithSource(audit.WithActor(ctx, u.ID), audit.SourceBot)
+			} else if r.IsText() {
+				return nil // обычный текст — не команда: непривязанному не отвечаем
 			} else if r.IsCallback() || !publicCommands[r.Command] {
 				return r.Answer(ctx, Text("not_linked", nil), true)
 			}

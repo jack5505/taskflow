@@ -24,20 +24,24 @@ api/                 Go: один бинарник `taskflow` с режимам�
   migrations/        SQL-миграции golang-migrate
   Dockerfile         многоэтапная сборка: web → go → alpine
 web/                 React + TypeScript (Vite)
+loadtest/            нагрузочный тест k6 (ТЗ §10.4) и запуск на временном стенде
 docs/TZ.md           техническое задание
+docs/DEPLOY.md       развёртывание и сопровождение стенда
+deploy/              скрипты выкладки, бэкапа и восстановления
 docker-compose.yml   api, worker, postgres, redis
 Makefile             сборка и тесты через docker, без локального Go
 ```
 
 ## Запуск стенда
 
+Развёртывание на сервере, переменные окружения, обновление по тегу, откат, бэкап и проверка восстановления — [docs/DEPLOY.md](docs/DEPLOY.md). Локально из исходников:
+
 ```bash
-cp .env.example .env        # заполнить секреты
+cp .env.example .env        # заполнить JWT_SECRET (не короче 32 символов)
 make up                     # docker compose up -d --build --wait
 curl -s localhost:8100/health
+docker compose exec api /app/taskflow admin create --email admin@example.com   # ссылка на пароль — в консоли
 ```
-
-Снаружи сервис открывается через nginx сервера по адресу https://tasks.157.173.109.181.nip.io (ТЗ §10.2).
 
 ## Разработка
 
@@ -54,6 +58,10 @@ make swag         # Swagger 2.0 из аннотаций → /api/docs
 
 Первый администратор создаётся командой `docker compose exec api /app/taskflow admin create --email <email>` (ТЗ §7.1).
 
+## Нагрузочный тест (ТЗ §10.4)
+
+`loadtest/run.sh` собирает образ из текущих исходников, поднимает временный стенд отдельным compose-проектом (свои контейнеры и тома, рабочий стенд не задевается), заполняет базу генератором `api/cmd/loadgen` (200 пользователей, 50 проектов, 100 000 задач, 1 000 000 записей времени) и гоняет `loadtest/k6.js`: 50 пользователей открывают доску, список задач, карточку и отчёт за месяц. Пороги — p95 < 300 мс для доски, карточки и списка, < 3 с для отчёта; итог k6 пишется в `loadtest/summary.txt`, стенд и образ после прогона удаляются. Около 6 минут; нужен только docker. Генератор пишет только в пустую базу.
+
 ## CI/CD и стенд
 
-GitHub Actions на каждый PR: `go vet`, golangci-lint, тесты с порогом покрытия 80%, eslint, сборка фронтенда и Docker-образа, shellcheck. Тег `vX.Y.Z` публикует образ в GHCR и создаёт GitHub Release; выкладка на стенд — `deploy/deploy.sh vX.Y.Z` с откатом при неудаче `/health`. Бэкап, восстановление, nginx и сертификат — в [deploy/README.md](deploy/README.md).
+GitHub Actions на каждый PR: `go vet`, golangci-lint, тесты с порогом покрытия 80%, eslint, сборка фронтенда и Docker-образа, shellcheck. Тег `vX.Y.Z` публикует образ в GHCR и создаёт GitHub Release; выкладка на стенд — `deploy/deploy.sh vX.Y.Z` с откатом при неудаче `/health`. Бэкап, восстановление, nginx и сертификат — в [docs/DEPLOY.md](docs/DEPLOY.md).
