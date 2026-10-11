@@ -88,11 +88,11 @@ func NewService(db *gorm.DB, projects *project.Service) *Service {
 	return &Service{db: db, projects: projects, now: time.Now}
 }
 
-const viewSelect = `SELECT s.*,
-	(SELECT count(*) FROM tasks t WHERE t.sprint_id = s.id AND t.deleted_at IS NULL) AS tasks_count,
-	(SELECT COALESCE(SUM(t.estimate_minutes), 0) FROM tasks t WHERE t.sprint_id = s.id AND t.deleted_at IS NULL) AS estimate_minutes,
+const viewSelect = `SELECT s.*, c.tasks_count, c.estimate_minutes,
 	(s.state = 'active' AND s.end_date < (?::timestamptz AT TIME ZONE p.timezone)::date) AS overdue
-	FROM sprints s JOIN projects p ON p.id = s.project_id`
+	FROM sprints s JOIN projects p ON p.id = s.project_id
+	CROSS JOIN LATERAL (SELECT count(*) AS tasks_count, COALESCE(SUM(t.estimate_minutes), 0) AS estimate_minutes
+		FROM tasks t WHERE t.sprint_id = s.id AND t.deleted_at IS NULL) c`
 
 // List — спринты проекта: активный, запланированные по дате начала, затем закрытые (новые первыми).
 func (s *Service) List(ctx context.Context, a *project.Access) ([]View, error) {
@@ -165,16 +165,24 @@ func (s *Service) Create(ctx context.Context, a *project.Access, in Input) (*Vie
 	}
 	var v *View
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		p, err := lockProject(tx, a)
+		p, err := project.LockForUpdate(tx, a.Project.ID)
 		if err != nil {
 			return err
 		}
+		if err := project.EnsureWritable(p); err != nil {
+			return err
+		}
+		manager, err := project.ManagerIn(tx, p.ID, a.UserID())
+		if err != nil {
+			return err
+		}
+		if !manager {
+			return ErrForbidden
+		}
 		if in.Name == nil {
-			var n int64
-			if err := tx.Model(&Sprint{}).Where("project_id = ?", p.ID).Count(&n).Error; err != nil {
-				return fmt.Errorf("sprint: count: %w", err)
+			if sp.Name, err = defaultName(tx, p.ID); err != nil {
+				return err
 			}
-			sp.Name = fmt.Sprintf("Спринт %d", n+1)
 		}
 		if err := tx.Omit("ClosedAt", "CreatedAt", "UpdatedAt").Create(&sp).Error; err != nil {
 			return fmt.Errorf("sprint: create: %w", err)
@@ -247,17 +255,18 @@ func (s *Service) Start(ctx context.Context, u *user.User, id uuid.UUID) (*View,
 		if err := checkDates(sp, true); err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT count(*) AS tasks, COALESCE(SUM(estimate_minutes), 0) AS estimate_minutes,
-				count(*) FILTER (WHERE estimate_minutes IS NULL) AS without_estimate
-			FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL`, sp.ID).Scan(&scope).Error; err != nil {
+		// Объём на старте одним запросом: задачи спринта читаются один раз.
+		if err := tx.Raw(`WITH t AS MATERIALIZED (
+				SELECT id, estimate_minutes FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL),
+			ins AS (INSERT INTO sprint_start_scope (sprint_id, task_id, estimate_minutes)
+				SELECT ?, id, COALESCE(estimate_minutes, 0) FROM t)
+			SELECT count(*) AS tasks, COALESCE(SUM(estimate_minutes), 0) AS estimate_minutes,
+				count(*) FILTER (WHERE estimate_minutes IS NULL) AS without_estimate FROM t`, sp.ID, sp.ID).
+			Scan(&scope).Error; err != nil {
 			return fmt.Errorf("sprint: scope: %w", err)
 		}
 		if scope.Tasks == 0 {
 			return conflict("empty", "В спринте нет задач")
-		}
-		if err := tx.Exec(`INSERT INTO sprint_start_scope (sprint_id, task_id, estimate_minutes)
-			SELECT ?, id, COALESCE(estimate_minutes, 0) FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL`, sp.ID, sp.ID).Error; err != nil {
-			return fmt.Errorf("sprint: scope save: %w", err)
 		}
 		if err := tx.Model(sp).Updates(map[string]any{"state": StateActive}).Error; err != nil {
 			return fmt.Errorf("sprint: start: %w", err)
@@ -279,10 +288,10 @@ func (s *Service) Start(ctx context.Context, u *user.User, id uuid.UUID) (*View,
 	return v, &scope, nil
 }
 
-// locked — спринт FOR UPDATE, затем проект FOR UPDATE (§5: запуск, завершение и удаление — под
-// блокировкой строки проекта). Порядок «спринт → проект» тот же, что у изменений задач
-// («спринт → задача → проект»), иначе встречные транзакции встали бы в deadlock. Права менеджера
-// и архив проверяются под блокировкой.
+// locked — спринт FOR UPDATE, его задачи FOR UPDATE, затем проект FOR UPDATE (§5: запуск,
+// завершение и удаление — под блокировкой строки проекта). Порядок «спринт → задачи → проект» тот
+// же, что у изменений задач («спринт → задача → проект»): встречные транзакции не встают в deadlock.
+// Права менеджера и архив проверяются под блокировкой.
 func (s *Service) locked(ctx context.Context, u *user.User, id uuid.UUID, fn func(*gorm.DB, *Sprint, *project.Project) error) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var sp Sprint
@@ -293,64 +302,51 @@ func (s *Service) locked(ctx context.Context, u *user.User, id uuid.UUID, fn fun
 		if res.RowsAffected == 0 {
 			return ErrNotFound
 		}
-		var p project.Project
-		pr := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR UPDATE`, sp.ProjectID).Scan(&p)
-		if pr.Error != nil {
-			return fmt.Errorf("sprint: project: %w", pr.Error)
+		// Задачи спринта — раньше проекта: тот же порядок, что у правок задач (задача → проект),
+		// иначе правка задачи этого спринта и запуск/удаление встали бы в deadlock.
+		if err := tx.Exec(`SELECT id FROM tasks WHERE sprint_id = ? ORDER BY id FOR UPDATE`, sp.ID).Error; err != nil {
+			return fmt.Errorf("sprint: lock tasks: %w", err)
 		}
-		if pr.RowsAffected == 0 {
+		p, err := project.LockForUpdate(tx, sp.ProjectID)
+		if errors.Is(err, project.ErrNotFound) {
 			return ErrNotFound
 		}
-		manager, err := canManage(tx, p.ID, u.ID)
+		if err != nil {
+			return err
+		}
+		manager, err := project.ManagerIn(tx, p.ID, u.ID)
+		if errors.Is(err, project.ErrNotFound) {
+			return ErrNotFound
+		}
 		if err != nil {
 			return err
 		}
 		if !manager {
 			return ErrForbidden
 		}
-		if err := project.EnsureWritable(&p); err != nil {
+		if err := project.EnsureWritable(p); err != nil {
 			return err
 		}
-		return fn(tx, &sp, &p)
+		return fn(tx, &sp, p)
 	})
 }
 
-// lockProject — строка проекта FOR UPDATE с перепроверкой прав и архива (создание спринта).
-func lockProject(tx *gorm.DB, a *project.Access) (*project.Project, error) {
-	var p project.Project
-	res := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR UPDATE`, a.Project.ID).Scan(&p)
-	if res.Error != nil {
-		return nil, fmt.Errorf("sprint: project: %w", res.Error)
+// defaultName — «Спринт N» (§3.4): N — порядковый номер в проекте; после удаления спринта имя не
+// повторяет существующее.
+func defaultName(tx *gorm.DB, projectID uuid.UUID) (string, error) {
+	var names []string
+	if err := tx.Model(&Sprint{}).Where("project_id = ?", projectID).Pluck("name", &names).Error; err != nil {
+		return "", fmt.Errorf("sprint: names: %w", err)
 	}
-	if res.RowsAffected == 0 {
-		return nil, project.ErrNotFound
+	taken := make(map[string]bool, len(names))
+	for _, n := range names {
+		taken[n] = true
 	}
-	if err := project.EnsureWritable(&p); err != nil {
-		return nil, err
+	for n := len(names) + 1; ; n++ {
+		if name := fmt.Sprintf("Спринт %d", n); !taken[name] {
+			return name, nil
+		}
 	}
-	return &p, nil
-}
-
-// canManage — менеджер проекта или активный администратор системы; не участник — 404.
-func canManage(tx *gorm.DB, projectID, userID uuid.UUID) (bool, error) {
-	var me []struct {
-		IsSystemAdmin bool
-		IsActive      bool
-	}
-	if err := tx.Raw(`SELECT is_system_admin, is_active FROM users WHERE id = ?`, userID).Scan(&me).Error; err != nil {
-		return false, fmt.Errorf("sprint: actor: %w", err)
-	}
-	if len(me) == 0 || !me[0].IsActive {
-		return false, ErrNotFound
-	}
-	role, err := project.RoleIn(tx, projectID, userID)
-	if err != nil {
-		return false, err
-	}
-	if role == "" && !me[0].IsSystemAdmin {
-		return false, ErrNotFound
-	}
-	return me[0].IsSystemAdmin || role == project.RoleManager, nil
 }
 
 // apply — поля Input в спринт с проверками §3.4.

@@ -2,11 +2,13 @@ package task
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/audit"
+	"github.com/jack5505/taskflow/api/internal/events"
 )
 
 // SprintMove — какие задачи спринта переносить.
@@ -47,11 +49,24 @@ func MoveSprintTasks(tx *gorm.DB, projectID, from uuid.UUID, to *uuid.UUID, m Sp
 		append([]any{by, target, historySource(source)}, args...)...).Error; err != nil {
 		return nil, fmt.Errorf("task: sprint move history: %w", err)
 	}
-	var keys []string
+	var moved []struct {
+		ID  uuid.UUID
+		Key string
+	}
 	if err := tx.Raw(`UPDATE tasks t SET sprint_id = ?, position = ? + s.rn * ?, version = t.version + 1, updated_at = now()
 		FROM (SELECT id, row_number() OVER (ORDER BY position, number) AS rn FROM tasks WHERE `+cond+`) s
-		WHERE t.id = s.id RETURNING t.key`, append([]any{to, base, positionStep}, args...)...).Scan(&keys).Error; err != nil {
+		WHERE t.id = s.id RETURNING t.id, t.key`, append([]any{to, base, positionStep}, args...)...).Scan(&moved).Error; err != nil {
 		return nil, fmt.Errorf("task: sprint move: %w", err)
 	}
+	keys := make([]string, 0, len(moved))
+	for _, m := range moved {
+		keys = append(keys, m.Key)
+		if err := events.Publish(tx, events.TaskUpdated, map[string]any{
+			"task_id": m.ID, "key": m.Key, "project_id": projectID, "by": by, "fields": []string{"sprint_id", "position"},
+		}); err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(keys)
 	return keys, nil
 }

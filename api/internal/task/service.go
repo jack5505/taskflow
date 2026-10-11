@@ -102,7 +102,7 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 			return err
 		}
 		// Под блокировкой проекта состав участников не меняется: перепроверяем права и исполнителя.
-		manager, err := canManage(tx, p.ID, u.ID)
+		manager, err := project.ManagerIn(tx, p.ID, u.ID)
 		if err != nil {
 			return err
 		}
@@ -228,26 +228,6 @@ func checkAssignee(tx *gorm.DB, projectID, userID uuid.UUID) error {
 		return fieldError("assignee_id", "не активный участник проекта")
 	}
 	return nil
-}
-
-// canManage — права менеджера (§2) по состоянию в транзакции: менеджер проекта или
-// администратор системы. Не участник и не администратор — 404.
-func canManage(tx *gorm.DB, projectID, userID uuid.UUID) (bool, error) {
-	var admin []bool
-	if err := tx.Raw(`SELECT is_system_admin FROM users WHERE id = ? AND is_active`, userID).Scan(&admin).Error; err != nil {
-		return false, fmt.Errorf("task: actor: %w", err)
-	}
-	if len(admin) == 0 {
-		return false, ErrNotFound
-	}
-	role, err := project.RoleIn(tx, projectID, userID)
-	if err != nil {
-		return false, err
-	}
-	if role == "" && !admin[0] {
-		return false, project.ErrNotFound
-	}
-	return admin[0] || role == project.RoleManager, nil
 }
 
 // endOfSection — позиция в конце секции (спринт или бэклог). Ветки на nil нужны индексу

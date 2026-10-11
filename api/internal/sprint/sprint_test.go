@@ -21,6 +21,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/queue"
 	"github.com/jack5505/taskflow/api/internal/sprint"
+	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/testutil"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -283,4 +284,70 @@ func TestListOrderCountsAndOverdue(t *testing.T) {
 		require.Equal(t, 45, list[0].EstimateMinutes)
 		require.Equal(t, want, list[0].Overdue, now)
 	}
+}
+
+// Ревью #96: правка задачи спринта одновременно с его запуском или удалением — без deadlock.
+func TestSprintOpsVsTaskEditsNoDeadlock(t *testing.T) {
+	f := newFixture(t)
+	svc := sprint.NewService(f.db, project.NewService(f.db))
+	tasks := task.NewService(f.db, project.NewService(f.db))
+	for i := range 10 {
+		s := f.sprint(t, `{`+dates+`}`)
+		key := f.task(t, s, "30")
+		v := f.taskVersion(t, key)
+		var wg sync.WaitGroup
+		var editErr, opErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			title := "Правка во время операции"
+			_, editErr = tasks.Update(context.Background(), f.managerU, key, []int{v}, task.UpdateInput{Title: task.Opt[string]{Set: true, Value: &title}})
+		}()
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				_, _, opErr = svc.Start(context.Background(), f.managerU, uuid.MustParse(s))
+			} else {
+				opErr = svc.Delete(context.Background(), f.managerU, uuid.MustParse(s))
+			}
+		}()
+		wg.Wait()
+		if editErr != nil {
+			require.Equal(t, apierr.CodeVersionConflict, apierr.From(editErr).Code, editErr.Error())
+		}
+		require.NoError(t, opErr)
+		if i%2 == 0 {
+			// освободить «активный» слот проекта для следующей итерации
+			require.NoError(t, f.db.Exec(`UPDATE sprints SET state = 'closed' WHERE id = ?`, s).Error)
+		}
+	}
+}
+
+func (f *fixture) taskVersion(t *testing.T, key string) int {
+	t.Helper()
+	var v int
+	require.NoError(t, f.db.Raw(`SELECT version FROM tasks WHERE key = ?`, key).Scan(&v).Error)
+	return v
+}
+
+// Ревью #96: «Спринт N» не повторяется после удаления; перенос задач удалённого спринта —
+// с событиями task.updated; права при создании перепроверяются под блокировкой.
+func TestSprintReviewFixes(t *testing.T) {
+	f := newFixture(t)
+	first := f.sprint(t, `{}`)
+	f.sprint(t, `{}`)
+	key := f.task(t, first, "")
+	rec, _ := f.do(t, "DELETE", "/api/v1/sprints/"+first, f.manager, "")
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	_, b := f.do(t, "POST", "/api/v1/projects/"+f.p.Key+"/sprints", f.manager, `{}`)
+	require.Equal(t, "Спринт 3", b["name"], "не «Спринт 2» повторно")
+	var ev int64
+	require.NoError(t, f.db.Raw(`SELECT count(*) FROM outbox_events WHERE type = 'task.updated' AND payload->>'key' = ?`, key).Scan(&ev).Error)
+	require.EqualValues(t, 1, ev)
+
+	a, err := project.NewService(f.db).Access(context.Background(), f.managerU, f.p.Key)
+	require.NoError(t, err)
+	require.NoError(t, f.db.Exec(`UPDATE project_members SET role = 'member' WHERE user_id = ?`, f.managerU.ID).Error)
+	_, err = sprint.NewService(f.db, project.NewService(f.db)).Create(context.Background(), a, sprint.Input{})
+	require.ErrorIs(t, err, sprint.ErrForbidden)
 }

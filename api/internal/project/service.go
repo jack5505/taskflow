@@ -46,6 +46,9 @@ type Access struct {
 	userID  uuid.UUID
 }
 
+// UserID — кто получил доступ (для перепроверки прав под блокировкой в других доменах).
+func (a *Access) UserID() uuid.UUID { return a.userID }
+
 // CanManage — права менеджера проекта (§2): администратор системы или менеджер.
 func (a *Access) CanManage() bool { return a.Admin || a.Role == RoleManager }
 
@@ -471,6 +474,36 @@ func lockProject(tx *gorm.DB, where string, arg any, p *Project) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// LockForUpdate — строка неудалённого проекта FOR UPDATE (для операций других доменов, которым
+// §5 требует блокировку проекта); архив проверяет вызывающий через EnsureWritable.
+func LockForUpdate(tx *gorm.DB, id uuid.UUID) (*Project, error) {
+	var p Project
+	if err := lockProject(tx, "id = ?", id, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// ManagerIn — права менеджера (§2) по строкам в транзакции: менеджер проекта или администратор
+// системы, оба активные. Не участник (и не администратор) или деактивированный — ErrNotFound.
+func ManagerIn(tx *gorm.DB, projectID, userID uuid.UUID) (bool, error) {
+	var admin []bool
+	if err := tx.Raw(`SELECT is_system_admin FROM users WHERE id = ? AND is_active`, userID).Scan(&admin).Error; err != nil {
+		return false, fmt.Errorf("project: actor: %w", err)
+	}
+	if len(admin) == 0 {
+		return false, ErrNotFound
+	}
+	role, err := memberRole(tx, projectID, userID)
+	if err != nil {
+		return false, err
+	}
+	if role == "" && !admin[0] {
+		return false, ErrNotFound
+	}
+	return admin[0] || role == RoleManager, nil
 }
 
 // RoleIn — роль пользователя в проекте внутри транзакции, "" — не участник
