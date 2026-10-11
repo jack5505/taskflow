@@ -40,7 +40,9 @@ export function MyTasks() {
             {tasks.data.map((t) => (
               <tr key={t.key}>
                 <td className="nowrap">{t.key}</td>
-                <td>{t.title}</td>
+                <td>
+                  <Link to={`/tasks/${t.key}`}>{t.title}</Link>
+                </td>
                 <td>
                   <Link to={`/projects/${t.project_key}`}>{t.project_name}</Link>
                 </td>

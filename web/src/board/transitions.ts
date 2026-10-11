@@ -82,3 +82,28 @@ export function commentError(kind: "rework" | "cancel", comment: string): string
 export function needsNewAssignee(from: Status, to: Status, assigneeActive: boolean | undefined): boolean {
   return from === "done" && to === "in_progress" && assigneeActive === false;
 }
+
+/** Название перехода по схеме §4 — для кнопки статуса в карточке задачи. */
+export function transitionLabel(from: Status, to: Status): string {
+  if (to === "cancelled") return "Отменить";
+  switch (`${from}>${to}`) {
+    case "todo>in_progress":
+      return "Взять в работу";
+    case "in_progress>todo":
+      return "Отказаться";
+    case "in_progress>review":
+      return "На проверку";
+    case "review>in_progress":
+      return "Вернуть на доработку";
+    case "review>done":
+      return "Принять";
+    case "done>in_progress":
+      return "Переоткрыть";
+    case "cancelled>todo":
+      return "Вернуть в бэклог";
+  }
+  return to;
+}
+
+/** Все статусы в порядке схемы §4. */
+export const STATUSES: readonly Status[] = ["todo", "in_progress", "review", "done", "cancelled"];

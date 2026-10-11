@@ -13,12 +13,13 @@ import {
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router";
 import { api } from "../api";
-import type { ProjectListItem, ProjectMemberView, TaskListItem } from "../api/client";
+import type { TaskListItem } from "../api/client";
 import { errorText } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
-import { listQuery, myTasksQueryKey, projectsQueryKey } from "../projects/logic";
+import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
+import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { BoardCard, CardBody } from "./BoardCard";
 import { applyMove, boardQueryKey, groupByStatus } from "./cards";
 import { BoardFilters } from "./BoardFilters";
@@ -28,7 +29,6 @@ import {
   canTransition,
   commentRequirement,
   needsNewAssignee,
-  type Actor,
   type BoardStatus,
   type Status,
 } from "./transitions";
@@ -119,25 +119,10 @@ export function BoardPage() {
     [setParams],
   );
 
-  const project = useQuery({
-    queryKey: ["project", key],
-    queryFn: async ({ signal }) => (await api.api.v1ProjectsDetail(key, { signal })).data,
-  });
-  // Активный спринт — из карточки проекта в общем списке (тот же кэш, что на главной).
-  const listFilter = project.data?.is_archived ? "archived" : "active";
-  const projects = useQuery({
-    queryKey: [...projectsQueryKey, listFilter],
-    queryFn: async ({ signal }): Promise<ProjectListItem[]> =>
-      (await api.api.v1ProjectsList(listQuery(listFilter), { signal })).data ?? [],
-    enabled: project.isSuccess,
-  });
-  const members = useQuery({
-    queryKey: ["project-members", key],
-    queryFn: async ({ signal }): Promise<ProjectMemberView[]> =>
-      (await api.api.v1ProjectsMembersList(key, { signal })).data ?? [],
-  });
+  const project = useProject(key);
+  const { query: projects, sprint } = useActiveSprint(key, project.data);
+  const members = useProjectMembers(key);
 
-  const sprint = projects.data?.find((p) => p.key === key)?.active_sprint;
   const meId = me.data?.id;
   const query = sprint?.id ? tasksQuery(filter, sprint.id, meId) : null;
   const tasksKey: QueryKey = [...boardQueryKey(key), query];
@@ -152,15 +137,7 @@ export function BoardPage() {
 
   const memberById = useMemo(() => new Map((members.data ?? []).map((m) => [m.user_id, m])), [members.data]);
   const archived = project.data?.is_archived === true;
-  const actor: Actor | null =
-    me.data && project.data
-      ? {
-          userId: me.data.id ?? "",
-          // Администратор системы действует с правами менеджера (§2).
-          manager: project.data.my_role === "manager" || me.data.is_system_admin === true,
-          member: !!project.data.my_role,
-        }
-      : null;
+  const actor = actorFor(me.data, project.data);
 
   const [actionError, setActionError] = useState("");
   const [dialog, setDialog] = useState<DialogState | null>(null);

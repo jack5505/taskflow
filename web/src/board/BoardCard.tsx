@@ -1,4 +1,5 @@
 import { useDraggable } from "@dnd-kit/core";
+import { Link } from "react-router";
 import type { ProjectMemberView, TaskListItem } from "../api/client";
 import { formatSpentEstimate } from "../lib/duration";
 import { formatDate } from "../lib/format";
@@ -24,7 +25,7 @@ interface CardProps {
 }
 
 /** Содержимое карточки доски (ТЗ §7.3). Индикатор таймера появится вместе с таймером. */
-export function CardBody({ task: t, assignee }: CardProps) {
+export function CardBody({ task: t, assignee, linked = false }: CardProps & { linked?: boolean }) {
   const type = (t.type ?? "task") as TaskType;
   const priority = (t.priority ?? "medium") as Priority;
   const due = formatDate(t.due_date);
@@ -43,7 +44,10 @@ export function CardBody({ task: t, assignee }: CardProps) {
           {priorityIcons[priority]}
         </span>
       </div>
-      <div className="task-title">{t.title}</div>
+      <div className="task-title">
+        {/* Карточка задачи (§7.5); в окне перетаскивания — просто текст. */}
+        {linked ? <Link to={`/tasks/${t.key}`}>{t.title}</Link> : t.title}
+      </div>
       <div className="task-foot">
         <Avatar assigneeId={t.assignee_id} member={assignee} />
         <span className="muted" title="Списано / оценка">
@@ -82,7 +86,7 @@ export function BoardCard(
         className={props.draggable ? "task-drag draggable" : "task-drag"}
         {...(props.draggable ? { ...attributes, ...listeners, "aria-roledescription": "перетаскиваемая карточка" } : {})}
       >
-        <CardBody task={props.task} assignee={props.assignee} />
+        <CardBody task={props.task} assignee={props.assignee} linked />
       </div>
       {props.onTake && (
         <button

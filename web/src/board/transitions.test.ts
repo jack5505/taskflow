@@ -3,6 +3,8 @@ import {
   canTransition,
   commentError,
   commentRequirement,
+  STATUSES,
+  transitionLabel,
   isValidTransition,
   needsNewAssignee,
   type Actor,
@@ -118,5 +120,25 @@ describe("переоткрытие с деактивированным испо�
     expect(needsNewAssignee("done", "in_progress", true)).toBe(false);
     expect(needsNewAssignee("done", "in_progress", undefined)).toBe(false);
     expect(needsNewAssignee("review", "in_progress", false)).toBe(false);
+  });
+});
+
+describe("transitionLabel", () => {
+  it("каждый допустимый переход назван по §4", () => {
+    const got: string[] = [];
+    for (const from of STATUSES)
+      for (const to of STATUSES) if (isValidTransition(from, to)) got.push(`${from}>${to}: ${transitionLabel(from, to)}`);
+    expect(got).toEqual([
+      "todo>in_progress: Взять в работу",
+      "todo>cancelled: Отменить",
+      "in_progress>todo: Отказаться",
+      "in_progress>review: На проверку",
+      "in_progress>cancelled: Отменить",
+      "review>in_progress: Вернуть на доработку",
+      "review>done: Принять",
+      "review>cancelled: Отменить",
+      "done>in_progress: Переоткрыть",
+      "cancelled>todo: Вернуть в бэклог",
+    ]);
   });
 });

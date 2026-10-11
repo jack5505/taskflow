@@ -634,3 +634,248 @@ button.primary:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+
+/* Карточка задачи (ТЗ §7.5) */
+.task-page nav[aria-label="Путь"] {
+  margin-bottom: 8px;
+}
+
+.task-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 16px;
+}
+
+.task-heading {
+  flex: 1;
+  min-width: 0;
+  font-size: 22px;
+}
+
+.task-heading input {
+  width: 100%;
+  font-size: 20px;
+}
+
+.task-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-buttons .dropdown-menu {
+  left: auto;
+  right: 0;
+  padding: 4px 0;
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+}
+
+.status-badge {
+  padding: 4px 10px;
+  font-size: 14px;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+}
+
+button.link.danger {
+  color: var(--danger);
+}
+
+.inline-edit {
+  padding: 2px 6px;
+  margin-left: -6px;
+  border-color: transparent;
+  background: none;
+  font: inherit;
+  text-align: left;
+}
+
+.inline-edit:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+.inline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.field-error {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.task-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+  align-items: start;
+}
+
+.task-main h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.task-side {
+  max-width: none;
+}
+
+.task-fields {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  align-items: center;
+}
+
+.task-fields dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.task-fields dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.task-fields select,
+.task-fields input {
+  font: inherit;
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.task-fields .progress-row {
+  grid-column: 1 / -1;
+}
+
+.progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.progress.over span {
+  background: var(--danger);
+}
+
+.task-main .tabs {
+  margin: 8px 0 12px;
+}
+
+.markdown {
+  overflow-wrap: anywhere;
+}
+
+.markdown img {
+  max-width: 100%;
+}
+
+.markdown pre {
+  overflow: auto;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.md-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.md-editor .tabs {
+  align-items: center;
+}
+
+.md-editor textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.md-preview {
+  min-height: 80px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.comment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+
+.comment {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comment-actions {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.history .badge {
+  margin-left: 6px;
+}
+
+.modal.conflict {
+  width: 760px;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.conflict .table {
+  margin: 12px 0;
+}
+
+.conflict tr.clash {
+  background: #fff8c5;
+}
+
+.conflict .hint {
+  font-size: 13px;
+  color: var(--muted);
+}

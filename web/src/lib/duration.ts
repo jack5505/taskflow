@@ -15,3 +15,17 @@ export function formatDuration(minutes: number | null | undefined): string {
 export function formatSpentEstimate(spent: number | null | undefined, estimate: number | null | undefined): string {
   return `${formatDuration(spent ?? 0)} / ${formatDuration(estimate) || "—"}`;
 }
+
+const DURATION_RE = /^(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?$/i;
+
+/**
+ * «2h 30m», «45m», «3h», «1d» (= 8h) → минуты (§6.1): единицы d, h, m строго от большей к
+ * меньшей, пробелы между частями необязательны. Не подходит под формат — null.
+ */
+export function parseDuration(input: string): number | null {
+  const s = input.trim();
+  const m = DURATION_RE.exec(s);
+  if (!s || !m || (m[1] === undefined && m[2] === undefined && m[3] === undefined)) return null;
+  const [d, h, min] = [m[1], m[2], m[3]].map((v) => (v === undefined ? 0 : Number(v)));
+  return d! * 8 * 60 + h! * 60 + min!;
+}
