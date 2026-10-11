@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import { api } from "../api";
 import type { MeProfile, ProjectMemberView } from "../api/client";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { membersQueryKey, projectQueryKey, useProjectMembers } from "../projects/hooks";
+import { projectsQueryKey } from "../projects/logic";
 import { usersQueryKey, useUsers } from "./hooks";
 import { memberErrorText } from "./logic";
 
@@ -29,6 +31,7 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
   const members = useProjectMembers(projectKey);
   const [error, setError] = useState("");
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: membersQueryKey(projectKey) });
@@ -47,7 +50,15 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
   const remove = useMutation({
     mutationFn: (userId: string) => api.api.v1ProjectsMembersDelete(projectKey, userId),
     onMutate: () => setError(""),
-    onSuccess: refresh,
+    onSuccess: (_, userId) => {
+      // Менеджер исключил себя: проект ему больше не виден (404) — на список проектов.
+      if (userId === me.id && !admin) {
+        qc.invalidateQueries({ queryKey: projectsQueryKey });
+        navigate("/");
+        return;
+      }
+      refresh();
+    },
     onError: (e) => setError(memberErrorText(e, "remove")),
   });
 

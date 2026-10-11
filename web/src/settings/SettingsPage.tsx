@@ -24,7 +24,8 @@ export function SettingsPage() {
 
   const p = project.data;
   // В архивном проекте менять нельзя ничего (§3.2), кроме разархивации администратором.
-  const readOnly = !!p?.is_archived || !!p?.deleted_at;
+  // Удалённый проект сюда не попадает: GET /projects/{key} отдаёт 404, восстановление — в списке проектов.
+  const readOnly = !!p?.is_archived;
 
   let body;
   if (project.isError || me.isError) body = <p role="alert">{errorText(project.error ?? me.error)}</p>;
@@ -48,7 +49,6 @@ export function SettingsPage() {
           ))}
         </nav>
         {p.is_archived && <p className="notice">Проект в архиве: настройки только для чтения.</p>}
-        {p.deleted_at && <p className="notice">Проект удалён: настройки только для чтения.</p>}
         {/* key: при переходе в другой проект формы вкладок начинаются заново, а не с чужими значениями. */}
         <div className="settings-body" role="tabpanel" key={key}>
           {tab === "general" && <GeneralTab project={p} admin={admin} />}

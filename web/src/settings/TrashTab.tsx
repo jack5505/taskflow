@@ -7,6 +7,7 @@ import { useTimeZone } from "../auth/hooks";
 import { boardQueryKey } from "../board/cards";
 import { formatDateTime } from "../lib/format";
 import { myTasksQueryKey } from "../projects/logic";
+import { historyQueryKey, taskQueryKey } from "../task/keys";
 import { useUsers, userName } from "./hooks";
 import { trashItems } from "./logic";
 
@@ -48,12 +49,16 @@ export function TrashTab({ projectKey, readOnly }: { projectKey: string; readOnl
       ]);
       return trashItems(tasks, deletions);
     },
+    // Выборка тяжёлая (все задачи проекта и журнал удалений) — не повторять на каждый фокус окна.
+    staleTime: 60_000,
   });
 
   const restore = useMutation({
     mutationFn: (key: string) => api.api.v1TasksRestoreCreate(key),
-    onSuccess: () => {
+    onSuccess: (_, key) => {
       qc.invalidateQueries({ queryKey });
+      qc.invalidateQueries({ queryKey: taskQueryKey(key) });
+      qc.invalidateQueries({ queryKey: historyQueryKey(key) });
       // Задача вернулась на доску, в бэклог и «Мои задачи».
       qc.invalidateQueries({ queryKey: boardQueryKey(projectKey) });
       qc.invalidateQueries({ queryKey: myTasksQueryKey });

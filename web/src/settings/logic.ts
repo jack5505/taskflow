@@ -87,7 +87,11 @@ export function isValidTime(v: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 }
 
-/** Типы действий журнала (api/internal/audit) — для фильтра и подписи строки. */
+/**
+ * Типы действий журнала проекта (api/internal/audit) — для фильтра и подписи строки. user.*
+ * (создание, изменение, деактивация пользователя) пишутся без проекта и в журнал проекта не
+ * попадают — в фильтре их нет.
+ */
 export const AUDIT_ACTIONS: { value: string; label: string }[] = [
   { value: "project.created", label: "Проект создан" },
   { value: "project.updated", label: "Настройки проекта изменены" },
@@ -98,10 +102,6 @@ export const AUDIT_ACTIONS: { value: string; label: string }[] = [
   { value: "member.added", label: "Участник добавлен" },
   { value: "member.role_changed", label: "Роль изменена" },
   { value: "member.removed", label: "Участник исключён" },
-  { value: "user.created", label: "Пользователь создан" },
-  { value: "user.updated", label: "Пользователь изменён" },
-  { value: "user.deactivated", label: "Пользователь деактивирован" },
-  { value: "user.activated", label: "Пользователь активирован" },
   { value: "task.deleted", label: "Задача удалена" },
   { value: "task.restored", label: "Задача восстановлена" },
   { value: "worklog.updated", label: "Чужая запись времени изменена" },
@@ -138,6 +138,29 @@ export function auditChanges(e: Pick<AuditEntry, "old_value" | "new_value">): st
     if (!(f in newV)) return `${f}: ${show(oldV[f])} → —`;
     return `${f}: ${show(oldV[f])} → ${show(newV[f])}`;
   });
+}
+
+/**
+ * Над чем действие: задача — её ключ, участник — имя пользователя, запись времени — задача и
+ * чья запись; проект — пусто (журнал и так по проекту).
+ */
+export function auditEntity(
+  e: Pick<AuditEntry, "entity_type" | "entity_id" | "old_value" | "new_value">,
+  nameOf: (userId: string) => string,
+): string {
+  const v = { ...((e.old_value ?? {}) as Record<string, unknown>), ...((e.new_value ?? {}) as Record<string, unknown>) };
+  switch (e.entity_type) {
+    case "task":
+      return String(v.key ?? e.entity_id ?? "");
+    case "user":
+      return e.entity_id ? nameOf(e.entity_id) : "";
+    case "worklog": {
+      const who = typeof v.user_id === "string" ? nameOf(v.user_id) : "";
+      return [v.task_key, who].filter(Boolean).join(", ");
+    }
+    default:
+      return "";
+  }
 }
 
 /** Запрос журнала из фильтров формы: пустые поля не передаём. */

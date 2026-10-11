@@ -5,7 +5,7 @@ import { errorText } from "../api/errors";
 import { useTimeZone } from "../auth/hooks";
 import { formatDateTime } from "../lib/format";
 import { useUsers, userName } from "./hooks";
-import { AUDIT_ACTIONS, auditActionLabel, auditChanges, auditQuery, auditSourceLabel } from "./logic";
+import { AUDIT_ACTIONS, auditActionLabel, auditChanges, auditEntity, auditQuery, auditSourceLabel } from "./logic";
 
 const emptyFilter = { from: "", to: "", userId: "", action: "" };
 
@@ -71,6 +71,7 @@ export function AuditTab({ projectKey }: { projectKey: string }) {
               <th>Когда</th>
               <th>Кто</th>
               <th>Действие</th>
+              <th>Над чем</th>
               <th>Изменения</th>
             </tr>
           </thead>
@@ -83,6 +84,7 @@ export function AuditTab({ projectKey }: { projectKey: string }) {
                   {e.source && <span className="badge">{auditSourceLabel(e.source)}</span>}
                 </td>
                 <td>{auditActionLabel(e.action)}</td>
+                <td>{auditEntity(e, (id) => userName(users.data, id))}</td>
                 <td>
                   {auditChanges(e).map((line) => (
                     <div key={line}>{line}</div>

@@ -14,7 +14,7 @@ import { useUpdateProject } from "./hooks";
  */
 export function GeneralTab({ project, admin }: { project: ProjectView; admin: boolean }) {
   const key = project.key ?? "";
-  const readOnly = !!project.is_archived || !!project.deleted_at;
+  const readOnly = !!project.is_archived;
   const [name, setName] = useState(project.name ?? "");
   const [description, setDescription] = useState(project.description ?? "");
   const [timezone, setTimezone] = useState(project.timezone ?? "");
@@ -31,13 +31,6 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
       qc.invalidateQueries({ queryKey: projectsQueryKey });
       qc.removeQueries({ queryKey: projectQueryKey(key) });
       navigate("/");
-    },
-  });
-  const restore = useMutation({
-    mutationFn: async () => (await api.api.v1ProjectsRestoreCreate(key)).data,
-    onSuccess: (p) => {
-      qc.setQueryData(projectQueryKey(key), p);
-      qc.invalidateQueries({ queryKey: projectsQueryKey });
     },
   });
 
@@ -62,7 +55,7 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
     update.mutate(body, { onSuccess: () => setSaved(true) });
   };
 
-  const adminError = archive.error ?? remove.error ?? restore.error;
+  const adminError = archive.error ?? remove.error;
 
   return (
     <>
@@ -121,29 +114,21 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
           </p>
           {adminError && <p role="alert">{errorText(adminError)}</p>}
           <div className="actions">
-            {project.deleted_at ? (
-              <button type="button" disabled={restore.isPending} onClick={() => restore.mutate()}>
-                Восстановить проект
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={archive.isPending}
-                  onClick={() => archive.mutate({ is_archived: !project.is_archived })}
-                >
-                  {project.is_archived ? "Вернуть из архива" : "Архивировать"}
-                </button>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={remove.isPending}
-                  onClick={() => window.confirm(`Удалить проект ${key}?`) && remove.mutate()}
-                >
-                  Удалить проект
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              disabled={archive.isPending}
+              onClick={() => archive.mutate({ is_archived: !project.is_archived })}
+            >
+              {project.is_archived ? "Вернуть из архива" : "Архивировать"}
+            </button>
+            <button
+              type="button"
+              className="danger"
+              disabled={remove.isPending}
+              onClick={() => window.confirm(`Удалить проект ${key}?`) && remove.mutate()}
+            >
+              Удалить проект
+            </button>
           </div>
         </section>
       )}

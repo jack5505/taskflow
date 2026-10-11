@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { TaskListItem } from "../api/client";
 import {
+  AUDIT_ACTIONS,
   auditActionLabel,
   auditChanges,
+  auditEntity,
   auditQuery,
   changedEvents,
   effectiveEvents,
@@ -122,6 +124,21 @@ describe("журнал аудита §3.8", () => {
       auditChanges({ old_value: { role: "manager", name: "A" }, new_value: { role: "member", is_active: false } }),
     ).toEqual(["role: manager → member", "name: A → —", "is_active: нет"]);
     expect(auditChanges({})).toEqual([]);
+  });
+
+  it("над чем действие", () => {
+    const nameOf = (id: string) => (id === "u1" ? "Иван" : id);
+    expect(auditEntity({ entity_type: "user", entity_id: "u1", new_value: { role: "member" } }, nameOf)).toBe("Иван");
+    expect(auditEntity({ entity_type: "task", entity_id: "t1", new_value: { key: "TM-5" } }, nameOf)).toBe("TM-5");
+    expect(auditEntity({ entity_type: "task", entity_id: "t1" }, nameOf)).toBe("t1");
+    expect(
+      auditEntity({ entity_type: "worklog", entity_id: "w1", old_value: { task_key: "TM-7", user_id: "u1" } }, nameOf),
+    ).toBe("TM-7, Иван");
+    expect(auditEntity({ entity_type: "project", entity_id: "p1" }, nameOf)).toBe("");
+  });
+
+  it("фильтр не предлагает действий без проекта (user.*)", () => {
+    expect(AUDIT_ACTIONS.some((a) => a.value.startsWith("user."))).toBe(false);
   });
 
   it("пустые фильтры не передаются", () => {
