@@ -1,5 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { Link, Outlet } from "react-router";
+import { NotificationBell } from "../notifications/NotificationBell";
+import { HeaderTimer } from "../timer/HeaderTimer";
 import { logout as logoutRequest } from "../api";
 import { useMe } from "../auth/hooks";
 import { CreateTask } from "../task/CreateTask";
@@ -19,6 +21,10 @@ export function AppLayout() {
         <Link to="/" className="brand">
           TaskFlow
         </Link>
+        <div className="topbar-tools">
+          <HeaderTimer />
+          <NotificationBell />
+        </div>
         <div className="topbar-user">
           <CreateTask />
           <span>{me.data?.display_name || me.data?.email || ""}</span>
