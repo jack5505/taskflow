@@ -1,0 +1,63 @@
+# Одноразовый стенд для E2E (issue #46): тот же образ, что в проде, без томов — данные живут,
+# пока живут контейнеры. SMTP не настроен: команда admin create печатает ссылку установки
+# пароля в консоль, её и открывают тесты. Поднимается и убирается скриптом e2e/stack.sh.
+name: ${E2E_PROJECT:-taskflow-e2e}
+
+x-env: &env
+  APP_ADDR: ":8080"
+  APP_BASE_URL: "http://127.0.0.1:${E2E_PORT:-8199}"
+  APP_ENV: development
+  DATABASE_URL: postgres://taskflow:taskflow@postgres:5432/taskflow?sslmode=disable
+  REDIS_ADDR: redis:6379
+  JWT_SECRET: e2e-only-secret-0123456789abcdef0123456789
+  ATTACHMENTS_DIR: /data/attachments
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: api/Dockerfile
+    image: ${TASKFLOW_IMAGE:-taskflow:e2e}
+    command: ["api"]
+    environment: *env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "127.0.0.1:${E2E_PORT:-8199}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: ${TASKFLOW_IMAGE:-taskflow:e2e}
+    command: ["worker"]
+    environment: *env
+    depends_on:
+      api:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: taskflow
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: taskflow
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskflow"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
