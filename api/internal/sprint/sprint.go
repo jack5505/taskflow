@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -61,6 +62,15 @@ type Sprint struct {
 
 func (Sprint) TableName() string { return "sprints" }
 
+// startScope — строка sprint_start_scope: задача в объёме спринта на старте (§5.2), оценка без оценки — 0.
+type startScope struct {
+	SprintID        uuid.UUID `gorm:"type:uuid"`
+	TaskID          uuid.UUID `gorm:"type:uuid"`
+	EstimateMinutes int
+}
+
+func (startScope) TableName() string { return "sprint_start_scope" }
+
 // View — спринт в ответе: число задач и сумма оценок (итог секции §7.4), просрочен ли (§5.3:
 // активный после end_date по поясу проекта — помечается, но не закрывается).
 type View struct {
@@ -88,31 +98,76 @@ func NewService(db *gorm.DB, projects *project.Service) *Service {
 	return &Service{db: db, projects: projects, now: time.Now}
 }
 
-const viewSelect = `SELECT s.*, c.tasks_count, c.estimate_minutes,
-	(s.state = 'active' AND s.end_date < (?::timestamptz AT TIME ZONE p.timezone)::date) AS overdue
-	FROM sprints s JOIN projects p ON p.id = s.project_id
-	CROSS JOIN LATERAL (SELECT count(*) AS tasks_count, COALESCE(SUM(t.estimate_minutes), 0) AS estimate_minutes
-		FROM tasks t WHERE t.sprint_id = s.id AND t.deleted_at IS NULL) c`
-
-// List — спринты проекта: активный, запланированные по дате начала, затем закрытые (новые первыми).
-func (s *Service) List(ctx context.Context, a *project.Access) ([]View, error) {
-	list := []View{}
-	err := s.db.WithContext(ctx).Raw(viewSelect+` WHERE s.project_id = ?
-		ORDER BY CASE s.state WHEN 'active' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END,
-			CASE WHEN s.state = 'closed' THEN NULL ELSE s.start_date END NULLS LAST,
-			s.closed_at DESC NULLS LAST, s.created_at`, s.now(), a.Project.ID).Scan(&list).Error
+// views — представления спринтов rows: число неудалённых задач, сумма оценок и просрочка (§5.3:
+// активный после end_date по поясу проекта).
+func (s *Service) views(db *gorm.DB, rows []Sprint) ([]View, error) {
+	ids := make([]uuid.UUID, len(rows))
+	projectIDs := make([]uuid.UUID, 0, 1)
+	for i, sp := range rows {
+		ids[i] = sp.ID
+		if !slices.Contains(projectIDs, sp.ProjectID) {
+			projectIDs = append(projectIDs, sp.ProjectID)
+		}
+	}
+	totals, err := task.SprintTotalsOf(db, ids)
 	if err != nil {
-		return nil, fmt.Errorf("sprint: list: %w", err)
+		return nil, err
+	}
+	zones, err := project.Timezones(db, projectIDs, true)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	list := make([]View, len(rows))
+	for i, sp := range rows {
+		t := totals[sp.ID]
+		list[i] = View{Sprint: sp, TasksCount: t.Tasks, EstimateMinutes: t.EstimateMinutes}
+		if sp.State == StateActive && sp.EndDate != nil {
+			today, err := dateIn(now, zones[sp.ProjectID])
+			if err != nil {
+				return nil, err
+			}
+			list[i].Overdue = sp.EndDate.Before(today)
+		}
 	}
 	return list, nil
 }
 
+// dateIn — дата момента t по поясу tz (полночь UTC этой даты, как даты из базы).
+func dateIn(t time.Time, tz string) (time.Time, error) {
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("sprint: timezone %q: %w", tz, err)
+	}
+	y, m, d := t.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
+}
+
+// List — спринты проекта: активный, запланированные по дате начала, затем закрытые (новые первыми).
+func (s *Service) List(ctx context.Context, a *project.Access) ([]View, error) {
+	db := s.db.WithContext(ctx)
+	var rows []Sprint
+	if err := db.Raw(`SELECT * FROM sprints WHERE project_id = ?
+		ORDER BY CASE state WHEN 'active' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END,
+			CASE WHEN state = 'closed' THEN NULL ELSE start_date END NULLS LAST,
+			closed_at DESC NULLS LAST, created_at`, a.Project.ID).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("sprint: list: %w", err)
+	}
+	return s.views(db, rows)
+}
+
 // Get — спринт с доступом к его проекту (не участник — 404).
 func (s *Service) Get(ctx context.Context, u *user.User, id uuid.UUID) (*View, *project.Access, error) {
-	var key string
-	if err := s.db.WithContext(ctx).Raw(`SELECT p.key FROM sprints s JOIN projects p ON p.id = s.project_id WHERE s.id = ?`, id).
-		Scan(&key).Error; err != nil {
+	var projectIDs []uuid.UUID
+	if err := s.db.WithContext(ctx).Raw(`SELECT project_id FROM sprints WHERE id = ?`, id).Scan(&projectIDs).Error; err != nil {
 		return nil, nil, fmt.Errorf("sprint: find: %w", err)
+	}
+	if len(projectIDs) == 0 {
+		return nil, nil, ErrNotFound
+	}
+	key, err := project.KeyWithDeleted(s.db.WithContext(ctx), projectIDs[0])
+	if err != nil {
+		return nil, nil, err
 	}
 	if key == "" {
 		return nil, nil, ErrNotFound
@@ -132,15 +187,18 @@ func (s *Service) Get(ctx context.Context, u *user.User, id uuid.UUID) (*View, *
 }
 
 func (s *Service) view(tx *gorm.DB, id uuid.UUID) (*View, error) {
-	var v View
-	res := tx.Raw(viewSelect+` WHERE s.id = ?`, s.now(), id).Scan(&v)
-	if res.Error != nil {
-		return nil, fmt.Errorf("sprint: view: %w", res.Error)
+	var rows []Sprint
+	if err := tx.Raw(`SELECT * FROM sprints WHERE id = ?`, id).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("sprint: view: %w", err)
 	}
-	if res.RowsAffected == 0 {
+	if len(rows) == 0 {
 		return nil, ErrNotFound
 	}
-	return &v, nil
+	list, err := s.views(tx, rows)
+	if err != nil {
+		return nil, err
+	}
+	return &list[0], nil
 }
 
 // Input — поля спринта (§3.4). Даты — ГГГГ-ММ-ДД; Clear* — явная очистка в PATCH.
@@ -255,18 +313,26 @@ func (s *Service) Start(ctx context.Context, u *user.User, id uuid.UUID) (*View,
 		if err := checkDates(sp, true); err != nil {
 			return err
 		}
-		// Объём на старте одним запросом: задачи спринта читаются один раз.
-		if err := tx.Raw(`WITH t AS MATERIALIZED (
-				SELECT id, estimate_minutes FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL),
-			ins AS (INSERT INTO sprint_start_scope (sprint_id, task_id, estimate_minutes)
-				SELECT ?, id, COALESCE(estimate_minutes, 0) FROM t)
-			SELECT count(*) AS tasks, COALESCE(SUM(estimate_minutes), 0) AS estimate_minutes,
-				count(*) FILTER (WHERE estimate_minutes IS NULL) AS without_estimate FROM t`, sp.ID, sp.ID).
-			Scan(&scope).Error; err != nil {
-			return fmt.Errorf("sprint: scope: %w", err)
+		// Объём на старте: задачи спринта уже заблокированы (locked), между чтением и записью не меняются.
+		tasks, err := task.SprintScope(tx, sp.ID)
+		if err != nil {
+			return err
 		}
-		if scope.Tasks == 0 {
+		if len(tasks) == 0 {
 			return conflict("empty", "В спринте нет задач")
+		}
+		rows := make([]startScope, len(tasks))
+		for i, t := range tasks {
+			rows[i] = startScope{SprintID: sp.ID, TaskID: t.ID}
+			if t.EstimateMinutes == nil {
+				scope.WithoutEstimate++
+			} else {
+				rows[i].EstimateMinutes = *t.EstimateMinutes
+			}
+			scope.Tasks, scope.EstimateMinutes = scope.Tasks+1, scope.EstimateMinutes+rows[i].EstimateMinutes
+		}
+		if err := tx.Create(&rows).Error; err != nil {
+			return fmt.Errorf("sprint: scope: %w", err)
 		}
 		if err := tx.Model(sp).Updates(map[string]any{"state": StateActive}).Error; err != nil {
 			return fmt.Errorf("sprint: start: %w", err)
@@ -278,7 +344,6 @@ func (s *Service) Start(ctx context.Context, u *user.User, id uuid.UUID) (*View,
 		}); err != nil {
 			return err
 		}
-		var err error
 		v, err = s.view(tx, sp.ID)
 		return err
 	})
@@ -325,8 +390,8 @@ func (s *Service) lockedWith(ctx context.Context, u *user.User, id uuid.UUID, ot
 		}
 		// Задачи спринтов — раньше проекта: тот же порядок, что у правок задач (задача → проект).
 		// Если поднять блокировку проекта выше, вернётся deadlock с параллельными правками задач.
-		if err := tx.Exec(`SELECT id FROM tasks WHERE sprint_id IN ? ORDER BY id FOR UPDATE`, ids).Error; err != nil {
-			return fmt.Errorf("sprint: lock tasks: %w", err)
+		if err := task.LockSprintTasks(tx, ids); err != nil {
+			return err
 		}
 		p, err := project.LockForUpdate(tx, sp.ProjectID)
 		if errors.Is(err, project.ErrNotFound) {

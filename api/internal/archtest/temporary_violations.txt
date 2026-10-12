@@ -17,15 +17,6 @@ project/members.go users 3
 project/service.go sprints 1
 project/service.go tasks 1
 project/service.go users 1
-sprint/close.go tasks 1
-sprint/report.go projects 1
-sprint/report.go tasks 4
-sprint/report.go users 1
-sprint/report.go worklogs 1
-sprint/snapshot.go projects 2
-sprint/snapshot.go tasks 1
-sprint/sprint.go projects 2
-sprint/sprint.go tasks 4
 task/attachments.go users 1
 task/comments.go users 2
 task/delete.go project_members 1
