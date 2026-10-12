@@ -44,19 +44,9 @@ func MoveSprintTasks(tx *gorm.DB, projectID, from uuid.UUID, to *uuid.UUID, m Sp
 	if to != nil {
 		target = to.String()
 	}
-	if err := tx.Exec(`INSERT INTO task_history (task_id, user_id, field, old_value, new_value, source)
-		SELECT id, ?, 'sprint_id', to_jsonb(sprint_id::text), to_jsonb(?::text), ? FROM tasks WHERE `+cond+` ORDER BY position, number`,
-		append([]any{by, target, historySource(source)}, args...)...).Error; err != nil {
-		return nil, fmt.Errorf("task: sprint move history: %w", err)
-	}
-	var moved []struct {
-		ID  uuid.UUID
-		Key string
-	}
-	if err := tx.Raw(`UPDATE tasks t SET sprint_id = ?, position = ? + s.rn * ?, version = t.version + 1, updated_at = now()
-		FROM (SELECT id, row_number() OVER (ORDER BY position, number) AS rn FROM tasks WHERE `+cond+`) s
-		WHERE t.id = s.id RETURNING t.id, t.key`, append([]any{to, base, positionStep}, args...)...).Scan(&moved).Error; err != nil {
-		return nil, fmt.Errorf("task: sprint move: %w", err)
+	moved, err := moveTasksWhere(tx, cond, args, by, target, historySource(source), to, base)
+	if err != nil {
+		return nil, err
 	}
 	keys := make([]string, 0, len(moved))
 	for _, m := range moved {

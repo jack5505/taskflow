@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,17 +77,8 @@ func (s *Service) Trash(ctx context.Context, u *user.User, key string, limit int
 	var rows []trashRow
 	// Кто удалил — последняя запись истории deleted_at со значением (не восстановление).
 	db := s.db.WithContext(ctx)
-	err := db.Raw(`SELECT t.*, d.user_id AS deleted_by_id
-		FROM tasks t
-		LEFT JOIN LATERAL (
-			SELECT h.user_id FROM task_history h
-			WHERE h.task_id = t.id AND h.field = 'deleted_at' AND h.new_value IS NOT NULL AND h.new_value <> 'null'::jsonb
-			ORDER BY h.created_at DESC, h.id DESC LIMIT 1
-		) d ON true
-		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY t.deleted_at DESC, t.id DESC LIMIT ?`, append(args, limit+1)...).Scan(&rows).Error
-	if err != nil {
-		return nil, fmt.Errorf("task: trash: %w", err)
+	if err := trashRows(db, where, args, limit+1, &rows); err != nil {
+		return nil, err
 	}
 	if err := fillNames(db, rows[:min(len(rows), limit)], func(r *trashRow) *uuid.UUID { return r.DeletedByID },
 		func(r *trashRow, name string) { r.DeletedByName = &name }); err != nil {

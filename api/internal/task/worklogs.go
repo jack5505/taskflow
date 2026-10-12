@@ -92,9 +92,8 @@ func (s *Service) Worklogs(ctx context.Context, u *user.User, key string) ([]Wor
 	}
 	list := []WorklogView{}
 	db := s.db.WithContext(ctx)
-	if err := db.Raw(`SELECT * FROM worklogs WHERE task_id = ? ORDER BY work_date DESC, created_at DESC, id`, t.ID).
-		Scan(&list).Error; err != nil {
-		return nil, fmt.Errorf("task: worklogs: %w", err)
+	if err := taskWorklogs(db, t.ID, &list); err != nil {
+		return nil, err
 	}
 	if err := fillWorklogNames(db, list); err != nil {
 		return nil, err
@@ -290,9 +289,9 @@ func (s *Service) DeleteWorklog(ctx context.Context, u *user.User, id uuid.UUID)
 func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID, op worklogOp,
 	fn func(tx *gorm.DB, o *opened, w *Worklog, today time.Time, loc *time.Location) error) error {
 	err := s.worklogTx(ctx, func(tx *gorm.DB) error {
-		var key string
-		if err := tx.Raw(`SELECT t.key FROM worklogs w JOIN tasks t ON t.id = w.task_id WHERE w.id = ?`, id).Scan(&key).Error; err != nil {
-			return fmt.Errorf("task: worklog: %w", err)
+		key, err := worklogTaskKey(tx, id)
+		if err != nil {
+			return err
 		}
 		if key == "" {
 			return ErrWorklogNotFound
@@ -301,12 +300,11 @@ func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID, op 
 		if err != nil {
 			return err
 		}
-		var w Worklog
-		res := tx.Raw(`SELECT * FROM worklogs WHERE id = ? AND task_id = ? FOR UPDATE`, id, o.task.ID).Scan(&w)
-		if res.Error != nil {
-			return fmt.Errorf("task: worklog lock: %w", res.Error)
+		w, err := lockWorklog(tx, id, o.task.ID)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if w == nil {
 			return ErrWorklogNotFound
 		}
 		loc, err := userLocation(tx, w.UserID)
@@ -323,7 +321,7 @@ func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID, op 
 		if err := worklogWritable(tx, o, op); err != nil {
 			return err
 		}
-		return fn(tx, o, &w, today, loc)
+		return fn(tx, o, w, today, loc)
 	})
 	if errors.Is(err, ErrNotFound) {
 		return ErrWorklogNotFound
@@ -337,9 +335,9 @@ func (s *Service) onWorklog(ctx context.Context, u *user.User, id uuid.UUID, op 
 // Если задачу успели перенести в другой спринт между чтением sprint_id и блокировкой задачи,
 // транзакция откатывается и повторяется (worklogTx): брать новый спринт после задачи — deadlock.
 func openForWorklog(tx *gorm.DB, u *user.User, key string) (*opened, error) {
-	var sprints []uuid.UUID
-	if err := tx.Raw(`SELECT sprint_id FROM tasks WHERE key = ? AND sprint_id IS NOT NULL`, key).Scan(&sprints).Error; err != nil {
-		return nil, fmt.Errorf("task: worklog sprint: %w", err)
+	sprints, err := sprintOfKey(tx, key)
+	if err != nil {
+		return nil, err
 	}
 	o, err := openTask(tx, u, key, preLock{sprints: sprints}, "FOR UPDATE")
 	if err != nil {
@@ -426,35 +424,10 @@ func checkDailyLimit(tx *gorm.DB, userID uuid.UUID, date time.Time, minutes int,
 	return nil
 }
 
-// dayUsed — минуты пользователя за дату по всем задачам без записи exclude, под advisory-блокировкой
-// пользователя до конца транзакции (повторный захват в той же транзакции не ждёт).
-func dayUsed(tx *gorm.DB, userID uuid.UUID, date time.Time, exclude uuid.UUID) (int, error) {
-	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('worklog-day:' || ?))`, userID.String()).Error; err != nil {
-		return 0, fmt.Errorf("task: worklog lock: %w", err)
-	}
-	var used int
-	if err := tx.Raw(`SELECT COALESCE(sum(minutes), 0) FROM worklogs WHERE user_id = ? AND work_date = ? AND id <> ?`,
-		userID, date.Format(time.DateOnly), exclude).Scan(&used).Error; err != nil {
-		return 0, fmt.Errorf("task: worklog day sum: %w", err)
-	}
-	return used, nil
-}
-
-// refreshSpent — spent_minutes = сумма записей задачи (§3.3). Версия задачи не растёт: запись
-// времени не правит редактируемые поля, и чужое списание не должно ломать правку карточки
-// через If-Match (как комментарии); spent_minutes в PATCH не принимается — потерять его нельзя.
-func refreshSpent(tx *gorm.DB, t *Task) (int, error) {
-	if err := tx.Raw(`UPDATE tasks SET spent_minutes = (SELECT COALESCE(sum(minutes), 0) FROM worklogs WHERE task_id = ?)
-		WHERE id = ? RETURNING spent_minutes`, t.ID, t.ID).Scan(&t.SpentMinutes).Error; err != nil {
-		return 0, fmt.Errorf("task: spent: %w", err)
-	}
-	return t.SpentMinutes, nil
-}
-
 func worklogView(tx *gorm.DB, id uuid.UUID) (*WorklogView, error) {
-	var v []WorklogView
-	if err := tx.Raw(`SELECT * FROM worklogs WHERE id = ?`, id).Scan(&v).Error; err != nil {
-		return nil, fmt.Errorf("task: worklog view: %w", err)
+	v, err := worklogsByID(tx, id)
+	if err != nil {
+		return nil, err
 	}
 	if len(v) == 0 {
 		return &WorklogView{}, nil // как прежний JOIN без строк: пустое представление

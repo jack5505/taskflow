@@ -163,20 +163,16 @@ func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (
 	if pre.reorder {
 		// Проект берём из ключа задачи: блокировка нужна раньше строки задачи.
 		projectKey := keyRe.FindStringSubmatch(key)[1]
-		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('task-order:' || ?))`, projectKey).Error; err != nil {
-			return nil, fmt.Errorf("task: order lock: %w", err)
+		if err := lockTaskOrder(tx, projectKey); err != nil {
+			return nil, err
 		}
 	}
 	var o opened
-	cond := " AND deleted_at IS NULL"
-	if pre.withDeleted {
-		cond = ""
+	found, err := lockTaskByKey(tx, key, pre.withDeleted, lock, &o.task)
+	if err != nil {
+		return nil, err
 	}
-	res := tx.Raw(`SELECT * FROM tasks WHERE key = ?`+cond+` `+lock, key).Scan(&o.task)
-	if res.Error != nil {
-		return nil, fmt.Errorf("task: lock: %w", res.Error)
-	}
-	if res.RowsAffected == 0 {
+	if !found {
 		return nil, ErrNotFound
 	}
 	p, err := project.LockShareLive(tx, o.task.ProjectID)
@@ -502,23 +498,9 @@ func ReleaseOnDeactivation(tx *gorm.DB, userID uuid.UUID) ([]string, error) {
 	const note = "снят при деактивации"
 	actor, source := audit.From(tx.Statement.Context)
 	src := historySource(source)
-	open := `FROM tasks WHERE assignee_id = ? AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')`
-	if err := tx.Exec(`INSERT INTO task_history (task_id, user_id, field, old_value, new_value, source, note)
-		SELECT id, ?, 'assignee_id', to_jsonb(assignee_id::text), NULL, ?, ? `+open+` ORDER BY id`,
-		actor, src, note, userID).Error; err != nil {
-		return nil, fmt.Errorf("task: release history: %w", err)
-	}
-	if err := tx.Exec(`INSERT INTO task_history (task_id, user_id, field, old_value, new_value, source, note)
-		SELECT id, ?, 'status', '"in_progress"'::jsonb, '"todo"'::jsonb, ?, ? `+open+` AND status = 'in_progress' ORDER BY id`,
-		actor, src, note, userID).Error; err != nil {
-		return nil, fmt.Errorf("task: release history: %w", err)
-	}
-	var keys []string
-	if err := tx.Raw(`UPDATE tasks SET assignee_id = NULL, version = version + 1, updated_at = now(),
-			status = CASE WHEN status = 'in_progress' THEN 'todo' ELSE status END
-		WHERE assignee_id = ? AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')
-		RETURNING key`, userID).Scan(&keys).Error; err != nil {
-		return nil, fmt.Errorf("task: release: %w", err)
+	keys, err := releaseAssigned(tx, userID, actor, src, note)
+	if err != nil {
+		return nil, err
 	}
 	sort.Strings(keys)
 	return keys, nil

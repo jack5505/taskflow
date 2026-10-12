@@ -114,8 +114,8 @@ func placeAfter(tx *gorm.DB, t *Task, after *uuid.UUID) (float64, error) {
 	}
 	// Зазор исчерпан: перенумеровать секцию (без переносимой задачи) и вставить на место.
 	for i, n := range section {
-		if err := tx.Exec(`UPDATE tasks SET position = ? WHERE id = ?`, float64(i+1)*positionStep, n.ID).Error; err != nil {
-			return 0, fmt.Errorf("task: renumber: %w", err)
+		if err := setPosition(tx, n.ID, float64(i+1)*positionStep); err != nil {
+			return 0, err
 		}
 	}
 	return float64(idx+1)*positionStep + positionStep/2, nil

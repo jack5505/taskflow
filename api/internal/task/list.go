@@ -125,12 +125,9 @@ func (s *Service) List(ctx context.Context, a *project.Access, f ListFilter) (*P
 		}
 		add("("+sectionExpr+", t.position, t.number) > (?, ?, ?)", section, pos, num)
 	}
-	var items []ListItem
-	err := s.db.WithContext(ctx).Raw(`SELECT t.* FROM tasks t
-		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY `+sectionExpr+`, t.position, t.number LIMIT ?`, append(args, limit+1)...).Scan(&items).Error
+	items, err := listTasks(s.db.WithContext(ctx), where, args, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("task: list: %w", err)
+		return nil, err
 	}
 	today, err := todayIn(a.Project.Timezone, s.now())
 	if err != nil {
@@ -205,22 +202,10 @@ func (s *Service) Mine(ctx context.Context, u *user.User) ([]MyTask, error) {
 			return nil, err
 		}
 	}
-	// Порядок проектов по ключу — как ORDER BY p.key: позиция в open.
-	rank := make([]string, len(open))
-	args := []any{u.ID, ids}
-	for i, p := range open {
-		rank[i] = "WHEN ? THEN " + strconv.Itoa(i)
-		args = append(args, p.ID)
-	}
-	var rows []struct {
-		MyTask
-		ProjectID uuid.UUID
-	}
-	if err := db.Raw(`SELECT key, title, status, due_date, spent_minutes, estimate_minutes, updated_at, sprint_id, project_id
-		FROM tasks WHERE assignee_id = ? AND project_id IN ? AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')
-		ORDER BY due_date NULLS LAST, CASE project_id `+strings.Join(rank, " ")+` END, number LIMIT ?`,
-		append(args, MaxMine)...).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("task: my tasks: %w", err)
+	// Порядок проектов по ключу — как ORDER BY p.key: ids уже в порядке ключей (ProjectsOf).
+	rows, err := assignedOpen(db, u.ID, ids, MaxMine)
+	if err != nil {
+		return nil, err
 	}
 	byID := make(map[uuid.UUID]project.UserProject, len(open))
 	for _, p := range open {
