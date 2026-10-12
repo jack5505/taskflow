@@ -163,40 +163,31 @@ func (s *Service) spent(ctx context.Context, r *Report) error {
 	if err != nil {
 		return err
 	}
+	// Задачи, бывшие в спринте после старта: на старте и в журнале (уникальность — UNION).
 	var logged []uuid.UUID
 	if err := db.Raw(`SELECT task_id FROM sprint_start_scope WHERE sprint_id = @s
 		UNION SELECT task_id FROM sprint_log WHERE sprint_id = @s`, map[string]any{"s": sp.ID}).Scan(&logged).Error; err != nil {
 		return fmt.Errorf("sprint: report spent: %w", err)
 	}
-	for _, id := range logged {
-		if !slices.Contains(ids, id) {
-			ids = append(ids, id)
-		}
-	}
-	byUser, err := task.SpentByUser(db, ids, sp.StartDate.Time, until)
+	byUser, err := task.SpentByUser(db, append(ids, logged...), sp.StartDate.Time, until)
 	if err != nil {
 		return err
 	}
+	minutes := make(map[uuid.UUID]int, len(byUser))
 	userIDs := make([]uuid.UUID, len(byUser))
 	for i, m := range byUser {
-		userIDs[i] = m.UserID
+		userIDs[i], minutes[m.UserID] = m.UserID, m.Minutes
 	}
-	names, err := user.Names(db, userIDs...)
+	// Имена — в порядке базы (display_name, id); стабильная сортировка по минутам сохраняет его
+	// у равных: как ORDER BY minutes DESC, display_name, user_id.
+	names, err := user.NamesOrdered(db, userIDs)
 	if err != nil {
 		return err
 	}
-	for _, m := range byUser {
-		n, ok := names[m.UserID]
-		if !ok {
-			continue // как JOIN users: записи без пользователя не бывает
-		}
-		r.Spent = append(r.Spent, Spent{UserID: m.UserID, DisplayName: n.DisplayName, Minutes: m.Minutes})
+	for _, n := range names {
+		r.Spent = append(r.Spent, Spent{UserID: n.ID, DisplayName: n.DisplayName, Minutes: minutes[n.ID]})
 	}
-	// Как ORDER BY minutes DESC, display_name, user_id.
-	slices.SortFunc(r.Spent, func(a, b Spent) int {
-		return cmp.Or(cmp.Compare(b.Minutes, a.Minutes), cmp.Compare(a.DisplayName, b.DisplayName),
-			cmp.Compare(a.UserID.String(), b.UserID.String()))
-	})
+	slices.SortStableFunc(r.Spent, func(a, b Spent) int { return cmp.Compare(b.Minutes, a.Minutes) })
 	for i := range r.Spent {
 		r.Spent[i].Hours = hours(r.Spent[i].Minutes)
 		r.SpentMinutes += r.Spent[i].Minutes

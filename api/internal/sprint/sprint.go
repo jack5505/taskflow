@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -133,13 +134,21 @@ func (s *Service) views(db *gorm.DB, rows []Sprint) ([]View, error) {
 	return list, nil
 }
 
+// locations — загруженные пояса: time.LoadLocation каждый раз читает tzdata, а снимки
+// спринтов считаются раз в минуту.
+var locations sync.Map
+
 // dateIn — дата момента t по поясу tz (полночь UTC этой даты, как даты из базы).
 func dateIn(t time.Time, tz string) (time.Time, error) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("sprint: timezone %q: %w", tz, err)
+	loc, ok := locations.Load(tz)
+	if !ok {
+		l, err := time.LoadLocation(tz)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("sprint: timezone %q: %w", tz, err)
+		}
+		loc, _ = locations.LoadOrStore(tz, l)
 	}
-	y, m, d := t.In(loc).Date()
+	y, m, d := t.In(loc.(*time.Location)).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
 }
 
@@ -331,7 +340,7 @@ func (s *Service) Start(ctx context.Context, u *user.User, id uuid.UUID) (*View,
 			}
 			scope.Tasks, scope.EstimateMinutes = scope.Tasks+1, scope.EstimateMinutes+rows[i].EstimateMinutes
 		}
-		if err := tx.Create(&rows).Error; err != nil {
+		if err := tx.CreateInBatches(&rows, 1000).Error; err != nil { // 3 параметра на строку, лимит PostgreSQL — 65535
 			return fmt.Errorf("sprint: scope: %w", err)
 		}
 		if err := tx.Model(sp).Updates(map[string]any{"state": StateActive}).Error; err != nil {

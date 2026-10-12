@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -120,32 +121,29 @@ func insertSnapshots(db *gorm.DB, rows []snapshotRow, ids []uuid.UUID, replace b
 		conflict = `DO UPDATE SET open_tasks = EXCLUDED.open_tasks,
 			open_estimate_minutes = EXCLUDED.open_estimate_minutes, done_tasks = EXCLUDED.done_tasks, updated_at = now()`
 	}
-	var n int64
-	for _, r := range rows {
+	values := make([]string, len(rows))
+	args := make([]any, 0, 5*len(rows))
+	for i, r := range rows {
 		st := stats[r.SprintID]
-		res := db.Exec(`INSERT INTO sprint_daily_snapshots (sprint_id, date, open_tasks, open_estimate_minutes, done_tasks)
-			VALUES (?, ?, ?, ?, ?) ON CONFLICT (sprint_id, date) `+conflict,
-			r.SprintID, r.Date, st.OpenTasks, st.OpenEstimateMinutes, st.DoneTasks)
-		if res.Error != nil {
-			return n, fmt.Errorf("sprint: snapshot: %w", res.Error)
-		}
-		n += res.RowsAffected
+		values[i] = "(?, ?, ?, ?, ?)"
+		args = append(args, r.SprintID, r.Date, st.OpenTasks, st.OpenEstimateMinutes, st.DoneTasks)
 	}
-	return n, nil
+	res := db.Exec(`INSERT INTO sprint_daily_snapshots (sprint_id, date, open_tasks, open_estimate_minutes, done_tasks)
+		VALUES `+strings.Join(values, ", ")+` ON CONFLICT (sprint_id, date) `+conflict, args...)
+	if res.Error != nil {
+		return 0, fmt.Errorf("sprint: snapshot: %w", res.Error)
+	}
+	return res.RowsAffected, nil
 }
 
 // snapshotOnClose — снимок в момент закрытия (§3.8) на сегодняшнюю дату по поясу проекта, в
 // транзакции закрытия и до переноса незакрытых задач. Заменяет снимок того же дня, если он был.
 // Если спринт закрывают сразу после полуночи, раньше прохода воркера, снимок за вчера делается здесь же.
-func snapshotOnClose(tx *gorm.DB, sp *Sprint, now time.Time) error {
+func snapshotOnClose(tx *gorm.DB, sp *Sprint, timezone string, now time.Time) error {
 	if _, err := snapshotYesterday(tx, now, &sp.ID); err != nil {
 		return err
 	}
-	zones, err := project.Timezones(tx, []uuid.UUID{sp.ProjectID}, true)
-	if err != nil {
-		return err
-	}
-	today, err := dateIn(now, zones[sp.ProjectID])
+	today, err := dateIn(now, timezone)
 	if err != nil {
 		return err
 	}

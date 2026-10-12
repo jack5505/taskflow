@@ -18,6 +18,7 @@ type SprintTotal struct {
 }
 
 // SprintTotalsOf — SprintTotal каждого спринта из sprintIDs; спринта без задач в ответе нет.
+// Блокировок не берёт: в транзакции sprint строки задач уже заблокированы (LockSprintTasks).
 func SprintTotalsOf(db *gorm.DB, sprintIDs []uuid.UUID) (map[uuid.UUID]SprintTotal, error) {
 	out := make(map[uuid.UUID]SprintTotal, len(sprintIDs))
 	if len(sprintIDs) == 0 {
@@ -66,6 +67,7 @@ type SnapshotStats struct {
 }
 
 // SnapshotStatsOf — SnapshotStats каждого спринта из sprintIDs; у спринта без задач — нули.
+// Блокировок не берёт.
 func SnapshotStatsOf(db *gorm.DB, sprintIDs []uuid.UUID) (map[uuid.UUID]SnapshotStats, error) {
 	out := make(map[uuid.UUID]SnapshotStats, len(sprintIDs))
 	if len(sprintIDs) == 0 {
@@ -114,10 +116,10 @@ func SprintScope(tx *gorm.DB, sprintID uuid.UUID) ([]ScopeTask, error) {
 	return rows, nil
 }
 
-// IDsInSprint — id всех задач спринта sprintID, в том числе удалённых.
+// IDsInSprint — id неудалённых задач спринта sprintID.
 func IDsInSprint(db *gorm.DB, sprintID uuid.UUID) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
-	if err := db.Raw(`SELECT id FROM tasks WHERE sprint_id = ?`, sprintID).Scan(&ids).Error; err != nil {
+	if err := db.Raw(`SELECT id FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL`, sprintID).Scan(&ids).Error; err != nil {
 		return nil, fmt.Errorf("task: sprint task ids: %w", err)
 	}
 	return ids, nil
