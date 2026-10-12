@@ -159,28 +159,34 @@ func (s *Service) List(ctx context.Context, u *user.User, f ListFilter) ([]ListI
 	if !u.IsSystemAdmin {
 		where += " AND m.user_id IS NOT NULL"
 	}
-	db := s.db.WithContext(ctx)
 	var rows []struct {
 		Project `gorm:"embedded"`
 		MyRole  *string
 	}
-	if err := db.Raw(`SELECT p.*, m.role AS my_role FROM projects p
+	var sprints map[uuid.UUID]sprintdb.Active
+	var counts map[uuid.UUID]taskdb.OpenCounts
+	// Проекты, спринты и счётчики — из одного снимка базы (read-only REPEATABLE READ), как раньше
+	// одним запросом.
+	err := s.db.WithContext(ctx).Transaction(func(db *gorm.DB) error {
+		if err := db.Raw(`SELECT p.*, m.role AS my_role FROM projects p
 		LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = @user
 		WHERE `+where+` ORDER BY p.key`, sql.Named("user", u.ID), sql.Named("archived", f.Archived)).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("project: list: %w", err)
-	}
-	ids := make([]uuid.UUID, len(rows))
-	for i := range rows {
-		ids[i] = rows[i].ID
-	}
-	// Активный спринт (§5: один) и открытые задачи — как в «Моих задачах» (task.Mine): не done и
-	// не cancelled; «на мне» — только пока пользователь участник, иначе счётчик разошёлся бы
-	// с блоком «Мои задачи».
-	sprints, err := sprintdb.ActiveOfProjects(db, ids)
-	if err != nil {
-		return nil, err
-	}
-	counts, err := taskdb.OpenCountsOf(db, ids, u.ID)
+			return fmt.Errorf("project: list: %w", err)
+		}
+		ids := make([]uuid.UUID, len(rows))
+		for i := range rows {
+			ids[i] = rows[i].ID
+		}
+		// Активный спринт (§5: один) и открытые задачи — как в «Моих задачах» (task.Mine): не done и
+		// не cancelled; «на мне» — только пока пользователь участник, иначе счётчик разошёлся бы
+		// с блоком «Мои задачи».
+		var err error
+		if sprints, err = sprintdb.ActiveOfProjects(db, ids); err != nil {
+			return err
+		}
+		counts, err = taskdb.OpenCountsOf(db, ids, u.ID)
+		return err
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}

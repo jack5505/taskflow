@@ -137,12 +137,11 @@ func (s *Service) views(db *gorm.DB, rows []Sprint) ([]View, error) {
 
 // dateIn — дата момента t по поясу tz (полночь UTC этой даты, как даты из базы).
 func dateIn(t time.Time, tz string) (time.Time, error) {
-	loc, err := model.Location(tz)
+	d, err := model.DateIn(t, tz)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("sprint: %w", err)
 	}
-	y, m, d := t.In(loc).Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
+	return d, nil
 }
 
 // List — спринты проекта: активный, запланированные по дате начала, затем закрытые (новые первыми).

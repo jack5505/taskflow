@@ -170,7 +170,7 @@ func CurrentTimer(ctx context.Context, db *gorm.DB, userID uuid.UUID, now time.T
 func (s *Service) StopStaleTimers(ctx context.Context) (int64, error) {
 	now := s.now()
 	db := s.db.WithContext(ctx)
-	rows, err := timerRows(db, "", nil)
+	rows, err := timerRows(db, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -207,15 +207,13 @@ type timerRow struct {
 	ProjectID  uuid.UUID
 }
 
-// timerRows — запущенные таймеры с их задачами (where — условие по задаче t), по пользователю.
-func timerRows(db *gorm.DB, where string, arg any) ([]timerRow, error) {
-	q, args := `SELECT a.user_id, a.started_at, t.deleted_at IS NOT NULL AS deleted, t.status, t.assignee_id, t.project_id
-		FROM active_timers a JOIN tasks t ON t.id = a.task_id`, []any{}
-	if where != "" {
-		q, args = q+` WHERE `+where, append(args, arg)
-	}
+// timerRows — запущенные таймеры с их задачами (projectID — только задач этого проекта), по
+// пользователю. Таймер у пользователя один, таблица маленькая.
+func timerRows(db *gorm.DB, projectID *uuid.UUID) ([]timerRow, error) {
 	var rows []timerRow
-	if err := db.Raw(q+` ORDER BY a.user_id`, args...).Scan(&rows).Error; err != nil {
+	if err := db.Raw(`SELECT a.user_id, a.started_at, t.deleted_at IS NOT NULL AS deleted, t.status, t.assignee_id, t.project_id
+		FROM active_timers a JOIN tasks t ON t.id = a.task_id
+		WHERE (CAST(? AS uuid) IS NULL OR t.project_id = ?) ORDER BY a.user_id`, projectID, projectID).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("task: timers: %w", err)
 	}
 	return rows, nil
@@ -226,7 +224,7 @@ func timerRows(db *gorm.DB, where string, arg any) ([]timerRow, error) {
 // Остановка в самой транзакции архивации невозможна без deadlock: она держит проект FOR UPDATE
 // раньше задач, а операции над задачами берут задачу раньше проекта.
 func (s *Service) StopProjectTimers(ctx context.Context, projectID uuid.UUID, at time.Time) (int64, error) {
-	rows, err := timerRows(s.db.WithContext(ctx), `t.project_id = ?`, projectID)
+	rows, err := timerRows(s.db.WithContext(ctx), &projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -273,8 +271,11 @@ func timerStale(tx *gorm.DB, timer *ActiveTimer, t *Task, now time.Time) (bool, 
 		return true, nil
 	}
 	active, err := user.IsActive(tx, timer.UserID)
-	if err != nil || !active {
-		return !active, err
+	if err != nil {
+		return false, err
+	}
+	if !active {
+		return true, nil
 	}
 	open, err := project.LiveBriefs(tx, []uuid.UUID{t.ProjectID}, true)
 	if err != nil {

@@ -94,6 +94,17 @@ func Location(tz string) (*time.Location, error) {
 	return stored.(*time.Location), nil
 }
 
+// DateIn — дата момента t по поясу tz (полночь UTC этой даты, как даты из базы): границы дня по
+// поясу пользователя или проекта (api/CLAUDE.md, «Время»).
+func DateIn(t time.Time, tz string) (time.Time, error) {
+	loc, err := Location(tz)
+	if err != nil {
+		return time.Time{}, err
+	}
+	y, m, d := t.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
+}
+
 // ValidTimezone — пояс IANA, который можно загрузить (tzdata в образе). "Local" и пустой — нет.
 func ValidTimezone(tz string) bool {
 	if tz == "" || tz == "Local" {

@@ -35,7 +35,6 @@ type MemberView struct {
 // Members — участники проекта: менеджеры первыми, затем по имени.
 func (s *Service) Members(ctx context.Context, a *Access) ([]MemberView, error) {
 	db := s.db.WithContext(ctx)
-	var members []Membership
 	var roles []struct {
 		UserID uuid.UUID
 		Role   string
@@ -44,13 +43,9 @@ func (s *Service) Members(ctx context.Context, a *Access) ([]MemberView, error) 
 		return nil, fmt.Errorf("project: members: %w", err)
 	}
 	role := make(map[uuid.UUID]string, len(roles))
-	for _, r := range roles {
-		members = append(members, Membership{ProjectID: a.Project.ID, UserID: r.UserID})
-		role[r.UserID] = r.Role
-	}
-	ids := make([]uuid.UUID, len(members))
-	for i, m := range members {
-		ids[i] = m.UserID
+	ids := make([]uuid.UUID, len(roles))
+	for i, r := range roles {
+		ids[i], role[r.UserID] = r.UserID, r.Role
 	}
 	// Пользователи — по имени и email в сортировке базы; менеджеры первыми (стабильно).
 	contacts, err := user.ContactsOrdered(db, ids)
@@ -211,7 +206,7 @@ func checkNotLastManager(tx *gorm.DB, p *Project, userID uuid.UUID, active bool)
 	if !active {
 		return nil
 	}
-	sole, err := SoleManagerKeys(tx, userID, []uuid.UUID{p.ID})
+	sole, err := soleManaged(tx, userID, []uuid.UUID{p.ID})
 	if err != nil {
 		return err
 	}

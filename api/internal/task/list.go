@@ -193,9 +193,17 @@ func (s *Service) Mine(ctx context.Context, u *user.User) ([]MyTask, error) {
 	for i, p := range open {
 		ids[i] = p.ID
 	}
-	zones, err := project.Timezones(db, ids, false)
+	// Пояса и заодно перепроверка: проект мог стать удалённым или архивным после ProjectsOf.
+	briefs, err := project.LiveBriefs(db, ids, true)
 	if err != nil {
 		return nil, err
+	}
+	now := s.now()
+	today := make(map[uuid.UUID]time.Time, len(briefs))
+	for id, b := range briefs {
+		if today[id], err = todayIn(b.Timezone, now); err != nil {
+			return nil, err
+		}
 	}
 	// Порядок проектов по ключу — как ORDER BY p.key: позиция в open.
 	rank := make([]string, len(open))
@@ -219,16 +227,14 @@ func (s *Service) Mine(ctx context.Context, u *user.User) ([]MyTask, error) {
 		byID[p.ID] = p
 	}
 	for _, r := range rows {
+		d, live := today[r.ProjectID]
+		if !live {
+			continue
+		}
 		t := r.MyTask
 		p := byID[r.ProjectID]
 		t.ProjectKey, t.ProjectName = p.Key, p.Name
-		if t.DueDate != nil {
-			today, err := todayIn(zones[r.ProjectID], s.now())
-			if err != nil {
-				return nil, err
-			}
-			t.Overdue = t.DueDate.Before(today)
-		}
+		t.Overdue = t.DueDate != nil && t.DueDate.Before(d)
 		list = append(list, t)
 	}
 	return list, nil
@@ -283,10 +289,9 @@ func decodeCursor(c string) (string, float64, int, error) {
 
 // todayIn — сегодняшняя дата по поясу tz (полночь UTC, как даты из базы).
 func todayIn(tz string, now time.Time) (time.Time, error) {
-	loc, err := model.Location(tz)
+	d, err := model.DateIn(now, tz)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("task: %w", err)
 	}
-	y, m, d := now.In(loc).Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
+	return d, nil
 }
