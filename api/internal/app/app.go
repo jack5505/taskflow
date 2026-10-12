@@ -41,6 +41,9 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 			srv.Mount(github.NewHandlers(github.NewService(g, client), projects, requireAuth).Register)
 			githubReady = true
 		}
+		accounts := github.NewAccounts(g, cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.JWTSecret,
+			cfg.GitHubWebURL, cfg.GitHubAPIURL, cfg.BaseURL)
+		srv.Mount(github.NewAccountHandlers(accounts, requireAuth, auth.SecureCookies(cfg.BaseURL), cfg.GitHubLoginEnabled()).Register)
 	}
 	if cfg.TelegramWebhook() {
 		srv.Mount(telegram.NewWebhook(cfg.TelegramWebhookSecret, telegram.NewIntake(rdb, jobs)).Register)
@@ -53,5 +56,5 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 		Mount(task.NewHandlers(tasks, projects, requireAuth).Register).
 		Mount(sprint.NewHandlers(sprint.NewService(g, projects), projects, requireAuth).Register).
 		Mount(report.NewHandlers(report.NewService(g, projects), requireAuth).Register).
-		Mount(me.NewHandlers(me.NewService(g).WithTelegramBot(cfg.TelegramEnabled()).WithGitHub(githubReady), telegram.NewAccounts(g, cfg.TelegramBotUsername), requireAuth).Register)
+		Mount(me.NewHandlers(me.NewService(g).WithTelegramBot(cfg.TelegramEnabled()).WithGitHub(githubReady, cfg.GitHubLoginEnabled()), telegram.NewAccounts(g, cfg.TelegramBotUsername), requireAuth).Register)
 }

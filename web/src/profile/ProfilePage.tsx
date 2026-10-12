@@ -15,6 +15,7 @@ import {
   profileChanges,
   retryAfterText,
 } from "./logic";
+import { GitHubBlock } from "./GitHubBlock";
 import { TelegramBlock } from "./TelegramBlock";
 
 /** Профиль (ТЗ §7.8): имя и часовой пояс, пароль и сессии, Telegram, личные уведомления §8.7. */
@@ -30,6 +31,7 @@ export function ProfilePage() {
         <AccountForm me={me.data} />
         <SecurityBlock me={me.data} />
         <TelegramBlock me={me.data} />
+        {(me.data.github_login_enabled || me.data.github_login) && <GitHubBlock me={me.data} />}
         <NotificationsForm me={me.data} />
       </>
     );

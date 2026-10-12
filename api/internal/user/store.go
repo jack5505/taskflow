@@ -1,6 +1,7 @@
 package user
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -405,4 +406,26 @@ func SetPasswordIf(tx *gorm.DB, id uuid.UUID, old, hash string) (changed bool, e
 		return false, fmt.Errorf("user: save password: %w", res.Error)
 	}
 	return res.RowsAffected > 0, nil
+}
+
+// ErrGitHubTaken — GitHub-логин уже связан с другим пользователем (§12.5).
+var ErrGitHubTaken = errors.New("user: github login is linked to another user")
+
+// ErrInactive — пользователя нет или он деактивирован.
+var ErrInactive = errors.New("user: not found or deactivated")
+
+// SetGitHubLogin связывает (login) или отвязывает (nil) GitHub-аккаунт активного пользователя id.
+// Логин у другого пользователя — ErrGitHubTaken; пользователя нет или он деактивирован — ErrInactive.
+func SetGitHubLogin(db *gorm.DB, id uuid.UUID, login *string) error {
+	res := db.Exec(`UPDATE users SET github_login = ?, updated_at = now() WHERE id = ? AND is_active`, login, id)
+	if errors.Is(res.Error, gorm.ErrDuplicatedKey) {
+		return ErrGitHubTaken
+	}
+	if res.Error != nil {
+		return fmt.Errorf("user: github login: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrInactive
+	}
+	return nil
 }

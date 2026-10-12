@@ -22,6 +22,7 @@ type User struct {
 	Timezone             string      `gorm:"not null" json:"timezone"`
 	TelegramUserID       *int64      `gorm:"uniqueIndex" json:"telegram_user_id,omitempty"`
 	TelegramUsername     *string     `json:"telegram_username,omitempty"`
+	GitHubLogin          *string     `gorm:"column:github_login;type:citext" json:"github_login,omitempty"`
 	IsSystemAdmin        bool        `gorm:"not null" json:"is_system_admin"`
 	IsActive             bool        `gorm:"not null" json:"is_active"`
 	NotificationSettings events.JSON `gorm:"type:jsonb;not null" json:"notification_settings" swaggertype:"object"`

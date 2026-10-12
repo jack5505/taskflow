@@ -38,6 +38,7 @@ type Config struct {
 	GitHubClientID       string // авторизация пользователя App — связка аккаунтов (§12.5)
 	GitHubClientSecret   string
 	GitHubAPIURL         string // REST API; в тестах — фейковый сервер
+	GitHubWebURL         string // github.com: вход пользователя (OAuth); в тестах — фейковый сервер
 
 	SMTPHost     string
 	SMTPPort     string
@@ -67,6 +68,7 @@ func Load() (*Config, error) {
 		GitHubClientID:        os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:    os.Getenv("GITHUB_CLIENT_SECRET"),
 		GitHubAPIURL:          getenv("GITHUB_API_URL", "https://api.github.com"),
+		GitHubWebURL:          getenv("GITHUB_WEB_URL", "https://github.com"),
 		SMTPHost:              os.Getenv("SMTP_HOST"),
 		SMTPPort:              getenv("SMTP_PORT", "587"),
 		SMTPUser:              os.Getenv("SMTP_USER"),
@@ -107,6 +109,9 @@ func Load() (*Config, error) {
 
 // GitHubEnabled — интеграция с GitHub включена: задан GITHUB_APP_ID (§12.1).
 func (c *Config) GitHubEnabled() bool { return c.GitHubAppID != "" }
+
+// GitHubLoginEnabled — пользователи могут связать GitHub-аккаунт: заданы Client ID и секрет App (§12.5).
+func (c *Config) GitHubLoginEnabled() bool { return c.GitHubEnabled() && c.GitHubClientID != "" }
 
 // checkGitHub: без GITHUB_APP_ID настройки не проверяются. С ним нужны ключ App и секрет
 // вебхуков: без секрета подпись X-Hub-Signature-256 не проверить (§12.2).

@@ -627,4 +627,4 @@ TaskFlow связывает задачи с ветками и pull request'ам�
 | Связь с GitHub | `task_id`, `kind` (`branch`, `pr`), `number` (для PR), `name` (ветка или заголовок PR), `url`, `state` (`open`, `draft`, `merged`, `closed`), `author_login`; пара задача + ссылка уникальна |
 | Доставки вебхуков | `delivery_id` (ключ), время приёма; хранятся 7 дней |
 | История (3.7) | `source` допускает ещё `github` |
-| API (9.2) | `POST /github/webhook` (без JWT, по подписи); `GET/PUT/DELETE /projects/{key}/github` (менеджер); `GET /github/repositories` — репозитории, доступные App (менеджер); `GET /me/github/connect`, `DELETE /me/github` — связка аккаунта; связи задачи — поле `github` в карточке `GET /tasks/{key}` |
+| API (9.2) | `POST /github/webhook` (без JWT, по подписи); `GET/PUT/DELETE /projects/{key}/github` (менеджер); `GET /github/repositories` — репозитории, доступные App (менеджер); `GET /me/github/connect`, `DELETE /me/github` — связка аккаунта, `GET /github/callback` — возврат из GitHub после входа (без JWT, по подписанному `state`); связи задачи — поле `github` в карточке `GET /tasks/{key}` |
