@@ -239,28 +239,6 @@ func checkAssignee(tx *gorm.DB, projectID, userID uuid.UUID) error {
 	return nil
 }
 
-// endOfSection — позиция в конце секции (спринт или бэклог). Ветки на nil нужны индексу
-// tasks_section_idx: «IS NOT DISTINCT FROM» по нему не ищется.
-func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID) (float64, error) {
-	q := tx.Model(&Task{}).Select("position").Where("project_id = ? AND deleted_at IS NULL", projectID)
-	if sprintID == nil {
-		q = q.Where("sprint_id IS NULL")
-	} else {
-		q = q.Where("sprint_id = ?", *sprintID)
-	}
-	if exclude != nil {
-		q = q.Where("id <> ?", *exclude)
-	}
-	var last []float64
-	if err := q.Order("position DESC").Limit(1).Pluck("position", &last).Error; err != nil {
-		return 0, fmt.Errorf("task: position: %w", err)
-	}
-	if len(last) == 0 {
-		return positionStep, nil
-	}
-	return last[0] + positionStep, nil
-}
-
 // checkSprint — спринт этого проекта и не завершён (строку блокирует вызывающий — lockShare).
 func checkSprint(tx *gorm.DB, projectID, sprintID uuid.UUID) error {
 	state, err := sprintdb.StateIn(tx, projectID, sprintID)
@@ -290,27 +268,19 @@ func (s *Service) Get(ctx context.Context, u *user.User, key string) (*Task, *pr
 	if err != nil {
 		return nil, nil, err
 	}
-	var t Task
-	err = s.db.WithContext(ctx).First(&t, "project_id = ? AND key = ?", a.Project.ID, key).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil, ErrNotFound
-	}
+	t, err := taskByKey(s.db.WithContext(ctx), a.Project.ID, key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("task: get: %w", err)
+		return nil, nil, err
 	}
-	if t.DeletedAt != nil && !a.Admin {
+	if t == nil || (t.DeletedAt != nil && !a.Admin) {
 		return nil, nil, ErrNotFound
 	}
-	return &t, a, nil
+	return t, a, nil
 }
 
 // History — история задачи по порядку.
 func (s *Service) History(ctx context.Context, t *Task) ([]History, error) {
-	list := []History{}
-	if err := s.db.WithContext(ctx).Where("task_id = ?", t.ID).Order("created_at, id").Find(&list).Error; err != nil {
-		return nil, fmt.Errorf("task: history: %w", err)
-	}
-	return list, nil
+	return taskHistory(s.db.WithContext(ctx), t.ID)
 }
 
 // writeHistory — запись §3.7 в транзакции изменения; кто и откуда — из контекста запроса.

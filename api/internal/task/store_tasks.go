@@ -1,6 +1,7 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -148,4 +149,78 @@ func moveTasksWhere(tx *gorm.DB, cond string, args []any, by uuid.UUID, target a
 		return nil, fmt.Errorf("task: sprint move: %w", err)
 	}
 	return moved, nil
+}
+
+// endOfSection — позиция в конце секции (спринт или бэклог). Ветки на nil нужны индексу
+// tasks_section_idx: «IS NOT DISTINCT FROM» по нему не ищется.
+func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID) (float64, error) {
+	q := tx.Model(&Task{}).Select("position").Where("project_id = ? AND deleted_at IS NULL", projectID)
+	if sprintID == nil {
+		q = q.Where("sprint_id IS NULL")
+	} else {
+		q = q.Where("sprint_id = ?", *sprintID)
+	}
+	if exclude != nil {
+		q = q.Where("id <> ?", *exclude)
+	}
+	var last []float64
+	if err := q.Order("position DESC").Limit(1).Pluck("position", &last).Error; err != nil {
+		return 0, fmt.Errorf("task: position: %w", err)
+	}
+	if len(last) == 0 {
+		return positionStep, nil
+	}
+	return last[0] + positionStep, nil
+}
+
+// sectionRows — задачи секции t (без самой t) по порядку.
+func sectionRows(tx *gorm.DB, t *Task) ([]neighbour, error) {
+	q := tx.Model(&Task{}).Select("id, position, number").Where("project_id = ? AND deleted_at IS NULL AND id <> ?", t.ProjectID, t.ID)
+	if t.SprintID == nil {
+		q = q.Where("sprint_id IS NULL")
+	} else {
+		q = q.Where("sprint_id = ?", *t.SprintID)
+	}
+	var rows []neighbour
+	if err := q.Order("position, number").Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("task: section: %w", err)
+	}
+	return rows, nil
+}
+
+// maxPosition — наибольшая позиция неудалённой задачи в секции to (nil — бэклог) проекта; пусто — 0.
+func maxPosition(tx *gorm.DB, projectID uuid.UUID, to *uuid.UUID) (float64, error) {
+	var base float64
+	end := tx.Model(&Task{}).Select("COALESCE(MAX(position), 0)").Where("project_id = ? AND deleted_at IS NULL", projectID)
+	if to == nil {
+		end = end.Where("sprint_id IS NULL")
+	} else {
+		end = end.Where("sprint_id = ?", *to)
+	}
+	if err := end.Scan(&base).Error; err != nil {
+		return 0, fmt.Errorf("task: section end: %w", err)
+	}
+	return base, nil
+}
+
+// taskByKey — задача проекта по ключу (и удалённая); нет — nil.
+func taskByKey(db *gorm.DB, projectID uuid.UUID, key string) (*Task, error) {
+	var t Task
+	err := db.First(&t, "project_id = ? AND key = ?", projectID, key).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("task: get: %w", err)
+	}
+	return &t, nil
+}
+
+// taskHistory — история задачи по порядку.
+func taskHistory(db *gorm.DB, taskID uuid.UUID) ([]History, error) {
+	list := []History{}
+	if err := db.Where("task_id = ?", taskID).Order("created_at, id").Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("task: history: %w", err)
+	}
+	return list, nil
 }

@@ -1,7 +1,6 @@
 package task
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/google/uuid"
@@ -29,15 +28,9 @@ func MoveSprintTasks(tx *gorm.DB, projectID, from uuid.UUID, to *uuid.UUID, m Sp
 	if m.OnlyOpen {
 		cond += ` AND status IN ('todo', 'in_progress', 'review')`
 	}
-	var base float64
-	end := tx.Model(&Task{}).Select("COALESCE(MAX(position), 0)").Where("project_id = ? AND deleted_at IS NULL", projectID)
-	if to == nil {
-		end = end.Where("sprint_id IS NULL")
-	} else {
-		end = end.Where("sprint_id = ?", *to)
-	}
-	if err := end.Scan(&base).Error; err != nil {
-		return nil, fmt.Errorf("task: section end: %w", err)
+	base, err := maxPosition(tx, projectID, to)
+	if err != nil {
+		return nil, err
 	}
 	_, source := audit.From(tx.Statement.Context)
 	var target any

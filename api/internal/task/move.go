@@ -2,7 +2,6 @@ package task
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -119,19 +118,4 @@ func placeAfter(tx *gorm.DB, t *Task, after *uuid.UUID) (float64, error) {
 		}
 	}
 	return float64(idx+1)*positionStep + positionStep/2, nil
-}
-
-// sectionRows — задачи секции t (без самой t) по порядку.
-func sectionRows(tx *gorm.DB, t *Task) ([]neighbour, error) {
-	q := tx.Model(&Task{}).Select("id, position, number").Where("project_id = ? AND deleted_at IS NULL AND id <> ?", t.ProjectID, t.ID)
-	if t.SprintID == nil {
-		q = q.Where("sprint_id IS NULL")
-	} else {
-		q = q.Where("sprint_id = ?", *t.SprintID)
-	}
-	var rows []neighbour
-	if err := q.Order("position, number").Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("task: section: %w", err)
-	}
-	return rows, nil
 }
