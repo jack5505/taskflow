@@ -17,15 +17,16 @@ import (
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/sprint/sprintdb"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // Состояния §3.4.
 const (
-	StatePlanned = "planned"
-	StateActive  = "active"
-	StateClosed  = "closed"
+	StatePlanned = sprintdb.StatePlanned
+	StateActive  = sprintdb.StateActive
+	StateClosed  = sprintdb.StateClosed
 )
 
 // MaxDays — §5.2: длительность спринта не больше 42 дней.

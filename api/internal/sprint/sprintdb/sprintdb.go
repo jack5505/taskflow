@@ -11,6 +11,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// Состояния спринта §3.4; sprint.StateX — те же значения.
+const (
+	StatePlanned = "planned"
+	StateActive  = "active"
+	StateClosed  = "closed"
+)
+
 // LockShare блокирует FOR SHARE строки спринтов ids в порядке id. Модуль task берёт их раньше
 // строк задач и проекта — тот же порядок, что у закрытия спринта (спринт → задачи → проект).
 func LockShare(tx *gorm.DB, ids []uuid.UUID) error {
@@ -48,10 +55,11 @@ func StateIn(db *gorm.DB, projectID, id uuid.UUID) (string, error) {
 	return states[0], nil
 }
 
-// ActiveID — активный спринт проекта (§5: не больше одного); нет — nil. Блокировок не берёт.
+// ActiveID — активный спринт проекта (§5: не больше одного; если вдруг несколько — как sprint.ActiveOf,
+// самый ранний); нет — nil. Блокировок не берёт.
 func ActiveID(db *gorm.DB, projectID uuid.UUID) (*uuid.UUID, error) {
 	var ids []uuid.UUID
-	if err := db.Raw(`SELECT id FROM sprints WHERE project_id = ? AND state = 'active' LIMIT 1`, projectID).
+	if err := db.Raw(`SELECT id FROM sprints WHERE project_id = ? AND state = 'active' ORDER BY start_date, id LIMIT 1`, projectID).
 		Scan(&ids).Error; err != nil {
 		return nil, fmt.Errorf("sprint: active: %w", err)
 	}

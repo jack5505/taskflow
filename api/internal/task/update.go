@@ -242,7 +242,7 @@ func leaveSprint(tx *gorm.DB, t *Task) error {
 	if err != nil {
 		return err
 	}
-	if state == "closed" {
+	if state == sprintdb.StateClosed {
 		return fieldError("sprint_id", "задача из завершённого спринта — её не переносят")
 	}
 	return nil

@@ -402,7 +402,7 @@ func sprintNotClosed(tx *gorm.DB, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if state == "closed" {
+	if state == sprintdb.StateClosed {
 		return errSprintClosed
 	}
 	return nil
