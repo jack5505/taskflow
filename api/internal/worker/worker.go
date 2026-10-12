@@ -50,9 +50,9 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
 	notification.Register(d, g)
-	github.Register(d, github.NewProcessor(g)) // доставки вебхуков GitHub (§12.2)
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects)
+	github.Register(d, github.NewProcessor(g, tasks)) // доставки вебхуков GitHub (§12.2)
 	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }
 	// Архивация и удаление проекта останавливают его таймеры (§3.2) на момент события.
 	for _, typ := range []string{events.ProjectArchived, events.ProjectDeleted} {

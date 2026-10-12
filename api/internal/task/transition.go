@@ -62,6 +62,10 @@ type TransitionInput struct {
 	To         string
 	Comment    string
 	AssigneeID *uuid.UUID
+	// Note — примечание к записи истории (§12.4: ссылка на PR, «GitHub (логин)»); только из кода.
+	Note string `json:"-"`
+	// ByName — кто действовал, для сообщений, когда действует система (by пуст): «GitHub (логин)».
+	ByName string `json:"-"`
 }
 
 // actor — кто меняет и его права в проекте задачи (под блокировкой).
@@ -416,14 +420,16 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 		}
 	}
 
-	if comment != "" && (to == StatusCancelled || (from == StatusReview && to == StatusInProgress)) {
+	// Комментарий-причина пишется от имени действующего; у системы (§12.4) автора нет — причину
+	// несёт примечание in.Note и событие.
+	if comment != "" && uid != uuid.Nil && (to == StatusCancelled || (from == StatusReview && to == StatusInProgress)) {
 		c := Comment{TaskID: t.ID, AuthorID: uid, Body: comment, Source: commentSource(a.source)}
 		if err := tx.Create(&c).Error; err != nil {
 			return fmt.Errorf("task: reason comment: %w", err)
 		}
 	}
 	t.Status = to
-	if err := writeHistory(tx, t.ID, "status", from, to); err != nil {
+	if err := writeHistoryNote(tx, t.ID, "status", from, to, in.Note); err != nil {
 		return err
 	}
 	payload := map[string]any{
@@ -437,6 +443,9 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 	}
 	if comment != "" {
 		payload["comment"] = comment
+	}
+	if in.ByName != "" {
+		payload["by_name"] = in.ByName
 	}
 	return events.Publish(tx, events.TaskTransitioned, payload)
 }

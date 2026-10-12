@@ -23,6 +23,7 @@ const (
 	SourceBot    = "bot"
 	SourceCLI    = "cli"
 	SourceSystem = "system"
+	SourceGitHub = "github" // смена статуса по pull request'у (§12.4)
 )
 
 // Действия журнала. Новое действие из списка §3.8 добавляется сюда.

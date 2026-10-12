@@ -95,7 +95,7 @@ func LinksOf(db *gorm.DB, taskID uuid.UUID) ([]Link, error) {
 // OpenPRsExcept — сколько у задачи открытых (и черновиков) PR, кроме PR number в repo.
 func OpenPRsExcept(db *gorm.DB, taskID uuid.UUID, repo string, number int) (int64, error) {
 	var n int64
-	if err := db.Raw(`SELECT count(*) FROM github_links WHERE task_id = ? AND kind = 'pr' AND state IN ('open', 'draft')
+	if err := db.Raw(`SELECT count(*) FROM github_links WHERE task_id = ? AND kind = 'pr' AND state = 'open'
 		AND NOT (lower(repo) = lower(?) AND number = ?)`, taskID, repo, number).Scan(&n).Error; err != nil {
 		return 0, fmt.Errorf("task: open prs: %w", err)
 	}

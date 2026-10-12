@@ -315,6 +315,8 @@ func historySource(s string) string {
 		return "web"
 	case audit.SourceBot:
 		return "telegram"
+	case audit.SourceGitHub:
+		return "github"
 	}
 	return "api"
 }

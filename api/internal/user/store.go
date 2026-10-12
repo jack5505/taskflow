@@ -429,3 +429,16 @@ func SetGitHubLogin(db *gorm.DB, id uuid.UUID, login *string) error {
 	}
 	return nil
 }
+
+// ActiveIDByGitHubLogin — активный пользователь со связанным GitHub-логином (регистр не важен);
+// нет — nil. Блокировок не берёт.
+func ActiveIDByGitHubLogin(db *gorm.DB, login string) (*uuid.UUID, error) {
+	var ids []uuid.UUID
+	if err := db.Raw(`SELECT id FROM users WHERE github_login = ? AND is_active`, login).Scan(&ids).Error; err != nil {
+		return nil, fmt.Errorf("user: by github login: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return &ids[0], nil
+}

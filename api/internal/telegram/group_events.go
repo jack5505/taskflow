@@ -45,6 +45,7 @@ const maxSprintTasks = 20
 type taskEvent struct {
 	Kind     string     `json:"kind"`
 	By       uuid.UUID  `json:"by"`
+	ByName   string     `json:"by_name,omitempty"` // действует система (GitHub, §12.4): «GitHub (логин)»
 	Comment  string     `json:"comment,omitempty"`
 	To       string     `json:"to,omitempty"`       // переход: статус после него
 	Assignee *uuid.UUID `json:"assignee,omitempty"` // назначение: кого назначили
@@ -114,6 +115,7 @@ func (ge *GroupEvents) onTransitioned(ctx context.Context, env events.Envelope) 
 		From    string    `json:"from"`
 		To      string    `json:"to"`
 		By      uuid.UUID `json:"by"`
+		ByName  string    `json:"by_name"`
 		Comment string    `json:"comment"`
 	}
 	if err := decodePayload(env, &p); err != nil {
@@ -123,7 +125,7 @@ func (ge *GroupEvents) onTransitioned(ctx context.Context, env events.Envelope) 
 	if kind == "" {
 		return nil
 	}
-	return ge.queue(ctx, p.TaskID, taskEvent{Kind: kind, By: p.By, Comment: truncate(p.Comment, maxCommentRunes), To: p.To})
+	return ge.queue(ctx, p.TaskID, taskEvent{Kind: kind, By: p.By, ByName: p.ByName, Comment: truncate(p.Comment, maxCommentRunes), To: p.To})
 }
 
 // onAssigned — назначение менеджером (§8.4): «📌 … исполнитель … — назначение: …». Взятие себе
@@ -213,9 +215,11 @@ func (ge *GroupEvents) render(ctx context.Context, m *Message) (bool, error) {
 	if ev == nil || r.ChatID == nil || r.Deleted || !project.EffectiveNotifications(r.Settings)[eventSetting[ev.Kind]] {
 		return false, ge.consume(ctx, key, len(list))
 	}
-	actor, _, err := user.DisplayName(db, ev.By)
-	if err != nil {
-		return false, err
+	actor := ev.ByName
+	if actor == "" {
+		if actor, _, err = user.DisplayName(db, ev.By); err != nil {
+			return false, err
+		}
 	}
 	data := map[string]any{"Key": r.Key, "Title": r.Title, "Actor": actor, "Comment": ev.Comment,
 		"Assignee": mention(r.Assignee, r.AssigneeUsername), "Spent": spentText(r.SpentMinutes, r.EstimateMinutes)}
