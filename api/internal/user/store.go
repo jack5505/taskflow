@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/jack5505/taskflow/api/internal/events"
 )
@@ -185,4 +186,88 @@ func NamesOrdered(db *gorm.DB, ids []uuid.UUID) ([]Name, error) {
 		return nil, fmt.Errorf("user: names: %w", err)
 	}
 	return rows, nil
+}
+
+// LockForUpdate — пользователь id, строка FOR UPDATE; нет такого — nil.
+func LockForUpdate(tx *gorm.DB, id uuid.UUID) (*User, error) {
+	return lockUser(tx, id, "FOR UPDATE")
+}
+
+// LockNoKeyUpdate — пользователь id, строка FOR NO KEY UPDATE: проверки внешних ключей (история,
+// комментарии со ссылкой на пользователя) берут FOR KEY SHARE и с ней не конфликтуют. Нет — nil.
+func LockNoKeyUpdate(tx *gorm.DB, id uuid.UUID) (*User, error) {
+	return lockUser(tx, id, "FOR NO KEY UPDATE")
+}
+
+func lockUser(tx *gorm.DB, id uuid.UUID, lock string) (*User, error) {
+	var u User
+	res := tx.Raw(`SELECT * FROM users WHERE id = ? `+lock, id).Scan(&u)
+	if res.Error != nil {
+		return nil, fmt.Errorf("user: lock: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &u, nil
+}
+
+// LockActiveAdmins блокирует FOR NO KEY UPDATE всех активных администраторов в порядке id и
+// возвращает их id: перед снятием прав или деактивацией, чтобы не остаться без администратора.
+func LockActiveAdmins(tx *gorm.DB) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	if err := tx.Raw(`SELECT id FROM users WHERE is_system_admin AND is_active ORDER BY id FOR NO KEY UPDATE`).
+		Scan(&ids).Error; err != nil {
+		return nil, fmt.Errorf("user: lock admins: %w", err)
+	}
+	return ids, nil
+}
+
+// Update записывает поля updates пользователю u (поля u обновляются) и перечитывает строку.
+func Update(tx *gorm.DB, u *User, updates map[string]any) error {
+	if len(updates) > 0 {
+		if err := tx.Model(u).Updates(updates).Error; err != nil {
+			return fmt.Errorf("user: update: %w", err)
+		}
+	}
+	if err := tx.First(u, "id = ?", u.ID).Error; err != nil {
+		return fmt.Errorf("user: reload: %w", err)
+	}
+	return nil
+}
+
+// CreateNew создаёт пользователя u; email уже занят — created = false, ничего не пишется.
+func CreateNew(tx *gorm.DB, u *User) (created bool, err error) {
+	res := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "email"}}, DoNothing: true}).Create(u)
+	if res.Error != nil {
+		return false, fmt.Errorf("user: create: %w", res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// All — все пользователи по имени и email.
+func All(db *gorm.DB) ([]User, error) {
+	var list []User
+	if err := db.Order("display_name, email").Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("user: list: %w", err)
+	}
+	return list, nil
+}
+
+// ActiveBriefs — активные пользователи без служебных полей по имени и email.
+func ActiveBriefs(db *gorm.DB) ([]Brief, error) {
+	list := []Brief{}
+	if err := db.Model(&User{}).Where("is_active").Order("display_name, email").Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("user: list: %w", err)
+	}
+	return list, nil
+}
+
+// Deactivate снимает активность и привязку Telegram пользователя u (§3.1; поля u обновляются).
+func Deactivate(tx *gorm.DB, u *User) error {
+	if err := tx.Model(u).Updates(map[string]any{
+		"is_active": false, "telegram_user_id": nil, "telegram_username": nil,
+	}).Error; err != nil {
+		return fmt.Errorf("user: deactivate: %w", err)
+	}
+	return nil
 }

@@ -2,9 +2,6 @@
 # Список только сокращается: исправил обращение — уменьши число или удали строку, иначе TestTableOwnership упадёт.
 # Новые строки сюда не добавляются — вызывайте функцию модуля-владельца (api/CLAUDE.md).
 auth/admin.go users 1
-me/me.go project_members 1
-me/me.go projects 1
-me/me.go users 1
 project/members.go users 3
 project/service.go sprints 1
 project/service.go tasks 1
@@ -27,6 +24,3 @@ task/trash.go users 1
 task/update.go sprints 1
 task/worklogs.go sprints 1
 task/worklogs.go users 3
-users/service.go project_members 4
-users/service.go projects 4
-users/service.go users 3

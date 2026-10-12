@@ -4,7 +4,6 @@ package me
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/notification"
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/telegram"
 	"github.com/jack5505/taskflow/api/internal/user"
@@ -66,12 +66,13 @@ func (s *Service) WithTelegramBot(enabled bool) *Service {
 
 // Profile — данные для GET /me.
 func (s *Service) Profile(ctx context.Context, u *user.User) (*Profile, error) {
-	projects := []MyProject{}
-	err := s.db.WithContext(ctx).Raw(`SELECT p.id, p.key, p.name, m.role, p.is_archived
-		FROM project_members m JOIN projects p ON p.id = m.project_id
-		WHERE m.user_id = ? AND p.deleted_at IS NULL ORDER BY p.key`, u.ID).Scan(&projects).Error
+	mine, err := project.ProjectsOf(s.db.WithContext(ctx), u.ID)
 	if err != nil {
-		return nil, fmt.Errorf("me: projects: %w", err)
+		return nil, err
+	}
+	projects := make([]MyProject, len(mine))
+	for i, p := range mine {
+		projects[i] = MyProject(p)
 	}
 	timer, err := task.CurrentTimer(ctx, s.db, u.ID, s.now())
 	if err != nil {
@@ -103,13 +104,13 @@ func (s *Service) Update(ctx context.Context, u *user.User, in Update) (*user.Us
 		}
 		updates["timezone"] = *in.Timezone
 	}
-	var fresh user.User
+	var fresh *user.User
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.Raw(`SELECT * FROM users WHERE id = ? FOR UPDATE`, u.ID).Scan(&fresh)
-		if res.Error != nil {
-			return fmt.Errorf("me: lock: %w", res.Error)
+		var err error
+		if fresh, err = user.LockForUpdate(tx, u.ID); err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if fresh == nil {
 			return auth.ErrNoToken
 		}
 		if in.NotificationSettings != nil {
@@ -122,15 +123,12 @@ func (s *Service) Update(ctx context.Context, u *user.User, in Update) (*user.Us
 		if len(updates) == 0 {
 			return nil
 		}
-		if err := tx.Model(&fresh).Updates(updates).Error; err != nil {
-			return fmt.Errorf("me: update: %w", err)
-		}
-		return tx.First(&fresh, "id = ?", u.ID).Error
+		return user.Update(tx, fresh, updates)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &fresh, nil
+	return fresh, nil
 }
 
 // Notifications — колокольчик (§7.7): limit 0 — по умолчанию, иначе 1..200.

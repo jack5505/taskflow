@@ -76,3 +76,45 @@ func Memberships(db *gorm.DB, projectIDs, userIDs []uuid.UUID) (map[Membership]b
 	}
 	return out, nil
 }
+
+// UserProject — неудалённый проект пользователя с его ролью.
+type UserProject struct {
+	ID         uuid.UUID
+	Key        string
+	Name       string
+	Role       string
+	IsArchived bool
+}
+
+// ProjectsOf — неудалённые проекты, где userID участник, по ключу.
+func ProjectsOf(db *gorm.DB, userID uuid.UUID) ([]UserProject, error) {
+	var rows []UserProject
+	if err := db.Raw(`SELECT p.id, p.key, p.name, m.role, p.is_archived
+		FROM project_members m JOIN projects p ON p.id = m.project_id
+		WHERE m.user_id = ? AND p.deleted_at IS NULL ORDER BY p.key`, userID).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("project: user projects: %w", err)
+	}
+	return rows, nil
+}
+
+// ManagesAny — userID менеджер хотя бы одного неудалённого проекта.
+func ManagesAny(db *gorm.DB, userID uuid.UUID) (bool, error) {
+	var ok bool
+	if err := db.Raw(`SELECT EXISTS (
+		SELECT 1 FROM project_members m JOIN projects p ON p.id = m.project_id
+		WHERE m.user_id = ? AND m.role = 'manager' AND p.deleted_at IS NULL)`, userID).Scan(&ok).Error; err != nil {
+		return false, fmt.Errorf("project: manager check: %w", err)
+	}
+	return ok, nil
+}
+
+// LockManagedBy блокирует FOR UPDATE проекты (и удалённые), где userID менеджер, в порядке id, и
+// возвращает их. Вызывается в транзакции деактивации после блокировок задач (задача → проект).
+func LockManagedBy(tx *gorm.DB, userID uuid.UUID) ([]Brief, error) {
+	var rows []Brief
+	if err := tx.Raw(`SELECT p.id, p.key, p.timezone FROM projects p JOIN project_members m ON m.project_id = p.id
+		WHERE m.user_id = ? AND m.role = 'manager' ORDER BY p.id FOR UPDATE OF p`, userID).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("project: lock managed: %w", err)
+	}
+	return rows, nil
+}

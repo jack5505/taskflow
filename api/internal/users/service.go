@@ -5,17 +5,18 @@ package users
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -48,33 +49,17 @@ func (s *Service) CanList(ctx context.Context, u *user.User) (bool, error) {
 	if u.IsSystemAdmin {
 		return true, nil
 	}
-	var ok bool
-	err := s.db.WithContext(ctx).Raw(`SELECT EXISTS (
-		SELECT 1 FROM project_members m JOIN projects p ON p.id = m.project_id
-		WHERE m.user_id = ? AND m.role = 'manager' AND p.deleted_at IS NULL)`, u.ID).Scan(&ok).Error
-	if err != nil {
-		return false, fmt.Errorf("users: manager check: %w", err)
-	}
-	return ok, nil
+	return project.ManagesAny(s.db.WithContext(ctx), u.ID)
 }
 
 // ListAll — все пользователи по имени (администратор системы).
 func (s *Service) ListAll(ctx context.Context) ([]user.User, error) {
-	var list []user.User
-	if err := s.db.WithContext(ctx).Order("display_name, email").Find(&list).Error; err != nil {
-		return nil, fmt.Errorf("users: list: %w", err)
-	}
-	return list, nil
+	return user.All(s.db.WithContext(ctx))
 }
 
 // ListBrief — активные пользователи без служебных полей: менеджеру для добавления в проект.
 func (s *Service) ListBrief(ctx context.Context) ([]user.Brief, error) {
-	list := []user.Brief{}
-	if err := s.db.WithContext(ctx).Model(&user.User{}).Where("is_active").
-		Order("display_name, email").Find(&list).Error; err != nil {
-		return nil, fmt.Errorf("users: list: %w", err)
-	}
-	return list, nil
+	return user.ActiveBriefs(s.db.WithContext(ctx))
 }
 
 type CreateInput struct {
@@ -103,11 +88,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*user.User, error
 	u.IsSystemAdmin = in.IsSystemAdmin
 
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "email"}}, DoNothing: true}).Create(u)
-		if res.Error != nil {
-			return fmt.Errorf("users: create: %w", res.Error)
+		created, err := user.CreateNew(tx, u)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if !created {
 			return fieldError("email", "уже используется")
 		}
 		if err := audit.Write(tx, audit.Record{Action: audit.UserCreated, EntityType: "user", EntityID: u.ID.String(),
@@ -150,26 +135,25 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 		updates["is_system_admin"] = *in.IsSystemAdmin
 	}
 
-	var u user.User
+	var u *user.User
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Снятие админа или деактивация может оставить систему без администратора: сначала
 		// блокируем всех активных администраторов (в одном порядке, до строки пользователя —
 		// иначе две такие транзакции навстречу друг другу встанут в deadlock).
 		var admins []uuid.UUID
+		var err error
 		if (in.IsActive != nil && !*in.IsActive) || (in.IsSystemAdmin != nil && !*in.IsSystemAdmin) {
-			if err := tx.Raw(`SELECT id FROM users WHERE is_system_admin AND is_active ORDER BY id FOR NO KEY UPDATE`).
-				Scan(&admins).Error; err != nil {
-				return fmt.Errorf("users: lock admins: %w", err)
+			if admins, err = user.LockActiveAdmins(tx); err != nil {
+				return err
 			}
 		}
 		// FOR NO KEY UPDATE, а не FOR UPDATE: проверки внешних ключей (история, комментарии со
 		// ссылкой на пользователя) берут FOR KEY SHARE и с ним не конфликтуют — иначе
 		// смена статуса задачи этого пользователя и его деактивация встали бы в deadlock.
-		res := tx.Raw(`SELECT * FROM users WHERE id = ? FOR NO KEY UPDATE`, id).Scan(&u)
-		if res.Error != nil {
-			return fmt.Errorf("users: find: %w", res.Error)
+		if u, err = user.LockNoKeyUpdate(tx, id); err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if u == nil {
 			return ErrNotFound
 		}
 		if u.IsSystemAdmin && u.IsActive && len(admins) == 1 {
@@ -180,14 +164,14 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 				return fieldError("is_system_admin", "это последний активный администратор системы")
 			}
 		}
-		before := u
+		before := *u
 		if in.IsActive != nil && *in.IsActive != u.IsActive {
 			if *in.IsActive {
 				updates["is_active"] = true
 				if err := audit.Write(tx, audit.Record{Action: audit.UserActivated, EntityType: "user", EntityID: u.ID.String()}); err != nil {
 					return err
 				}
-			} else if err := s.deactivateTx(tx, &u); err != nil {
+			} else if err := s.deactivateTx(tx, u); err != nil {
 				return err
 			}
 		}
@@ -196,17 +180,12 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 				return err
 			}
 		}
-		if len(updates) > 0 {
-			if err := tx.Model(&u).Updates(updates).Error; err != nil {
-				return fmt.Errorf("users: update: %w", err)
-			}
-		}
-		return tx.First(&u, "id = ?", id).Error
+		return user.Update(tx, u, updates)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &u, nil
+	return u, nil
 }
 
 // deactivateTx — деактивация §3.1 в транзакции обновления: проверка «единственного менеджера»
@@ -226,26 +205,19 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	}
 	// Блокируем проекты, где он менеджер: параллельная деактивация второго менеджера того же
 	// проекта дождётся этой транзакции и увидит её результат.
-	if err := tx.Exec(`SELECT p.id FROM projects p JOIN project_members m ON m.project_id = p.id
-		WHERE m.user_id = ? AND m.role = 'manager' ORDER BY p.id FOR UPDATE OF p`, u.ID).Error; err != nil {
-		return fmt.Errorf("users: lock projects: %w", err)
+	managed, err := project.LockManagedBy(tx, u.ID)
+	if err != nil {
+		return err
 	}
-	var keys []string
-	if err := tx.Raw(`SELECT p.key FROM project_members m JOIN projects p ON p.id = m.project_id
-		WHERE m.user_id = ? AND m.role = 'manager'
-		  AND NOT EXISTS (
-			SELECT 1 FROM project_members o JOIN users ou ON ou.id = o.user_id
-			WHERE o.project_id = m.project_id AND o.role = 'manager' AND o.user_id <> m.user_id AND ou.is_active)
-		ORDER BY p.key`, u.ID).Scan(&keys).Error; err != nil {
-		return fmt.Errorf("users: last manager check: %w", err)
+	keys, err := lastManagerOf(tx, u.ID, managed)
+	if err != nil {
+		return err
 	}
 	if len(keys) > 0 {
 		return ErrLastManager.With("projects", keys)
 	}
-	if err := tx.Model(u).Updates(map[string]any{
-		"is_active": false, "telegram_user_id": nil, "telegram_username": nil,
-	}).Error; err != nil {
-		return fmt.Errorf("users: deactivate: %w", err)
+	if err := user.Deactivate(tx, u); err != nil {
+		return err
 	}
 	if err := s.auth.RevokeAllTx(tx, u.ID); err != nil {
 		return fmt.Errorf("users: revoke sessions: %w", err)
@@ -255,6 +227,46 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	}
 	by, _ := audit.From(tx.Statement.Context)
 	return events.Publish(tx, events.UserDeactivated, map[string]any{"user_id": u.ID, "released_tasks": released, "by": by})
+}
+
+// lastManagerOf — ключи проектов из managed (userID в них менеджер), где других активных
+// менеджеров нет, по ключу.
+func lastManagerOf(tx *gorm.DB, userID uuid.UUID, managed []project.Brief) ([]string, error) {
+	if len(managed) == 0 {
+		return nil, nil
+	}
+	ids := make([]uuid.UUID, len(managed))
+	for i, p := range managed {
+		ids[i] = p.ID
+	}
+	managers, err := project.Managers(tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	var others []uuid.UUID
+	for _, m := range managers {
+		if m.UserID != userID {
+			others = append(others, m.UserID)
+		}
+	}
+	active, err := user.ActiveTimezones(tx, others)
+	if err != nil {
+		return nil, err
+	}
+	covered := map[uuid.UUID]bool{}
+	for _, m := range managers {
+		if _, ok := active[m.UserID]; ok && m.UserID != userID {
+			covered[m.ProjectID] = true
+		}
+	}
+	var keys []string
+	for _, p := range managed {
+		if !covered[p.ID] {
+			keys = append(keys, p.Key)
+		}
+	}
+	slices.Sort(keys)
+	return keys, nil
 }
 
 // changed — значения полей пользователя до и после для журнала; только реально меняющиеся.
