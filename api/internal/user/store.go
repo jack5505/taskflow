@@ -153,3 +153,22 @@ func TelegramRecipients(db *gorm.DB, ids []uuid.UUID) ([]Recipient, error) {
 	}
 	return rows, nil
 }
+
+// ActiveTimezones — часовые пояса активных пользователей из ids по id; деактивированных нет.
+func ActiveTimezones(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ID       uuid.UUID
+		Timezone string
+	}
+	if err := db.Raw(`SELECT id, timezone FROM users WHERE id IN ? AND is_active`, ids).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("user: timezones: %w", err)
+	}
+	for _, r := range rows {
+		out[r.ID] = r.Timezone
+	}
+	return out, nil
+}

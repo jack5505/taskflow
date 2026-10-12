@@ -5,14 +5,6 @@ auth/admin.go users 1
 me/me.go project_members 1
 me/me.go projects 1
 me/me.go users 1
-notification/due.go project_members 1
-notification/due.go projects 1
-notification/due.go tasks 1
-notification/due.go users 1
-notification/handlers.go project_members 2
-notification/handlers.go projects 1
-notification/handlers.go tasks 1
-notification/handlers.go users 3
 project/members.go users 3
 project/service.go sprints 1
 project/service.go tasks 1

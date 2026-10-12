@@ -1,15 +1,20 @@
 package notification
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 type memberPayload struct {
@@ -137,16 +142,20 @@ func notifyTaskPeople(ctx context.Context, db *gorm.DB, projectID, taskID, repor
 // проекта (иначе уведомление раскрыло бы чужой проект).
 func notifyUsers(ctx context.Context, db *gorm.DB, projectID, taskID uuid.UUID, targets []uuid.UUID,
 	by uuid.UUID, typ string, data map[string]any, eventID uuid.UUID) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	qdb := db.WithContext(ctx)
+	active, err := user.ActiveTimezones(qdb, targets)
+	if err != nil {
+		return err
+	}
+	members, err := project.MembersAmong(qdb, projectID, targets)
+	if err != nil {
+		return err
+	}
 	for _, uid := range targets {
-		if uid == by {
-			continue
-		}
-		var member bool
-		if err := db.WithContext(ctx).Raw(`SELECT EXISTS (SELECT 1 FROM users u JOIN project_members m ON m.user_id = u.id
-			WHERE u.id = ? AND u.is_active AND m.project_id = ?)`, uid, projectID).Scan(&member).Error; err != nil {
-			return fmt.Errorf("notification: member check: %w", err)
-		}
-		if !member {
+		if _, ok := active[uid]; uid == by || !ok || !members[uid] {
 			continue
 		}
 		id := taskID
@@ -257,22 +266,14 @@ func userDeactivated(db *gorm.DB) events.Handler {
 		if err != nil || len(p.Released) == 0 {
 			return err
 		}
-		var name string
-		if err := db.WithContext(ctx).Raw(`SELECT display_name FROM users WHERE id = ?`, p.UserID).Scan(&name).Error; err != nil {
-			return fmt.Errorf("notification: deactivated name: %w", err)
+		qdb := db.WithContext(ctx)
+		name, _, err := user.DisplayName(qdb, p.UserID)
+		if err != nil {
+			return err
 		}
-		var rows []struct {
-			ManagerID  uuid.UUID
-			ProjectID  uuid.UUID
-			ProjectKey string
-			TaskKey    string
-		}
-		if err := db.WithContext(ctx).Raw(`SELECT mm.user_id AS manager_id, pr.id AS project_id, pr.key AS project_key, t.key AS task_key
-			FROM tasks t JOIN projects pr ON pr.id = t.project_id AND pr.deleted_at IS NULL
-			JOIN project_members mm ON mm.project_id = pr.id AND mm.role = 'manager' AND mm.user_id <> ?
-			JOIN users mu ON mu.id = mm.user_id AND mu.is_active
-			WHERE t.key IN ? ORDER BY mm.user_id, pr.key, t.number`, p.UserID, p.Released).Scan(&rows).Error; err != nil {
-			return fmt.Errorf("notification: deactivated managers: %w", err)
+		rows, err := releasedByManager(qdb, p.UserID, p.Released)
+		if err != nil {
+			return err
 		}
 		type project struct {
 			ProjectID  uuid.UUID `json:"project_id"`
@@ -304,4 +305,63 @@ func userDeactivated(db *gorm.DB) events.Handler {
 		}
 		return nil
 	}
+}
+
+// releasedRow — освобождённая задача и активный менеджер её неудалённого проекта.
+type releasedRow struct {
+	ManagerID  uuid.UUID
+	ProjectID  uuid.UUID
+	ProjectKey string
+	TaskKey    string
+	number     int
+}
+
+// releasedByManager — задачи keys (освобождённые у деактивированного userID) с менеджерами их
+// проектов, кроме самого userID, по менеджеру, ключу проекта и номеру задачи.
+func releasedByManager(db *gorm.DB, userID uuid.UUID, keys []string) ([]releasedRow, error) {
+	tasks, err := task.RefsByKeys(db, keys)
+	if err != nil || len(tasks) == 0 {
+		return nil, err
+	}
+	var projectIDs []uuid.UUID
+	for _, t := range tasks {
+		if !slices.Contains(projectIDs, t.ProjectID) {
+			projectIDs = append(projectIDs, t.ProjectID)
+		}
+	}
+	projects, err := project.LiveBriefs(db, projectIDs, false)
+	if err != nil {
+		return nil, err
+	}
+	managers, err := project.Managers(db, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+	var managerIDs []uuid.UUID
+	for _, m := range managers {
+		if m.UserID != userID && !slices.Contains(managerIDs, m.UserID) {
+			managerIDs = append(managerIDs, m.UserID)
+		}
+	}
+	active, err := user.ActiveTimezones(db, managerIDs)
+	if err != nil {
+		return nil, err
+	}
+	var rows []releasedRow
+	for _, m := range managers {
+		p, live := projects[m.ProjectID]
+		if _, ok := active[m.UserID]; !ok || !live || m.UserID == userID {
+			continue
+		}
+		for _, t := range tasks {
+			if t.ProjectID == m.ProjectID {
+				rows = append(rows, releasedRow{ManagerID: m.UserID, ProjectID: p.ID, ProjectKey: p.Key, TaskKey: t.Key, number: t.Number})
+			}
+		}
+	}
+	slices.SortFunc(rows, func(a, b releasedRow) int {
+		return cmp.Or(cmp.Compare(a.ManagerID.String(), b.ManagerID.String()), cmp.Compare(a.ProjectKey, b.ProjectKey),
+			cmp.Compare(a.number, b.number))
+	})
+	return rows, nil
 }
