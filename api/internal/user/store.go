@@ -279,3 +279,53 @@ func ActiveAmong(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
 	}
 	return out, nil
 }
+
+// LockShare блокирует FOR SHARE строки пользователей ids в порядке id: модуль task берёт их раньше
+// строк задач и проекта — тот же порядок, что у деактивации (пользователь → задачи → проект).
+func LockShare(tx *gorm.DB, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	var got []uuid.UUID
+	if err := tx.Raw(`SELECT id FROM users WHERE id IN ? ORDER BY id FOR SHARE`, ids).Scan(&got).Error; err != nil {
+		return fmt.Errorf("user: lock share: %w", err)
+	}
+	return nil
+}
+
+// Actor — права действующего пользователя из строки под блокировкой.
+type Actor struct {
+	IsSystemAdmin bool
+	IsActive      bool
+}
+
+// LockActor — флаги пользователя id, строка FOR SHARE (первая блокировка операций над задачами);
+// нет такого — nil.
+func LockActor(tx *gorm.DB, id uuid.UUID) (*Actor, error) {
+	var rows []Actor
+	if err := tx.Raw(`SELECT is_system_admin, is_active FROM users WHERE id = ? FOR SHARE`, id).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("user: actor: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
+// IsActive — пользователь id есть и активен. Блокировок не берёт.
+func IsActive(db *gorm.DB, id uuid.UUID) (bool, error) {
+	var active []bool
+	if err := db.Raw(`SELECT is_active FROM users WHERE id = ?`, id).Scan(&active).Error; err != nil {
+		return false, fmt.Errorf("user: active: %w", err)
+	}
+	return len(active) > 0 && active[0], nil
+}
+
+// Timezone — часовой пояс пользователя id (§3.1); нет такого — "".
+func Timezone(db *gorm.DB, id uuid.UUID) (string, error) {
+	var tz string
+	if err := db.Raw(`SELECT timezone FROM users WHERE id = ?`, id).Scan(&tz).Error; err != nil {
+		return "", fmt.Errorf("user: timezone: %w", err)
+	}
+	return tz, nil
+}

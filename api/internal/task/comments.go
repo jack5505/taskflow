@@ -44,10 +44,13 @@ func (s *Service) Comments(ctx context.Context, u *user.User, key string) ([]Com
 		return nil, err
 	}
 	list := []CommentView{}
-	if err := s.db.WithContext(ctx).Raw(`SELECT c.*, u.display_name AS author_name, c.updated_at > c.created_at AS edited
-		FROM comments c JOIN users u ON u.id = c.author_id
-		WHERE c.task_id = ? ORDER BY c.created_at, c.id`, t.ID).Scan(&list).Error; err != nil {
+	db := s.db.WithContext(ctx)
+	if err := db.Raw(`SELECT *, updated_at > created_at AS edited FROM comments
+		WHERE task_id = ? ORDER BY created_at, id`, t.ID).Scan(&list).Error; err != nil {
 		return nil, fmt.Errorf("task: comments: %w", err)
+	}
+	if err := fillCommentNames(db, list); err != nil {
+		return nil, err
 	}
 	return list, nil
 }
@@ -125,12 +128,17 @@ func (s *Service) DeleteComment(ctx context.Context, u *user.User, id uuid.UUID)
 }
 
 func commentView(tx *gorm.DB, id uuid.UUID) (*CommentView, error) {
-	var v CommentView
-	if err := tx.Raw(`SELECT c.*, u.display_name AS author_name, c.updated_at > c.created_at AS edited
-		FROM comments c JOIN users u ON u.id = c.author_id WHERE c.id = ?`, id).Scan(&v).Error; err != nil {
+	var v []CommentView
+	if err := tx.Raw(`SELECT *, updated_at > created_at AS edited FROM comments WHERE id = ?`, id).Scan(&v).Error; err != nil {
 		return nil, fmt.Errorf("task: comment view: %w", err)
 	}
-	return &v, nil
+	if len(v) == 0 {
+		return &CommentView{}, nil // как прежний JOIN без строк: пустое представление
+	}
+	if err := fillCommentNames(tx, v); err != nil {
+		return nil, err
+	}
+	return &v[0], nil
 }
 
 // onComment — в одной транзакции: задача комментария (openTask, FOR SHARE), комментарий FOR UPDATE

@@ -90,10 +90,13 @@ func (s *Service) Worklogs(ctx context.Context, u *user.User, key string) ([]Wor
 		return nil, err
 	}
 	list := []WorklogView{}
-	if err := s.db.WithContext(ctx).Raw(`SELECT w.*, u.display_name AS user_name
-		FROM worklogs w JOIN users u ON u.id = w.user_id
-		WHERE w.task_id = ? ORDER BY w.work_date DESC, w.created_at DESC, w.id`, t.ID).Scan(&list).Error; err != nil {
+	db := s.db.WithContext(ctx)
+	if err := db.Raw(`SELECT * FROM worklogs WHERE task_id = ? ORDER BY work_date DESC, created_at DESC, id`, t.ID).
+		Scan(&list).Error; err != nil {
 		return nil, fmt.Errorf("task: worklogs: %w", err)
+	}
+	if err := fillWorklogNames(db, list); err != nil {
+		return nil, err
 	}
 	for i := range list {
 		list[i].fill()
@@ -448,13 +451,18 @@ func refreshSpent(tx *gorm.DB, t *Task) (int, error) {
 }
 
 func worklogView(tx *gorm.DB, id uuid.UUID) (*WorklogView, error) {
-	var v WorklogView
-	if err := tx.Raw(`SELECT w.*, u.display_name AS user_name FROM worklogs w JOIN users u ON u.id = w.user_id
-		WHERE w.id = ?`, id).Scan(&v).Error; err != nil {
+	var v []WorklogView
+	if err := tx.Raw(`SELECT * FROM worklogs WHERE id = ?`, id).Scan(&v).Error; err != nil {
 		return nil, fmt.Errorf("task: worklog view: %w", err)
 	}
-	v.fill()
-	return &v, nil
+	if len(v) == 0 {
+		return &WorklogView{}, nil // как прежний JOIN без строк: пустое представление
+	}
+	if err := fillWorklogNames(tx, v); err != nil {
+		return nil, err
+	}
+	v[0].fill()
+	return &v[0], nil
 }
 
 // worklogAudit — значения записи для журнала аудита и события worklog.updated.
@@ -512,9 +520,9 @@ func worklogSource(s string) string {
 
 // userLocation — часовой пояс пользователя (§3.1) из базы, один раз на запрос; неизвестный — UTC.
 func userLocation(tx *gorm.DB, id uuid.UUID) (*time.Location, error) {
-	var tz string
-	if err := tx.Raw(`SELECT timezone FROM users WHERE id = ?`, id).Scan(&tz).Error; err != nil {
-		return nil, fmt.Errorf("task: timezone: %w", err)
+	tz, err := user.Timezone(tx, id)
+	if err != nil {
+		return nil, err
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {

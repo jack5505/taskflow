@@ -94,7 +94,7 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 		if in.SprintID != nil {
 			pre.sprints = []uuid.UUID{*in.SprintID}
 		}
-		if err := lockShare(tx, "users", pre.users); err != nil {
+		if err := user.LockShare(tx, pre.users); err != nil {
 			return err
 		}
 		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
@@ -221,11 +221,11 @@ func normalizeLabels(in []string) (Labels, error) {
 // checkAssignee — исполнитель активен и участник проекта. Строку пользователя вызывающий уже
 // держит FOR SHARE (lockShare), строку проекта — тоже: деактивация и исключение из проекта ждут.
 func checkAssignee(tx *gorm.DB, projectID, userID uuid.UUID) error {
-	var active []bool
-	if err := tx.Raw(`SELECT is_active FROM users WHERE id = ?`, userID).Scan(&active).Error; err != nil {
-		return fmt.Errorf("task: assignee: %w", err)
+	active, err := user.IsActive(tx, userID)
+	if err != nil {
+		return err
 	}
-	if len(active) == 0 || !active[0] {
+	if !active {
 		return fieldError("assignee_id", "не активный участник проекта")
 	}
 	role, err := project.RoleIn(tx, projectID, userID)
