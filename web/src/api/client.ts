@@ -1251,6 +1251,24 @@ export class Api<
       }),
 
     /**
+     * @description Приём событий GitHub App (§12.2). Подпись X-Hub-Signature-256 (HMAC-SHA256 тела секретом App) проверяется на каждом запросе, неверная — 401. Тело — JSON до 2 МБ. Ответ 202 отдаётся сразу, доставка пишется в базу вместе с событием outbox, обработка — в воркере; повторная доставка с тем же X-GitHub-Delivery (7 дней) не обрабатывается. Маршрут есть, только если задан GITHUB_APP_ID.
+     *
+     * @tags github
+     * @name V1GithubWebhookCreate
+     * @summary Webhook GitHub App
+     * @request POST:/api/v1/github/webhook
+     */
+    v1GithubWebhookCreate: (body: object, params: RequestParams = {}) =>
+      this.request<Record<string, boolean>, ApierrResponse>({
+        path: `/api/v1/github/webhook`,
+        method: "POST",
+        body: body,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
      * @description Текущий пользователь, его личные уведомления §8.7 (все ключи, с умолчаниями), проекты и роли, запущенный таймер (пока всегда null — появится вместе с таймером).
      *
      * @tags me

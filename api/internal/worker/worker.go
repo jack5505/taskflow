@@ -16,6 +16,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/github"
 	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/outbox"
@@ -49,6 +50,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
 	notification.Register(d, g)
+	github.Register(d, github.NewProcessor()) // доставки вебхуков GitHub (§12.2)
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects)
 	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }
@@ -133,6 +135,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	}()
 	wg.Go(func() { sprint.RunSnapshots(ctx, g) }) // снимки спринтов в 00:00 по поясу проекта (§3.8)
 	wg.Go(func() { runDaily(ctx, "one-time codes cleanup", accounts.CleanupCodes) })
+	wg.Go(func() { runDaily(ctx, "github deliveries cleanup", github.NewIntake(g).CleanupDeliveries) })
 	go func() {
 		defer wg.Done()
 		runEvery(ctx, "timers stop", time.Minute, stopTimers)

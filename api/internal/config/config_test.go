@@ -1,6 +1,12 @@
 package config_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -129,4 +135,60 @@ func TestLoadTelegram(t *testing.T) {
 	t.Setenv("TELEGRAM_POLLING", "иногда")
 	_, err = config.Load()
 	require.ErrorContains(t, err, "TELEGRAM_POLLING")
+}
+
+// §12.1: интеграция с GitHub выключена без GITHUB_APP_ID; с ним нужны ключ App и секрет вебхуков.
+func TestLoadGitHub(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
+	t.Setenv("JWT_SECRET", testSecret)
+	set := func(id, key, secret, client, clientSecret string) {
+		t.Setenv("GITHUB_APP_ID", id)
+		t.Setenv("GITHUB_APP_PRIVATE_KEY_FILE", key)
+		t.Setenv("GITHUB_WEBHOOK_SECRET", secret)
+		t.Setenv("GITHUB_CLIENT_ID", client)
+		t.Setenv("GITHUB_CLIENT_SECRET", clientSecret)
+		t.Setenv("GITHUB_API_URL", "")
+	}
+	set("", "", "", "", "")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.False(t, cfg.GitHubEnabled())
+	require.Equal(t, "https://api.github.com", cfg.GitHubAPIURL)
+
+	key := writeKey(t)
+	set("12345", key, "0123456789abcdef", "Iv1.abc", "s3cr3t")
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	require.True(t, cfg.GitHubEnabled())
+
+	for name, args := range map[string][5]string{
+		"id не число":           {"app", key, "0123456789abcdef", "", ""},
+		"id ноль":               {"0", key, "0123456789abcdef", "", ""},
+		"нет ключа":             {"12345", "", "0123456789abcdef", "", ""},
+		"нет файла ключа":       {"12345", key + ".missing", "0123456789abcdef", "", ""},
+		"не PEM":                {"12345", notPEM(t), "0123456789abcdef", "", ""},
+		"короткий секрет":       {"12345", key, "short", "", ""},
+		"секрет по умолчанию":   {"12345", key, "change-me", "", ""},
+		"client id без секрета": {"12345", key, "0123456789abcdef", "Iv1.abc", ""},
+	} {
+		set(args[0], args[1], args[2], args[3], args[4])
+		_, err := config.Load()
+		require.Error(t, err, name)
+	}
+}
+
+func writeKey(t *testing.T) string {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	p := filepath.Join(t.TempDir(), "app.pem")
+	require.NoError(t, os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}), 0o600))
+	return p
+}
+
+func notPEM(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "bad.pem")
+	require.NoError(t, os.WriteFile(p, []byte("not a key"), 0o600))
+	return p
 }

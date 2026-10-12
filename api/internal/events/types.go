@@ -33,6 +33,9 @@ const (
 
 	ProjectArchived = "project.archived"
 	ProjectDeleted  = "project.deleted"
+
+	// GitHubDelivery — служебное: принятая доставка вебхука GitHub App, обработку делает воркер (§12.2).
+	GitHubDelivery = "github.delivery"
 )
 
 var known = map[string]struct{}{
@@ -43,6 +46,7 @@ var known = map[string]struct{}{
 	TimerAutoStopped: {}, TimerTrimmed: {},
 	MemberAdded: {}, MemberRemoved: {}, MemberRoleChanged: {}, UserDeactivated: {},
 	ProjectArchived: {}, ProjectDeleted: {},
+	GitHubDelivery: {},
 }
 
 // Known сообщает, описан ли тип события в ТЗ §9.4. Publish отклоняет неизвестные типы:

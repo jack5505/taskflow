@@ -17,6 +17,7 @@ api/internal/web/dist/*
 .env
 .env.*
 !.env.example
+/secrets/
 
 # Data
 /data/
