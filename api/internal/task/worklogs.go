@@ -339,7 +339,7 @@ func openForWorklog(tx *gorm.DB, u *user.User, key string) (*opened, error) {
 	if err != nil {
 		return nil, err
 	}
-	o, err := openTask(tx, u, key, preLock{sprints: sprints}, "FOR UPDATE")
+	o, err := openTask(tx, u, key, preLock{sprints: sprints}, forUpdate)
 	if err != nil {
 		return nil, err
 	}
@@ -412,6 +412,9 @@ func sprintNotClosed(tx *gorm.DB, id uuid.UUID) error {
 // записи не обходят лимит. Берётся после строки задачи — никто не ждёт задачу, держа эту блокировку
 // раньше неё. exclude — изменяемая запись (её прежние минуты не считаются).
 func checkDailyLimit(tx *gorm.DB, userID uuid.UUID, date time.Time, minutes int, exclude uuid.UUID) error {
+	if err := lockWorklogDay(tx, userID); err != nil {
+		return err
+	}
 	used, err := dayUsed(tx, userID, date, exclude)
 	if err != nil {
 		return err

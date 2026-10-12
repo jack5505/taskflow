@@ -146,7 +146,7 @@ type opened struct {
 // FOR UPDATE для изменения, FOR SHARE — для действий, не меняющих её поля), затем FOR SHARE проекта.
 // Права — из строк под блокировкой. Ошибки: деактивирован — 401; нет задачи, не участник или
 // удалённая для не-администратора — 404. Архив проверяет вызывающий — в нужном месте порядка ответов.
-func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (*opened, error) {
+func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock rowLock) (*opened, error) {
 	me, err := user.LockActor(tx, u.ID)
 	if err != nil {
 		return nil, err
@@ -212,7 +212,7 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 	}
 	var t, before Task
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		o, err := openTask(tx, u, key, pre, "FOR UPDATE")
+		o, err := openTask(tx, u, key, pre, forUpdate)
 		if err != nil {
 			return err
 		}

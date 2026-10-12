@@ -81,7 +81,7 @@ func (s *Service) StartTimer(ctx context.Context, u *user.User, key string) (*Ti
 		if err != nil {
 			return err
 		}
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
@@ -336,7 +336,7 @@ func lockUserTimer(tx *gorm.DB, userID uuid.UUID) (*ActiveTimer, *Task, error) {
 		if len(timers) == 0 {
 			return nil, nil, nil
 		}
-		if timers[0].TaskID == t.ID {
+		if t != nil && timers[0].TaskID == t.ID {
 			return &timers[0], t, nil
 		}
 	}
@@ -414,6 +414,9 @@ func splitByDay(from, to time.Time, loc *time.Location) []dayPart {
 // timerWorklog — запись части таймера с обрезкой по дневному лимиту; nil — остатка лимита нет.
 // Обрезка публикует timer.trimmed (уведомление пользователю, §6.4, §7.7).
 func timerWorklog(tx *gorm.DB, t *Task, userID uuid.UUID, p dayPart, now time.Time) (*WorklogView, error) {
+	if err := lockWorklogDay(tx, userID); err != nil {
+		return nil, err
+	}
 	used, err := dayUsed(tx, userID, p.date, uuid.Nil)
 	if err != nil {
 		return nil, err

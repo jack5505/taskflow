@@ -20,14 +20,6 @@ type SprintMove struct {
 // сохраняя их порядок; каждой — запись истории sprint_id и version+1. Вызывать в транзакции под
 // блокировкой спринта from. Возвращает ключи перенесённых задач.
 func MoveSprintTasks(tx *gorm.DB, projectID, from uuid.UUID, to *uuid.UUID, m SprintMove, by uuid.UUID) ([]string, error) {
-	cond := `project_id = ? AND sprint_id = ?`
-	args := []any{projectID, from}
-	if !m.IncludeDeleted {
-		cond += ` AND deleted_at IS NULL`
-	}
-	if m.OnlyOpen {
-		cond += ` AND status IN ('todo', 'in_progress', 'review')`
-	}
 	base, err := maxPosition(tx, projectID, to)
 	if err != nil {
 		return nil, err
@@ -37,7 +29,7 @@ func MoveSprintTasks(tx *gorm.DB, projectID, from uuid.UUID, to *uuid.UUID, m Sp
 	if to != nil {
 		target = to.String()
 	}
-	moved, err := moveTasksWhere(tx, cond, args, by, target, historySource(source), to, base)
+	moved, err := moveSprintRows(tx, projectID, from, m, by, target, historySource(source), to, base)
 	if err != nil {
 		return nil, err
 	}

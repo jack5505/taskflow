@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -20,14 +21,24 @@ func lockTaskOrder(tx *gorm.DB, projectKey string) error {
 	return nil
 }
 
-// lockTaskByKey — задача по ключу в t с блокировкой lock (FOR UPDATE / FOR SHARE); withDeleted —
-// и удалённая. Нет — found = false.
-func lockTaskByKey(tx *gorm.DB, key string, withDeleted bool, lock string, t *Task) (found bool, err error) {
+// rowLock — режим блокировки строки задачи.
+type rowLock string
+
+const (
+	forUpdate rowLock = "FOR UPDATE" // изменение полей задачи
+	forShare  rowLock = "FOR SHARE"  // действие, не меняющее её поля
+)
+
+// lockTaskByKey — задача по ключу в t с блокировкой lock; withDeleted — и удалённая. Нет — found = false.
+func lockTaskByKey(tx *gorm.DB, key string, withDeleted bool, lock rowLock, t *Task) (found bool, err error) {
+	if lock != forUpdate && lock != forShare {
+		return false, fmt.Errorf("task: unknown lock %q", lock)
+	}
 	cond := " AND deleted_at IS NULL"
 	if withDeleted {
 		cond = ""
 	}
-	res := tx.Raw(`SELECT * FROM tasks WHERE key = ?`+cond+` `+lock, key).Scan(t)
+	res := tx.Raw(`SELECT * FROM tasks WHERE key = ?`+cond+` `+string(lock), key).Scan(t)
 	if res.Error != nil {
 		return false, fmt.Errorf("task: lock: %w", res.Error)
 	}
@@ -58,8 +69,47 @@ func releaseAssigned(tx *gorm.DB, userID uuid.UUID, actor any, src, note string)
 	return keys, nil
 }
 
-// listTasks — задачи по условиям where (по t) в порядке секций, position, number, до limit.
-func listTasks(db *gorm.DB, where []string, args []any, limit int) ([]ListItem, error) {
+// listCursor — ключ продолжения списка: секция, position, number последней выданной задачи.
+type listCursor struct {
+	section string
+	pos     float64
+	num     int
+}
+
+// listTasks — задачи проекта по фильтру f (значения уже проверены сервисом) после after, в
+// порядке секций, position, number, до limit.
+func listTasks(db *gorm.DB, projectID uuid.UUID, f ListFilter, after *listCursor, limit int) ([]ListItem, error) {
+	where := []string{"t.project_id = ?"}
+	args := []any{projectID}
+	if !f.IncludeDeleted {
+		where = append(where, "t.deleted_at IS NULL")
+	}
+	add := func(cond string, vals ...any) { where, args = append(where, cond), append(args, vals...) }
+	if len(f.Status) > 0 {
+		add("t.status IN ?", f.Status)
+	}
+	if len(f.Type) > 0 {
+		add("t.type IN ?", f.Type)
+	}
+	if len(f.Priority) > 0 {
+		add("t.priority IN ?", f.Priority)
+	}
+	if c, v := idCondition("t.assignee_id", f.Assignee); c != "" {
+		add(c, v...)
+	}
+	if c, v := idCondition("t.sprint_id", f.Sprint); c != "" {
+		add(c, v...)
+	}
+	if f.Label != "" {
+		add("t.labels @> jsonb_build_array(?::text)", f.Label)
+	}
+	if q := strings.TrimSpace(f.Q); q != "" {
+		like := escapeLike(q)
+		add(`(t.key ILIKE ? OR t.title ILIKE ?)`, like+"%", "%"+like+"%")
+	}
+	if after != nil {
+		add("("+sectionExpr+", t.position, t.number) > (?, ?, ?)", after.section, after.pos, after.num)
+	}
 	var items []ListItem
 	if err := db.Raw(`SELECT t.* FROM tasks t
 		WHERE `+strings.Join(where, " AND ")+`
@@ -78,6 +128,9 @@ type assignedRow struct {
 // assignedOpen — до limit открытых неудалённых задач исполнителя userID в проектах projectIDs:
 // по сроку (без срока — в конце), затем по порядку проектов в projectIDs, затем по номеру.
 func assignedOpen(db *gorm.DB, userID uuid.UUID, projectIDs []uuid.UUID, limit int) ([]assignedRow, error) {
+	if len(projectIDs) == 0 {
+		return nil, nil
+	}
 	rank := make([]string, len(projectIDs))
 	args := []any{userID, projectIDs}
 	for i, id := range projectIDs {
@@ -94,9 +147,20 @@ func assignedOpen(db *gorm.DB, userID uuid.UUID, projectIDs []uuid.UUID, limit i
 	return rows, nil
 }
 
-// trashRows — удалённые задачи по условиям where (по t) с тем, кто удалил (последняя запись
-// истории deleted_at со значением, не восстановление), новые первыми, до limit.
-func trashRows(db *gorm.DB, where []string, args []any, limit int, rows *[]trashRow) error {
+// trashCursor — ключ продолжения корзины: время удаления и id последней выданной задачи.
+type trashCursor struct {
+	at time.Time
+	id uuid.UUID
+}
+
+// trashRows — удалённые задачи проекта после after с тем, кто удалил (последняя запись истории
+// deleted_at со значением, не восстановление), новые первыми, до limit.
+func trashRows(db *gorm.DB, projectID uuid.UUID, after *trashCursor, limit int, rows *[]trashRow) error {
+	where := []string{"t.project_id = ?", "t.deleted_at IS NOT NULL"}
+	args := []any{projectID}
+	if after != nil {
+		where, args = append(where, "(t.deleted_at, t.id) < (?, ?)"), append(args, after.at, after.id)
+	}
 	if err := db.Raw(`SELECT t.*, d.user_id AS deleted_by_id
 		FROM tasks t
 		LEFT JOIN LATERAL (
@@ -119,13 +183,13 @@ func setPosition(tx *gorm.DB, id uuid.UUID, pos float64) error {
 	return nil
 }
 
-// liveKeyByID — ключ неудалённой задачи id (пусто — нет).
-func liveKeyByID(db *gorm.DB, id uuid.UUID) ([]string, error) {
-	var keys []string
-	if err := db.Raw(`SELECT key FROM tasks WHERE id = ? AND deleted_at IS NULL`, id).Scan(&keys).Error; err != nil {
-		return nil, fmt.Errorf("task: key by id: %w", err)
+// liveKeyByID — ключ неудалённой задачи id; нет — "".
+func liveKeyByID(db *gorm.DB, id uuid.UUID) (string, error) {
+	var key string
+	if err := db.Raw(`SELECT key FROM tasks WHERE id = ? AND deleted_at IS NULL`, id).Scan(&key).Error; err != nil {
+		return "", fmt.Errorf("task: key by id: %w", err)
 	}
-	return keys, nil
+	return key, nil
 }
 
 // movedTask — перенесённая задача.
@@ -134,9 +198,18 @@ type movedTask struct {
 	Key string
 }
 
-// moveTasksWhere переносит задачи по условию cond в секцию to с позиций base + n*шаг в прежнем
-// порядке: запись истории sprint_id (target — новое значение для истории), version+1.
-func moveTasksWhere(tx *gorm.DB, cond string, args []any, by uuid.UUID, target any, source string, to *uuid.UUID, base float64) ([]movedTask, error) {
+// moveSprintRows переносит задачи спринта from проекта (m: и удалённые, только незакрытые) в
+// секцию to с позиций base + n*шаг в прежнем порядке: запись истории sprint_id (target — новое
+// значение для истории), version+1.
+func moveSprintRows(tx *gorm.DB, projectID, from uuid.UUID, m SprintMove, by uuid.UUID, target any, source string, to *uuid.UUID, base float64) ([]movedTask, error) {
+	cond := `project_id = ? AND sprint_id = ?`
+	args := []any{projectID, from}
+	if !m.IncludeDeleted {
+		cond += ` AND deleted_at IS NULL`
+	}
+	if m.OnlyOpen {
+		cond += ` AND status IN ('todo', 'in_progress', 'review')`
+	}
 	if err := tx.Exec(`INSERT INTO task_history (task_id, user_id, field, old_value, new_value, source)
 		SELECT id, ?, 'sprint_id', to_jsonb(sprint_id::text), to_jsonb(?::text), ? FROM tasks WHERE `+cond+` ORDER BY position, number`,
 		append([]any{by, target, source}, args...)...).Error; err != nil {
@@ -154,12 +227,7 @@ func moveTasksWhere(tx *gorm.DB, cond string, args []any, by uuid.UUID, target a
 // endOfSection — позиция в конце секции (спринт или бэклог). Ветки на nil нужны индексу
 // tasks_section_idx: «IS NOT DISTINCT FROM» по нему не ищется.
 func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID) (float64, error) {
-	q := tx.Model(&Task{}).Select("position").Where("project_id = ? AND deleted_at IS NULL", projectID)
-	if sprintID == nil {
-		q = q.Where("sprint_id IS NULL")
-	} else {
-		q = q.Where("sprint_id = ?", *sprintID)
-	}
+	q := inSection(tx.Model(&Task{}).Select("position").Where("project_id = ? AND deleted_at IS NULL", projectID), sprintID)
 	if exclude != nil {
 		q = q.Where("id <> ?", *exclude)
 	}
@@ -175,12 +243,7 @@ func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID
 
 // sectionRows — задачи секции t (без самой t) по порядку.
 func sectionRows(tx *gorm.DB, t *Task) ([]neighbour, error) {
-	q := tx.Model(&Task{}).Select("id, position, number").Where("project_id = ? AND deleted_at IS NULL AND id <> ?", t.ProjectID, t.ID)
-	if t.SprintID == nil {
-		q = q.Where("sprint_id IS NULL")
-	} else {
-		q = q.Where("sprint_id = ?", *t.SprintID)
-	}
+	q := inSection(tx.Model(&Task{}).Select("id, position, number").Where("project_id = ? AND deleted_at IS NULL AND id <> ?", t.ProjectID, t.ID), t.SprintID)
 	var rows []neighbour
 	if err := q.Order("position, number").Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("task: section: %w", err)
@@ -191,12 +254,7 @@ func sectionRows(tx *gorm.DB, t *Task) ([]neighbour, error) {
 // maxPosition — наибольшая позиция неудалённой задачи в секции to (nil — бэклог) проекта; пусто — 0.
 func maxPosition(tx *gorm.DB, projectID uuid.UUID, to *uuid.UUID) (float64, error) {
 	var base float64
-	end := tx.Model(&Task{}).Select("COALESCE(MAX(position), 0)").Where("project_id = ? AND deleted_at IS NULL", projectID)
-	if to == nil {
-		end = end.Where("sprint_id IS NULL")
-	} else {
-		end = end.Where("sprint_id = ?", *to)
-	}
+	end := inSection(tx.Model(&Task{}).Select("COALESCE(MAX(position), 0)").Where("project_id = ? AND deleted_at IS NULL", projectID), to)
 	if err := end.Scan(&base).Error; err != nil {
 		return 0, fmt.Errorf("task: section end: %w", err)
 	}
@@ -223,4 +281,32 @@ func taskHistory(db *gorm.DB, taskID uuid.UUID) ([]History, error) {
 		return nil, fmt.Errorf("task: history: %w", err)
 	}
 	return list, nil
+}
+
+// sectionExpr — секция задачи для порядка списка: спринт (по id), бэклог — последним.
+const sectionExpr = `COALESCE(t.sprint_id::text, '~')`
+
+func idCondition(column string, f IDFilter) (string, []any) {
+	switch {
+	case f.Null && len(f.IDs) > 0:
+		return "(" + column + " IS NULL OR " + column + " IN ?)", []any{f.IDs}
+	case f.Null:
+		return column + " IS NULL", nil
+	case len(f.IDs) > 0:
+		return column + " IN ?", []any{f.IDs}
+	}
+	return "", nil
+}
+
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// inSection — условие секции: спринт sprintID или бэклог (nil). Ветки на nil нужны индексу
+// tasks_section_idx: «IS NOT DISTINCT FROM» по нему не ищется.
+func inSection(q *gorm.DB, sprintID *uuid.UUID) *gorm.DB {
+	if sprintID == nil {
+		return q.Where("sprint_id IS NULL")
+	}
+	return q.Where("sprint_id = ?", *sprintID)
 }

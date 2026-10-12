@@ -55,9 +55,6 @@ type Page struct {
 
 var errDeletedAdminOnly = apierr.Forbidden("Удалённые задачи видит только администратор системы")
 
-// sectionExpr — секция задачи для порядка списка: спринт (по id), бэклог — последним.
-const sectionExpr = `COALESCE(t.sprint_id::text, '~')`
-
 // List — задачи проекта по фильтрам с курсорной пагинацией. Порядок — по секциям (спринты, затем
 // бэклог), внутри секции — ручной порядок (position), при равенстве — номер. Курсор — ключ
 // (секция, position, number): уже выданные задачи не повторяются и не теряются при вставке новых
@@ -90,42 +87,15 @@ func (s *Service) List(ctx context.Context, a *project.Access, f ListFilter) (*P
 		}
 	}
 
-	where := []string{"t.project_id = ?"}
-	args := []any{a.Project.ID}
-	if !f.IncludeDeleted {
-		where = append(where, "t.deleted_at IS NULL")
-	}
-	add := func(cond string, vals ...any) { where, args = append(where, cond), append(args, vals...) }
-	if len(f.Status) > 0 {
-		add("t.status IN ?", f.Status)
-	}
-	if len(f.Type) > 0 {
-		add("t.type IN ?", f.Type)
-	}
-	if len(f.Priority) > 0 {
-		add("t.priority IN ?", f.Priority)
-	}
-	if c, v := idCondition("t.assignee_id", f.Assignee); c != "" {
-		add(c, v...)
-	}
-	if c, v := idCondition("t.sprint_id", f.Sprint); c != "" {
-		add(c, v...)
-	}
-	if f.Label != "" {
-		add("t.labels @> jsonb_build_array(?::text)", f.Label)
-	}
-	if q := strings.TrimSpace(f.Q); q != "" {
-		like := escapeLike(q)
-		add(`(t.key ILIKE ? OR t.title ILIKE ?)`, like+"%", "%"+like+"%")
-	}
+	var after *listCursor
 	if f.Cursor != "" {
 		section, pos, num, err := decodeCursor(f.Cursor)
 		if err != nil {
 			return nil, err
 		}
-		add("("+sectionExpr+", t.position, t.number) > (?, ?, ?)", section, pos, num)
+		after = &listCursor{section, pos, num}
 	}
-	items, err := listTasks(s.db.WithContext(ctx), where, args, limit+1)
+	items, err := listTasks(s.db.WithContext(ctx), a.Project.ID, f, after, limit+1)
 	if err != nil {
 		return nil, err
 	}
@@ -223,22 +193,6 @@ func (s *Service) Mine(ctx context.Context, u *user.User) ([]MyTask, error) {
 		list = append(list, t)
 	}
 	return list, nil
-}
-
-func idCondition(column string, f IDFilter) (string, []any) {
-	switch {
-	case f.Null && len(f.IDs) > 0:
-		return "(" + column + " IS NULL OR " + column + " IN ?)", []any{f.IDs}
-	case f.Null:
-		return column + " IS NULL", nil
-	case len(f.IDs) > 0:
-		return column + " IN ?", []any{f.IDs}
-	}
-	return "", nil
-}
-
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func encodeCursor(sprint *uuid.UUID, pos float64, num int) string {

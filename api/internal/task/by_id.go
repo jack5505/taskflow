@@ -10,12 +10,12 @@ import (
 // Права здесь не проверяются — их проверяет операция, которую затем вызывают по ключу.
 // Нет такой задачи или она удалена — ErrNotFound.
 func (s *Service) KeyByID(ctx context.Context, id uuid.UUID) (string, error) {
-	keys, err := liveKeyByID(s.db.WithContext(ctx), id)
+	key, err := liveKeyByID(s.db.WithContext(ctx), id)
 	if err != nil {
 		return "", err
 	}
-	if len(keys) == 0 {
+	if key == "" {
 		return "", ErrNotFound
 	}
-	return keys[0], nil
+	return key, nil
 }
