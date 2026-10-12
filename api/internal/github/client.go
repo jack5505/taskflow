@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +21,13 @@ import (
 
 // ErrNotInstalled — GitHub App не установлен в репозиторий (или репозитория нет).
 var ErrNotInstalled = errors.New("github: app is not installed in the repository")
+
+// errNotFound — ответ 404 GitHub; что он значит, решает вызывающий.
+var errNotFound = errors.New("github: not found")
+
+// reposTTL — сколько держим собранный список репозиториев: вкладку открывают часто, а список
+// собирается многими запросами к GitHub.
+const reposTTL = time.Minute
 
 // Repo — репозиторий, доступный GitHub App.
 type Repo struct {
@@ -39,6 +47,10 @@ type Client struct {
 
 	mu     sync.Mutex
 	tokens map[int64]installationToken
+
+	reposMu sync.Mutex // и кэш списка, и одна сборка за раз
+	repos   []Repo
+	reposAt time.Time
 }
 
 type installationToken struct {
@@ -76,7 +88,7 @@ func (c *Client) appJWT() (string, error) {
 	return s, nil
 }
 
-// do выполняет запрос с авторизацией auth и разбирает JSON-ответ в out. 404 — ErrNotInstalled.
+// do выполняет запрос с авторизацией auth и разбирает JSON-ответ в out. 404 — errNotFound.
 func (c *Client) do(ctx context.Context, method, path, auth string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, c.api+path, nil)
 	if err != nil {
@@ -91,7 +103,7 @@ func (c *Client) do(ctx context.Context, method, path, auth string, out any) err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return ErrNotInstalled
+		return errNotFound
 	}
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -103,22 +115,40 @@ func (c *Client) do(ctx context.Context, method, path, auth string, out any) err
 	return nil
 }
 
-// InstallationFor — установка App, через которую доступен репозиторий owner/name; не
-// установлен — ErrNotInstalled.
-func (c *Client) InstallationFor(ctx context.Context, fullName string) (int64, error) {
+// Repository — репозиторий owner/name (имя — как в GitHub, с его регистром) и установка App,
+// через которую он доступен; не установлен или нет такого — ErrNotInstalled.
+func (c *Client) Repository(ctx context.Context, fullName string) (*Repo, error) {
 	jwtToken, err := c.appJWT()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var inst struct {
 		ID int64 `json:"id"`
 	}
 	owner, name, _ := strings.Cut(fullName, "/")
-	if err := c.do(ctx, http.MethodGet, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/installation",
-		"Bearer "+jwtToken, &inst); err != nil {
-		return 0, err
+	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name)
+	if err := c.do(ctx, http.MethodGet, path+"/installation", "Bearer "+jwtToken, &inst); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, ErrNotInstalled
+		}
+		return nil, err
 	}
-	return inst.ID, nil
+	tok, err := c.token(ctx, inst.ID)
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		FullName string `json:"full_name"`
+		Private  bool   `json:"private"`
+		HTMLURL  string `json:"html_url"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, "token "+tok, &r); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, ErrNotInstalled
+		}
+		return nil, err
+	}
+	return &Repo{FullName: r.FullName, Private: r.Private, URL: r.HTMLURL, InstallationID: inst.ID}, nil
 }
 
 // token — токен установки, из кэша до 5 минут до истечения (GitHub выдаёт его на час).
@@ -150,8 +180,23 @@ func (c *Client) token(ctx context.Context, installationID int64) (string, error
 // pageSize — сколько элементов GitHub отдаёт на странице (максимум 100).
 const pageSize = 100
 
-// Repositories — все репозитории всех установок App, по имени.
+// Repositories — репозитории всех установок App (кэш на минуту). Установка, которая не
+// отвечает (приостановлена, только что удалена), пропускается — остальные доступны.
 func (c *Client) Repositories(ctx context.Context) ([]Repo, error) {
+	c.reposMu.Lock()
+	defer c.reposMu.Unlock()
+	if c.repos != nil && c.now().Before(c.reposAt.Add(reposTTL)) {
+		return c.repos, nil
+	}
+	repos, err := c.collect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.repos, c.reposAt = repos, c.now()
+	return repos, nil
+}
+
+func (c *Client) collect(ctx context.Context) ([]Repo, error) {
 	jwtToken, err := c.appJWT()
 	if err != nil {
 		return nil, err
@@ -174,28 +219,40 @@ func (c *Client) Repositories(ctx context.Context) ([]Repo, error) {
 	}
 	repos := []Repo{}
 	for _, inst := range installs {
-		tok, err := c.token(ctx, inst.ID)
+		got, err := c.installationRepos(ctx, inst.ID)
 		if err != nil {
+			slog.WarnContext(ctx, "github: installation repositories", "installation", inst.ID, "err", err)
+			continue
+		}
+		repos = append(repos, got...)
+	}
+	return repos, nil
+}
+
+// installationRepos — все репозитории одной установки.
+func (c *Client) installationRepos(ctx context.Context, instID int64) ([]Repo, error) {
+	tok, err := c.token(ctx, instID)
+	if err != nil {
+		return nil, err
+	}
+	var repos []Repo
+	for page := 1; ; page++ {
+		var out struct {
+			Repositories []struct {
+				FullName string `json:"full_name"`
+				Private  bool   `json:"private"`
+				HTMLURL  string `json:"html_url"`
+			} `json:"repositories"`
+		}
+		if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/installation/repositories?per_page=%d&page=%d", pageSize, page),
+			"token "+tok, &out); err != nil {
 			return nil, err
 		}
-		for page := 1; ; page++ {
-			var out struct {
-				Repositories []struct {
-					FullName string `json:"full_name"`
-					Private  bool   `json:"private"`
-					HTMLURL  string `json:"html_url"`
-				} `json:"repositories"`
-			}
-			if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/installation/repositories?per_page=%d&page=%d", pageSize, page),
-				"token "+tok, &out); err != nil {
-				return nil, err
-			}
-			for _, r := range out.Repositories {
-				repos = append(repos, Repo{FullName: r.FullName, Private: r.Private, URL: r.HTMLURL, InstallationID: inst.ID})
-			}
-			if len(out.Repositories) < pageSize {
-				break
-			}
+		for _, r := range out.Repositories {
+			repos = append(repos, Repo{FullName: r.FullName, Private: r.Private, URL: r.HTMLURL, InstallationID: instID})
+		}
+		if len(out.Repositories) < pageSize {
+			break
 		}
 	}
 	return repos, nil

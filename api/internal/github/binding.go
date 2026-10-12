@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -54,17 +55,18 @@ func (s *Service) Repositories(ctx context.Context, u *user.User) ([]Repo, error
 // Bind привязывает репозиторий owner/name к проекту (менеджер, не архив). App должен быть
 // установлен в репозиторий; репозиторий другого проекта — 400 (один репозиторий — один проект).
 func (s *Service) Bind(ctx context.Context, a *project.Access, fullName string) (*project.Project, error) {
-	if !repoName.MatchString(fullName) {
+	if !repoName.MatchString(fullName) || strings.HasSuffix(fullName, "/.") || strings.HasSuffix(fullName, "/..") {
 		return nil, fieldError("repo", "ожидается owner/name репозитория GitHub")
 	}
-	inst, err := s.client.InstallationFor(ctx, fullName)
+	repo, err := s.client.Repository(ctx, fullName)
 	if errors.Is(err, ErrNotInstalled) {
 		return nil, fieldError("repo", "GitHub App не установлен в этот репозиторий или репозитория нет")
 	}
 	if err != nil {
 		return nil, err
 	}
-	return s.update(ctx, a, &fullName, &inst)
+	// Имя — как в GitHub: с ним приходят вебхуки (repository.full_name).
+	return s.update(ctx, a, &repo.FullName, &repo.InstallationID)
 }
 
 // Unbind отвязывает репозиторий проекта; не привязан — ничего не меняется.
@@ -92,8 +94,8 @@ func (s *Service) update(ctx context.Context, a *project.Access, repo *string, i
 			return err
 		}
 		old := p.GitHubRepo
-		if samePtr(old, repo) {
-			return nil
+		if samePtr(old, repo) && sameID(p.GitHubInstallationID, inst) {
+			return nil // переустановка App даёт новую установку — её нужно записать
 		}
 		err = project.SetGitHubRepo(tx, p.ID, repo, inst)
 		if errors.Is(err, project.ErrRepoTaken) {
@@ -115,6 +117,13 @@ func (s *Service) update(ctx context.Context, a *project.Access, repo *string, i
 		return nil, err
 	}
 	return p, nil
+}
+
+func sameID(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func samePtr(a, b *string) bool {
