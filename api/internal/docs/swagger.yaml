@@ -1753,8 +1753,9 @@ paths:
   /api/v1/github/callback:
     get:
       description: 'Сюда GitHub возвращает браузер после входа (Callback URL App).
-        Пользователь берётся из подписанного state, не из сессии. Итог — переадресация
-        в профиль: /profile?github=linked или /profile?github=error&message=<текст>.'
+        Пользователь берётся из подписанного state, а state принимается только в браузере,
+        который получил ссылку (nonce в cookie), один раз. Итог — переадресация в
+        профиль: /profile?github=linked или /profile?github=error&reason=state|taken|inactive|failed.'
       parameters:
       - description: код авторизации GitHub
         in: query

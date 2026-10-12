@@ -559,7 +559,7 @@ const docTemplate = `{
         },
         "/api/v1/github/callback": {
             "get": {
-                "description": "Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, не из сессии. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error\u0026message=\u003cтекст\u003e.",
+                "description": "Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, а state принимается только в браузере, который получил ссылку (nonce в cookie), один раз. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error\u0026reason=state|taken|inactive|failed.",
                 "tags": [
                     "me"
                 ],

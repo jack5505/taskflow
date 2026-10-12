@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -30,6 +32,15 @@ const CallbackPath = "/github/callback"
 
 // ErrBadState — state не наш, подделан или устарел: ссылку входа нужно получить заново.
 var ErrBadState = apierr.BadRequest(apierr.CodeValidation, "Ссылка входа в GitHub устарела или неверна — начните привязку заново")
+
+// Действия журнала: связка GitHub-аккаунта (§12.5).
+const (
+	AuditAccountLinked   = "user.github_linked"
+	AuditAccountUnlinked = "user.github_unlinked"
+)
+
+// errInactive — пользователь деактивирован, пока шла привязка.
+var errInactive = apierr.BadRequest(apierr.CodeValidation, "Пользователь деактивирован — привязка GitHub невозможна")
 
 // errGitHubTaken — GitHub-аккаунт уже связан с другим пользователем (§12.5).
 var errGitHubTaken = apierr.BadRequest(apierr.CodeValidation, "Этот GitHub-аккаунт уже связан с другим пользователем")
@@ -54,20 +65,24 @@ func NewAccounts(db *gorm.DB, clientID, clientSecret, stateKey, webURL, apiURL, 
 		http: &http.Client{Timeout: 15 * time.Second}, now: time.Now}
 }
 
-// ConnectURL — ссылка входа в GitHub для пользователя userID; state связывает возврат с ним.
-func (a *Accounts) ConnectURL(userID uuid.UUID) string {
+// ConnectURL — ссылка входа в GitHub для пользователя userID и nonce браузера: nonce кладётся
+// в cookie этого браузера, а state связывает возврат и с пользователем, и с этим nonce.
+func (a *Accounts) ConnectURL(userID uuid.UUID) (link, nonce string) {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	nonce = base64.RawURLEncoding.EncodeToString(b)
 	q := url.Values{
 		"client_id":    {a.clientID},
-		"state":        {a.state(userID, a.now().Add(stateTTL))},
+		"state":        {a.state(userID, nonce, a.now().Add(stateTTL))},
 		"redirect_uri": {a.baseURL + "/api/v1" + CallbackPath},
 	}
-	return a.webURL + "/login/oauth/authorize?" + q.Encode()
+	return a.webURL + "/login/oauth/authorize?" + q.Encode(), nonce
 }
 
-// state = base64(userID|exp|HMAC): подпись не даёт привязать GitHub к чужому аккаунту, срок —
-// использовать старую ссылку.
-func (a *Accounts) state(userID uuid.UUID, exp time.Time) string {
-	body := userID.String() + "|" + strconv.FormatInt(exp.Unix(), 10)
+// state = base64(userID|nonce|exp|HMAC): подпись не даёт подставить чужого пользователя, nonce
+// из cookie — завершить чужую ссылку в своём браузере (CSRF), срок — использовать старую.
+func (a *Accounts) state(userID uuid.UUID, nonce string, exp time.Time) string {
+	body := userID.String() + "|" + nonce + "|" + strconv.FormatInt(exp.Unix(), 10)
 	return base64.RawURLEncoding.EncodeToString([]byte(body + "|" + a.sign(body)))
 }
 
@@ -77,17 +92,21 @@ func (a *Accounts) sign(body string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// userFromState — пользователь из действующего state, иначе ErrBadState.
-func (a *Accounts) userFromState(state string) (uuid.UUID, error) {
+// userFromState — пользователь из действующего state, выданного этому браузеру (nonce из его
+// cookie), иначе ErrBadState.
+func (a *Accounts) userFromState(state, nonce string) (uuid.UUID, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(state)
 	if err != nil {
 		return uuid.Nil, ErrBadState
 	}
 	parts := strings.Split(string(raw), "|")
-	if len(parts) != 3 || !hmac.Equal([]byte(a.sign(parts[0]+"|"+parts[1])), []byte(parts[2])) {
+	if len(parts) != 4 || !hmac.Equal([]byte(a.sign(strings.Join(parts[:3], "|"))), []byte(parts[3])) {
 		return uuid.Nil, ErrBadState
 	}
-	exp, err := strconv.ParseInt(parts[1], 10, 64)
+	if nonce == "" || !hmac.Equal([]byte(parts[1]), []byte(nonce)) {
+		return uuid.Nil, ErrBadState
+	}
+	exp, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || !a.now().Before(time.Unix(exp, 0)) {
 		return uuid.Nil, ErrBadState
 	}
@@ -99,9 +118,9 @@ func (a *Accounts) userFromState(state string) (uuid.UUID, error) {
 }
 
 // Complete — возврат с github.com: код обменивается на токен пользователя, по нему — логин,
-// логин записывается пользователю из state. Токен не хранится: нужен только логин.
-func (a *Accounts) Complete(ctx context.Context, code, state string) (string, error) {
-	userID, err := a.userFromState(state)
+// логин записывается пользователю из state. nonce — из cookie браузера. Токен не хранится.
+func (a *Accounts) Complete(ctx context.Context, code, state, nonce string) (string, error) {
+	userID, err := a.userFromState(state, nonce)
 	if err != nil {
 		return "", err
 	}
@@ -116,11 +135,7 @@ func (a *Accounts) Complete(ctx context.Context, code, state string) (string, er
 	if err != nil {
 		return "", err
 	}
-	err = user.SetGitHubLogin(a.db.WithContext(ctx), userID, &login)
-	if errors.Is(err, user.ErrGitHubTaken) {
-		return "", errGitHubTaken
-	}
-	if err != nil {
+	if err := a.set(ctx, userID, &login); err != nil {
 		return "", err
 	}
 	return login, nil
@@ -128,7 +143,28 @@ func (a *Accounts) Complete(ctx context.Context, code, state string) (string, er
 
 // Unlink снимает связку GitHub у пользователя.
 func (a *Accounts) Unlink(ctx context.Context, userID uuid.UUID) error {
-	return user.SetGitHubLogin(a.db.WithContext(ctx), userID, nil)
+	return a.set(ctx, userID, nil)
+}
+
+// set записывает логин (nil — снимает) с журналом: связка решает, от чьего имени работают PR (§12.4).
+func (a *Accounts) set(ctx context.Context, userID uuid.UUID, login *string) error {
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		err := user.SetGitHubLogin(tx, userID, login)
+		switch {
+		case errors.Is(err, user.ErrGitHubTaken):
+			return errGitHubTaken
+		case errors.Is(err, user.ErrInactive):
+			return errInactive
+		case err != nil:
+			return err
+		}
+		action := AuditAccountLinked
+		if login == nil {
+			action = AuditAccountUnlinked
+		}
+		return audit.Write(tx, audit.Record{Action: action, EntityType: "user", EntityID: userID.String(),
+			New: map[string]any{"github_login": login}})
+	})
 }
 
 func (a *Accounts) exchange(ctx context.Context, code string) (string, error) {

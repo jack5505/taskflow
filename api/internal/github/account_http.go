@@ -8,25 +8,37 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 )
 
+// nonceCookie — nonce браузера, начавшего привязку: callback принимается только в нём (§12.5).
+const nonceCookie = "tf_github_nonce"
+
 // AccountHandlers — связка GitHub-аккаунта в профиле (§7.8, §12.5).
 type AccountHandlers struct {
-	accounts    *Accounts
-	requireAuth gin.HandlerFunc
+	accounts     *Accounts
+	requireAuth  gin.HandlerFunc
+	secureCookie bool
+	login        bool
 }
 
-func NewAccountHandlers(accounts *Accounts, requireAuth gin.HandlerFunc) *AccountHandlers {
-	return &AccountHandlers{accounts: accounts, requireAuth: requireAuth}
+// NewAccountHandlers — login=false (нет Client ID App): привязать нельзя, отвязать — можно всегда.
+func NewAccountHandlers(accounts *Accounts, requireAuth gin.HandlerFunc, secureCookie, login bool) *AccountHandlers {
+	return &AccountHandlers{accounts: accounts, requireAuth: requireAuth, secureCookie: secureCookie, login: login}
 }
 
 func (h *AccountHandlers) Register(api *gin.RouterGroup) {
-	api.GET("/me/github/connect", h.requireAuth, h.connect)
 	api.DELETE("/me/github", h.requireAuth, h.unlink)
-	api.GET(CallbackPath, h.callback)
+	if h.login {
+		api.GET("/me/github/connect", h.requireAuth, h.connect)
+		api.GET(CallbackPath, h.callback)
+	}
+}
+
+func (h *AccountHandlers) setNonce(c *gin.Context, value string, maxAge int) {
+	c.SetSameSite(http.SameSiteLaxMode) // возврат с github.com — переход верхнего уровня, Lax его пропускает
+	c.SetCookie(nonceCookie, value, maxAge, "/api/v1"+CallbackPath, "", h.secureCookie, true)
 }
 
 // ConnectLink — ссылка входа в GitHub.
@@ -45,7 +57,9 @@ type ConnectLink struct {
 // @Failure      401  {object}  apierr.Response
 // @Router       /api/v1/me/github/connect [get]
 func (h *AccountHandlers) connect(c *gin.Context) {
-	c.JSON(http.StatusOK, ConnectLink{URL: h.accounts.ConnectURL(auth.CurrentUser(c).ID)})
+	link, nonce := h.accounts.ConnectURL(auth.CurrentUser(c).ID)
+	h.setNonce(c, nonce, int(stateTTL.Seconds()))
+	c.JSON(http.StatusOK, ConnectLink{URL: link})
 }
 
 // unlink — снять связку GitHub.
@@ -68,25 +82,33 @@ func (h *AccountHandlers) unlink(c *gin.Context) {
 // callback — возврат с github.com после входа.
 //
 // @Summary      Возврат из GitHub
-// @Description  Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, не из сессии. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error&message=<текст>.
+// @Description  Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, а state принимается только в браузере, который получил ссылку (nonce в cookie), один раз. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error&reason=state|taken|inactive|failed.
 // @Tags         me
 // @Param        code   query  string  true  "код авторизации GitHub"
 // @Param        state  query  string  true  "state из ссылки привязки"
 // @Success      302
 // @Router       /api/v1/github/callback [get]
 func (h *AccountHandlers) callback(c *gin.Context) {
+	nonce, _ := c.Cookie(nonceCookie)
+	h.setNonce(c, "", -1) // одна попытка на ссылку
 	q := url.Values{}
-	if _, err := h.accounts.Complete(c.Request.Context(), c.Query("code"), c.Query("state")); err != nil {
-		q.Set("github", "error")
-		var ae *apierr.Error
-		if errors.As(err, &ae) && ae.Status < 500 {
-			q.Set("message", ae.Message)
-		} else {
-			slog.ErrorContext(c.Request.Context(), "github: account link", "err", err)
-			q.Set("message", "GitHub не ответил — попробуйте ещё раз")
-		}
-	} else {
+	_, err := h.accounts.Complete(c.Request.Context(), c.Query("code"), c.Query("state"), nonce)
+	switch {
+	case err == nil:
 		q.Set("github", "linked")
+	case errors.Is(err, ErrBadState):
+		q.Set("github", "error")
+		q.Set("reason", "state")
+	case errors.Is(err, errGitHubTaken):
+		q.Set("github", "error")
+		q.Set("reason", "taken")
+	case errors.Is(err, errInactive):
+		q.Set("github", "error")
+		q.Set("reason", "inactive")
+	default:
+		slog.ErrorContext(c.Request.Context(), "github: account link", "err", err)
+		q.Set("github", "error")
+		q.Set("reason", "failed")
 	}
 	c.Redirect(http.StatusFound, h.accounts.baseURL+"/profile?"+q.Encode())
 }

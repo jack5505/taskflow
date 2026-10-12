@@ -31,7 +31,7 @@ export function ProfilePage() {
         <AccountForm me={me.data} />
         <SecurityBlock me={me.data} />
         <TelegramBlock me={me.data} />
-        {me.data.github_login_enabled && <GitHubBlock me={me.data} />}
+        {(me.data.github_login_enabled || me.data.github_login) && <GitHubBlock me={me.data} />}
         <NotificationsForm me={me.data} />
       </>
     );

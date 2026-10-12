@@ -1287,7 +1287,7 @@ export class Api<
       }),
 
     /**
-     * @description Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, не из сессии. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error&message=<текст>.
+     * @description Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, а state принимается только в браузере, который получил ссылку (nonce в cookie), один раз. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error&reason=state|taken|inactive|failed.
      *
      * @tags me
      * @name V1GithubCallbackList

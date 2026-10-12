@@ -57,7 +57,8 @@ export function useGitHubConnect() {
   return useMutation({
     mutationFn: async () => (await api.api.v1MeGithubConnectList()).data,
     onSuccess: (link) => {
-      if (link.url) window.location.assign(link.url);
+      if (!link.url) throw new Error("Сервер не дал ссылку входа в GitHub");
+      window.location.assign(link.url);
     },
   });
 }

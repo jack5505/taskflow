@@ -3,9 +3,17 @@ import type { MeProfile } from "../api/client";
 import { errorText } from "../api/errors";
 import { useGitHubConnect, useGitHubUnlink } from "./hooks";
 
+/** Причины неудачи возврата из GitHub (?github=error&reason=…) — текст свой, не из адреса. */
+const REASONS: Record<string, string> = {
+  state: "Ссылка привязки устарела или открыта в другом браузере — начните привязку заново.",
+  taken: "Этот GitHub-аккаунт уже связан с другим пользователем.",
+  inactive: "Пользователь деактивирован — привязка невозможна.",
+  failed: "GitHub не ответил — попробуйте ещё раз.",
+};
+
 /**
  * GitHub в профиле (§7.8, §12.5): связан — логин и «Отвязать»; нет — «Привязать GitHub» (вход
- * в GitHub и возврат сюда). Итог возврата приходит в адресе: ?github=linked | error&message=….
+ * в GitHub и возврат сюда, если вход App настроен). Итог возврата — в адресе: ?github=linked | error&reason=….
  */
 export function GitHubBlock({ me }: { me: MeProfile }) {
   const [params] = useSearchParams();
@@ -18,7 +26,7 @@ export function GitHubBlock({ me }: { me: MeProfile }) {
     <section className="panel">
       <h3>GitHub</h3>
       {result === "linked" && login && <p className="notice">GitHub-аккаунт @{login} привязан.</p>}
-      {result === "error" && <p role="alert">{params.get("message") || "Не удалось привязать GitHub"}</p>}
+      {result === "error" && <p role="alert">{REASONS[params.get("reason") ?? ""] ?? REASONS.failed}</p>}
       {login ? (
         <>
           <p>
@@ -35,6 +43,7 @@ export function GitHubBlock({ me }: { me: MeProfile }) {
           </div>
         </>
       ) : (
+        me.github_login_enabled && (
         <>
           <p className="muted">GitHub не привязан. Привяжите аккаунт, чтобы pull request'ы назначали задачи на вас.</p>
           <div className="actions">
@@ -43,6 +52,7 @@ export function GitHubBlock({ me }: { me: MeProfile }) {
             </button>
           </div>
         </>
+        )
       )}
       {(connect.isError || unlink.isError) && <p role="alert">{errorText(connect.error ?? unlink.error)}</p>}
     </section>
