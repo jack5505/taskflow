@@ -69,17 +69,10 @@ func (g *Groups) IssueBindCode(ctx context.Context, a *project.Access) (*BindCod
 		if _, err := lockManaged(tx, a.Project.ID, a.UserID()); err != nil {
 			return err
 		}
-		if err := dropOpenCodes(tx, CodeGroupBind, "project_id", a.Project.ID); err != nil {
+		if err := dropProjectCodes(tx, CodeGroupBind, a.Project.ID); err != nil {
 			return err
 		}
-		for range 3 {
-			c.Code = newCode()
-			inserted, err := insertCode(tx, &c)
-			if err != nil || inserted {
-				return err
-			}
-		}
-		return errors.New("telegram: не удалось выдать уникальный код")
+		return issueCode(tx, &c)
 	})
 	if err != nil {
 		return nil, err

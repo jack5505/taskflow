@@ -185,14 +185,14 @@ func (s *Service) Get(ctx context.Context, u *user.User, id uuid.UUID) (*View, *
 }
 
 func (s *Service) view(tx *gorm.DB, id uuid.UUID) (*View, error) {
-	rows, err := sprintRows(tx, id)
+	sp, err := sprintByID(tx, id)
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
+	if sp == nil {
 		return nil, ErrNotFound
 	}
-	list, err := s.views(tx, rows)
+	list, err := s.views(tx, []Sprint{*sp})
 	if err != nil {
 		return nil, err
 	}

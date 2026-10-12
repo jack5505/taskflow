@@ -91,9 +91,9 @@ func (s *Service) Report(ctx context.Context, u *user.User, id uuid.UUID) (*Repo
 		if err != nil {
 			return nil, err
 		}
-		if len(sn) > 0 {
-			r.Current.Tasks += sn[0].Tasks
-			r.Current.EstimateMinutes += sn[0].EstimateMinutes
+		if sn != nil {
+			r.Current.Tasks += sn.Tasks
+			r.Current.EstimateMinutes += sn.EstimateMinutes
 		}
 	}
 

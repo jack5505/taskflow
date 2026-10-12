@@ -83,7 +83,7 @@ func snapshotYesterday(db *gorm.DB, now time.Time, only *uuid.UUID) (int64, erro
 	}
 	done := make(map[snapshotRow]bool, len(taken))
 	for _, t := range taken {
-		done[snapshotRow{SprintID: t.SprintID, Date: t.Date.Format(time.DateOnly)}] = true
+		done[t] = true
 	}
 	rows := due[:0]
 	ids = ids[:0]
@@ -105,10 +105,12 @@ func insertSnapshots(db *gorm.DB, rows []snapshotRow, ids []uuid.UUID, replace b
 	if err != nil {
 		return 0, err
 	}
-	for i := range rows {
-		rows[i].SnapshotStats = stats[rows[i].SprintID]
+	full := make([]snapshotRow, len(rows)) // строки вызывающего не меняются
+	for i, r := range rows {
+		r.SnapshotStats = stats[r.SprintID]
+		full[i] = r
 	}
-	return writeSnapshots(db, rows, replace)
+	return writeSnapshots(db, full, replace)
 }
 
 // snapshotOnClose — снимок в момент закрытия (§3.8) на сегодняшнюю дату по поясу проекта, в
