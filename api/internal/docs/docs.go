@@ -557,6 +557,36 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/github/callback": {
+            "get": {
+                "description": "Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, не из сессии. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error\u0026message=\u003cтекст\u003e.",
+                "tags": [
+                    "me"
+                ],
+                "summary": "Возврат из GitHub",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "код авторизации GitHub",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "state из ссылки привязки",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    }
+                }
+            }
+        },
         "/api/v1/github/repositories": {
             "get": {
                 "security": [
@@ -742,6 +772,62 @@ const docTemplate = `{
                         "description": "VALIDATION_FAILED",
                         "schema": {
                             "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/me/github": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Снимает связку GitHub-аккаунта (§12.5); не связан — тоже 204.",
+                "tags": [
+                    "me"
+                ],
+                "summary": "Отвязать GitHub",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/me/github/connect": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ссылка на вход в GitHub (авторизация пользователя GitHub App, §12.5), действует 10 минут. После входа GitHub возвращает пользователя на /api/v1/github/callback, затем в профиль. Маршрут есть, только если заданы GITHUB_APP_ID и GITHUB_CLIENT_ID.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Ссылка привязки GitHub",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github.ConnectLink"
                         }
                     },
                     "401": {
@@ -4230,6 +4316,15 @@ const docTemplate = `{
                 }
             }
         },
+        "github.ConnectLink": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "example": "https://github.com/login/oauth/authorize?client_id=Iv1.abc\u0026state=..."
+                }
+            }
+        },
         "github.Repo": {
             "type": "object",
             "properties": {
@@ -4307,6 +4402,13 @@ const docTemplate = `{
                 },
                 "github_enabled": {
                     "description": "GitHubEnabled — интеграция с GitHub подключена (задан GITHUB_APP_ID, §12.1).",
+                    "type": "boolean"
+                },
+                "github_login": {
+                    "type": "string"
+                },
+                "github_login_enabled": {
+                    "description": "GitHubLoginEnabled — можно связать GitHub-аккаунт (заданы Client ID и секрет App, §12.5).",
                     "type": "boolean"
                 },
                 "id": {
@@ -5957,6 +6059,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "email": {
+                    "type": "string"
+                },
+                "github_login": {
                     "type": "string"
                 },
                 "id": {

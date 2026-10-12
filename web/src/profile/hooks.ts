@@ -51,3 +51,22 @@ export function useUnlinkTelegram() {
     onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
   });
 }
+
+/** Привязать GitHub (§12.5): ссылка входа в GitHub, браузер уходит на неё. */
+export function useGitHubConnect() {
+  return useMutation({
+    mutationFn: async () => (await api.api.v1MeGithubConnectList()).data,
+    onSuccess: (link) => {
+      if (link.url) window.location.assign(link.url);
+    },
+  });
+}
+
+/** Отвязать GitHub: DELETE /me/github, профиль перечитывается. */
+export function useGitHubUnlink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.api.v1MeGithubDelete(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: meQueryKey }),
+  });
+}

@@ -78,6 +78,11 @@ export interface AuthPasswordSetRequest {
   token: string;
 }
 
+export interface GithubConnectLink {
+  /** @example "https://github.com/login/oauth/authorize?client_id=Iv1.abc&state=..." */
+  url?: string;
+}
+
 export interface GithubRepo {
   /** @example "acme/backend" */
   full_name?: string;
@@ -113,6 +118,9 @@ export interface MeProfile {
   email?: string;
   /** GitHubEnabled — интеграция с GitHub подключена (задан GITHUB_APP_ID, §12.1). */
   github_enabled?: boolean;
+  github_login?: string;
+  /** GitHubLoginEnabled — можно связать GitHub-аккаунт (заданы Client ID и секрет App, §12.5). */
+  github_login_enabled?: boolean;
   id?: string;
   is_active?: boolean;
   is_system_admin?: boolean;
@@ -746,6 +754,7 @@ export interface UserUser {
   created_at?: string;
   display_name?: string;
   email?: string;
+  github_login?: string;
   id?: string;
   is_active?: boolean;
   is_system_admin?: boolean;
@@ -1278,6 +1287,30 @@ export class Api<
       }),
 
     /**
+     * @description Сюда GitHub возвращает браузер после входа (Callback URL App). Пользователь берётся из подписанного state, не из сессии. Итог — переадресация в профиль: /profile?github=linked или /profile?github=error&message=<текст>.
+     *
+     * @tags me
+     * @name V1GithubCallbackList
+     * @summary Возврат из GitHub
+     * @request GET:/api/v1/github/callback
+     */
+    v1GithubCallbackList: (
+      query: {
+        /** код авторизации GitHub */
+        code: string;
+        /** state из ссылки привязки */
+        state: string;
+      },
+      params: RequestParams = {},
+    ) =>
+      this.request<any, void>({
+        path: `/api/v1/github/callback`,
+        method: "GET",
+        query: query,
+        ...params,
+      }),
+
+    /**
      * @description Репозитории всех установок GitHub App — для выбора во вкладке «GitHub» настроек проекта (§12.1). Менеджер хотя бы одного проекта или администратор, иначе 403. Маршрут есть, только если задан GITHUB_APP_ID.
      *
      * @tags github
@@ -1347,6 +1380,41 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Снимает связку GitHub-аккаунта (§12.5); не связан — тоже 204.
+     *
+     * @tags me
+     * @name V1MeGithubDelete
+     * @summary Отвязать GitHub
+     * @request DELETE:/api/v1/me/github
+     * @secure
+     */
+    v1MeGithubDelete: (params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/me/github`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Ссылка на вход в GitHub (авторизация пользователя GitHub App, §12.5), действует 10 минут. После входа GitHub возвращает пользователя на /api/v1/github/callback, затем в профиль. Маршрут есть, только если заданы GITHUB_APP_ID и GITHUB_CLIENT_ID.
+     *
+     * @tags me
+     * @name V1MeGithubConnectList
+     * @summary Ссылка привязки GitHub
+     * @request GET:/api/v1/me/github/connect
+     * @secure
+     */
+    v1MeGithubConnectList: (params: RequestParams = {}) =>
+      this.request<GithubConnectLink, ApierrResponse>({
+        path: `/api/v1/me/github/connect`,
+        method: "GET",
+        secure: true,
         format: "json",
         ...params,
       }),

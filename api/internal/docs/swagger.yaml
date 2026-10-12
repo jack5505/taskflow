@@ -112,6 +112,12 @@ definitions:
     - password
     - token
     type: object
+  github.ConnectLink:
+    properties:
+      url:
+        example: https://github.com/login/oauth/authorize?client_id=Iv1.abc&state=...
+        type: string
+    type: object
   github.Repo:
     properties:
       full_name:
@@ -166,6 +172,12 @@ definitions:
       github_enabled:
         description: GitHubEnabled — интеграция с GitHub подключена (задан GITHUB_APP_ID,
           §12.1).
+        type: boolean
+      github_login:
+        type: string
+      github_login_enabled:
+        description: GitHubLoginEnabled — можно связать GitHub-аккаунт (заданы Client
+          ID и секрет App, §12.5).
         type: boolean
       id:
         type: string
@@ -1314,6 +1326,8 @@ definitions:
         type: string
       email:
         type: string
+      github_login:
+        type: string
       id:
         type: string
       is_active:
@@ -1736,6 +1750,28 @@ paths:
       summary: Изменить комментарий
       tags:
       - comments
+  /api/v1/github/callback:
+    get:
+      description: 'Сюда GitHub возвращает браузер после входа (Callback URL App).
+        Пользователь берётся из подписанного state, не из сессии. Итог — переадресация
+        в профиль: /profile?github=linked или /profile?github=error&message=<текст>.'
+      parameters:
+      - description: код авторизации GitHub
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: state из ссылки привязки
+        in: query
+        name: state
+        required: true
+        type: string
+      responses:
+        "302":
+          description: Found
+      summary: Возврат из GitHub
+      tags:
+      - me
   /api/v1/github/repositories:
     get:
       description: Репозитории всех установок GitHub App — для выбора во вкладке «GitHub»
@@ -1872,6 +1908,42 @@ paths:
       security:
       - BearerAuth: []
       summary: Изменить профиль
+      tags:
+      - me
+  /api/v1/me/github:
+    delete:
+      description: Снимает связку GitHub-аккаунта (§12.5); не связан — тоже 204.
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отвязать GitHub
+      tags:
+      - me
+  /api/v1/me/github/connect:
+    get:
+      description: Ссылка на вход в GitHub (авторизация пользователя GitHub App, §12.5),
+        действует 10 минут. После входа GitHub возвращает пользователя на /api/v1/github/callback,
+        затем в профиль. Маршрут есть, только если заданы GITHUB_APP_ID и GITHUB_CLIENT_ID.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github.ConnectLink'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Ссылка привязки GitHub
       tags:
       - me
   /api/v1/me/notifications:
