@@ -17,6 +17,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/sprint/sprintdb"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -156,7 +157,7 @@ func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (
 	if err := user.LockShare(tx, pre.users); err != nil {
 		return nil, err
 	}
-	if err := lockShare(tx, "sprints", pre.sprints); err != nil {
+	if err := sprintdb.LockShare(tx, pre.sprints); err != nil {
 		return nil, err
 	}
 	if pre.reorder {
@@ -390,22 +391,18 @@ func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
 	if t.SprintID == nil {
 		return nil
 	}
-	var state string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, *t.SprintID).Scan(&state).Error; err != nil {
-		return fmt.Errorf("task: sprint: %w", err)
+	state, err := sprintdb.State(tx, *t.SprintID)
+	if err != nil {
+		return err
 	}
-	if state != "closed" {
+	if state != sprintdb.StateClosed {
 		return nil
 	}
-	var ids []string
-	if err := tx.Raw(`SELECT id::text FROM sprints WHERE project_id = ? AND state = 'active' LIMIT 1`, t.ProjectID).Scan(&ids).Error; err != nil {
-		return fmt.Errorf("task: active sprint: %w", err)
+	active, err := sprintdb.ActiveID(tx, t.ProjectID)
+	if err != nil {
+		return err
 	}
-	if len(ids) == 0 {
-		return moveTo(tx, t, nil, by)
-	}
-	active := uuid.MustParse(ids[0])
-	return moveTo(tx, t, &active, by)
+	return moveTo(tx, t, active, by)
 }
 
 // setAssignee меняет исполнителя с записью в историю. Когда исполнителем назначают не того,
@@ -462,16 +459,15 @@ func sprintChanged(tx *gorm.DB, t *Task, from, to *uuid.UUID, by uuid.UUID) erro
 		if step.sprint == nil {
 			continue
 		}
-		var state string
-		if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, *step.sprint).Scan(&state).Error; err != nil {
-			return fmt.Errorf("task: sprint state: %w", err)
+		state, err := sprintdb.State(tx, *step.sprint)
+		if err != nil {
+			return err
 		}
-		if state != "active" {
+		if state != sprintdb.StateActive {
 			continue
 		}
-		if err := tx.Exec(`INSERT INTO sprint_log (sprint_id, task_id, user_id, action) VALUES (?, ?, ?, ?)`,
-			*step.sprint, t.ID, actor, step.action).Error; err != nil {
-			return fmt.Errorf("task: sprint log: %w", err)
+		if err := sprintdb.Log(tx, *step.sprint, t.ID, actor, step.action); err != nil {
+			return err
 		}
 		if err := events.Publish(tx, step.event, map[string]any{
 			"sprint_id": *step.sprint, "task_id": t.ID, "key": t.Key, "project_id": t.ProjectID, "by": actor,

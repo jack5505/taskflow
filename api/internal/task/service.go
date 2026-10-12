@@ -17,6 +17,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/sprint/sprintdb"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -97,7 +98,7 @@ func (s *Service) Create(ctx context.Context, a *project.Access, u *user.User, i
 		if err := user.LockShare(tx, pre.users); err != nil {
 			return err
 		}
-		if err := lockShare(tx, "sprints", pre.sprints); err != nil {
+		if err := sprintdb.LockShare(tx, pre.sprints); err != nil {
 			return err
 		}
 		// Номер выдаёт UPDATE строки проекта — он же блокирует проект и отвергает архивный.
@@ -260,30 +261,16 @@ func endOfSection(tx *gorm.DB, projectID uuid.UUID, sprintID, exclude *uuid.UUID
 	return last[0] + positionStep, nil
 }
 
-// lockShare — FOR SHARE строк ids таблицы table (в порядке id). Берётся раньше строки задачи
-// или проекта: так же, как у деактивации пользователя и закрытия спринта, — без deadlock.
-func lockShare(tx *gorm.DB, table string, ids []uuid.UUID) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	var got []string
-	if err := tx.Raw(`SELECT id::text FROM `+table+` WHERE id IN ? ORDER BY id FOR SHARE`, ids).Scan(&got).Error; err != nil {
-		return fmt.Errorf("task: lock %s: %w", table, err)
-	}
-	return nil
-}
-
 // checkSprint — спринт этого проекта и не завершён (строку блокирует вызывающий — lockShare).
 func checkSprint(tx *gorm.DB, projectID, sprintID uuid.UUID) error {
-	var states []string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ? AND project_id = ?`, sprintID, projectID).
-		Scan(&states).Error; err != nil {
-		return fmt.Errorf("task: sprint check: %w", err)
+	state, err := sprintdb.StateIn(tx, projectID, sprintID)
+	if err != nil {
+		return err
 	}
-	if len(states) == 0 {
+	if state == "" {
 		return fieldError("sprint_id", "нет такого спринта в проекте")
 	}
-	if states[0] == "closed" {
+	if state == sprintdb.StateClosed {
 		return fieldError("sprint_id", "спринт завершён")
 	}
 	return nil

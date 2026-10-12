@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"slices"
 
 	"github.com/google/uuid"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/sprint/sprintdb"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -238,11 +238,11 @@ func leaveSprint(tx *gorm.DB, t *Task) error {
 	if t.SprintID == nil {
 		return nil
 	}
-	var states []string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, *t.SprintID).Scan(&states).Error; err != nil {
-		return fmt.Errorf("task: current sprint: %w", err)
+	state, err := sprintdb.State(tx, *t.SprintID)
+	if err != nil {
+		return err
 	}
-	if len(states) > 0 && states[0] == "closed" {
+	if state == sprintdb.StateClosed {
 		return fieldError("sprint_id", "задача из завершённого спринта — её не переносят")
 	}
 	return nil
