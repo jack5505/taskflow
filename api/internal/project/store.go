@@ -5,6 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // KeyWithDeleted — ключ проекта id, в том числе удалённого; нет такого — "".
@@ -109,12 +111,55 @@ func ManagesAny(db *gorm.DB, userID uuid.UUID) (bool, error) {
 }
 
 // LockManagedBy блокирует FOR UPDATE проекты (и удалённые), где userID менеджер, в порядке id, и
-// возвращает их. Вызывается в транзакции деактивации после блокировок задач (задача → проект).
-func LockManagedBy(tx *gorm.DB, userID uuid.UUID) ([]Brief, error) {
-	var rows []Brief
-	if err := tx.Raw(`SELECT p.id, p.key, p.timezone FROM projects p JOIN project_members m ON m.project_id = p.id
-		WHERE m.user_id = ? AND m.role = 'manager' ORDER BY p.id FOR UPDATE OF p`, userID).Scan(&rows).Error; err != nil {
+// возвращает их id. Вызывается в транзакции деактивации после блокировок задач (задача → проект).
+func LockManagedBy(tx *gorm.DB, userID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	if err := tx.Raw(`SELECT p.id FROM projects p JOIN project_members m ON m.project_id = p.id
+		WHERE m.user_id = ? AND m.role = 'manager' ORDER BY p.id FOR UPDATE OF p`, userID).Scan(&ids).Error; err != nil {
 		return nil, fmt.Errorf("project: lock managed: %w", err)
 	}
-	return rows, nil
+	return ids, nil
+}
+
+// SoleManagerKeys — ключи проектов из projectIDs, где кроме userID нет других активных менеджеров,
+// по ключу (§3.1: «последний менеджер»). Строки проектов вызывающий уже заблокировал; здесь
+// блокировок нет.
+func SoleManagerKeys(tx *gorm.DB, userID uuid.UUID, projectIDs []uuid.UUID) ([]string, error) {
+	if len(projectIDs) == 0 {
+		return nil, nil
+	}
+	managers, err := Managers(tx, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+	var others []uuid.UUID
+	for _, m := range managers {
+		if m.UserID != userID {
+			others = append(others, m.UserID)
+		}
+	}
+	active, err := user.ActiveAmong(tx, others)
+	if err != nil {
+		return nil, err
+	}
+	covered := map[uuid.UUID]bool{}
+	for _, m := range managers {
+		if m.UserID != userID && active[m.UserID] {
+			covered[m.ProjectID] = true
+		}
+	}
+	var sole []uuid.UUID
+	for _, id := range projectIDs {
+		if !covered[id] {
+			sole = append(sole, id)
+		}
+	}
+	if len(sole) == 0 {
+		return nil, nil
+	}
+	var keys []string
+	if err := tx.Raw(`SELECT key FROM projects WHERE id IN ? ORDER BY key`, sole).Scan(&keys).Error; err != nil {
+		return nil, fmt.Errorf("project: last manager keys: %w", err)
+	}
+	return keys, nil
 }

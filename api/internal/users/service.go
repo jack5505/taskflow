@@ -5,7 +5,6 @@ package users
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -180,7 +179,10 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*us
 				return err
 			}
 		}
-		return user.Update(tx, u, updates)
+		if err := user.Update(tx, u, updates); err != nil {
+			return err
+		}
+		return user.Reload(tx, u)
 	})
 	if err != nil {
 		return nil, err
@@ -209,14 +211,17 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	if err != nil {
 		return err
 	}
-	keys, err := lastManagerOf(tx, u.ID, managed)
+	keys, err := project.SoleManagerKeys(tx, u.ID, managed)
 	if err != nil {
 		return err
 	}
 	if len(keys) > 0 {
 		return ErrLastManager.With("projects", keys)
 	}
-	if err := user.Deactivate(tx, u); err != nil {
+	// §3.1: деактивация снимает и привязку Telegram.
+	if err := user.Update(tx, u, map[string]any{
+		"is_active": false, "telegram_user_id": nil, "telegram_username": nil,
+	}); err != nil {
 		return err
 	}
 	if err := s.auth.RevokeAllTx(tx, u.ID); err != nil {
@@ -227,46 +232,6 @@ func (s *Service) deactivateTx(tx *gorm.DB, u *user.User) error {
 	}
 	by, _ := audit.From(tx.Statement.Context)
 	return events.Publish(tx, events.UserDeactivated, map[string]any{"user_id": u.ID, "released_tasks": released, "by": by})
-}
-
-// lastManagerOf — ключи проектов из managed (userID в них менеджер), где других активных
-// менеджеров нет, по ключу.
-func lastManagerOf(tx *gorm.DB, userID uuid.UUID, managed []project.Brief) ([]string, error) {
-	if len(managed) == 0 {
-		return nil, nil
-	}
-	ids := make([]uuid.UUID, len(managed))
-	for i, p := range managed {
-		ids[i] = p.ID
-	}
-	managers, err := project.Managers(tx, ids)
-	if err != nil {
-		return nil, err
-	}
-	var others []uuid.UUID
-	for _, m := range managers {
-		if m.UserID != userID {
-			others = append(others, m.UserID)
-		}
-	}
-	active, err := user.ActiveAmong(tx, others)
-	if err != nil {
-		return nil, err
-	}
-	covered := map[uuid.UUID]bool{}
-	for _, m := range managers {
-		if active[m.UserID] && m.UserID != userID {
-			covered[m.ProjectID] = true
-		}
-	}
-	var keys []string
-	for _, p := range managed {
-		if !covered[p.ID] {
-			keys = append(keys, p.Key)
-		}
-	}
-	slices.Sort(keys)
-	return keys, nil
 }
 
 // changed — значения полей пользователя до и после для журнала; только реально меняющиеся.
