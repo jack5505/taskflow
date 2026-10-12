@@ -48,6 +48,8 @@ type Profile struct {
 	Timer                *task.TimerView `json:"timer" extensions:"x-nullable"`
 	// TelegramBotEnabled — бот подключён (задан TELEGRAM_BOT_TOKEN): можно получить код привязки.
 	TelegramBotEnabled bool `json:"telegram_bot_enabled"`
+	// GitHubEnabled — интеграция с GitHub подключена (задан GITHUB_APP_ID, §12.1).
+	GitHubEnabled bool `json:"github_enabled"`
 }
 
 // Service — профиль и уведомления текущего пользователя.
@@ -55,9 +57,16 @@ type Service struct {
 	db          *gorm.DB
 	now         func() time.Time
 	telegramBot bool
+	github      bool
 }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db, now: time.Now} }
+
+// WithGitHub — интеграция с GitHub включена: в настройках проекта есть вкладка «GitHub» (§12.1).
+func (s *Service) WithGitHub(enabled bool) *Service {
+	s.github = enabled
+	return s
+}
 
 // WithTelegramBot — бот включён: в профиле можно получить код привязки (§8.1).
 func (s *Service) WithTelegramBot(enabled bool) *Service {
@@ -80,7 +89,7 @@ func (s *Service) Profile(ctx context.Context, u *user.User) (*Profile, error) {
 		return nil, err
 	}
 	return &Profile{User: u, NotificationSettings: user.EffectiveNotifications(u.NotificationSettings), Projects: projects, Timer: timer,
-		TelegramBotEnabled: s.telegramBot}, nil
+		TelegramBotEnabled: s.telegramBot, GitHubEnabled: s.github}, nil
 }
 
 // Update — PATCH /me: имя, часовой пояс, личные уведомления §8.7 (частичный объект).

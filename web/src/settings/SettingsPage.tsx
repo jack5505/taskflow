@@ -5,13 +5,14 @@ import { actorFor, useProject } from "../projects/hooks";
 import { isSystemAdmin } from "../projects/logic";
 import { AuditTab } from "./AuditTab";
 import { GeneralTab } from "./GeneralTab";
+import { GitHubTab } from "./GitHubTab";
 import { SETTINGS_TABS, tabFromParam, visibleTabs } from "./logic";
 import { MembersTab } from "./MembersTab";
 import { NotificationsTab } from "./NotificationsTab";
 import { TelegramTab } from "./TelegramTab";
 import { TrashTab } from "./TrashTab";
 
-/** Настройки проекта (ТЗ §7.9): шесть вкладок, текущая — в адресе (?tab=…). */
+/** Настройки проекта (ТЗ §7.9, §12.1): шесть вкладок и «GitHub», текущая — в адресе (?tab=…). */
 export function SettingsPage() {
   const key = useParams().key ?? "";
   const [params, setParams] = useSearchParams();
@@ -19,7 +20,7 @@ export function SettingsPage() {
   const project = useProject(key);
   const actor = actorFor(me.data, project.data);
   const admin = isSystemAdmin(me.data);
-  const visible = visibleTabs({ manager: !!actor?.manager, admin });
+  const visible = visibleTabs({ manager: !!actor?.manager, admin, github: !!me.data?.github_enabled });
   const tab = tabFromParam(params.get("tab"), visible);
 
   const p = project.data;
@@ -54,6 +55,7 @@ export function SettingsPage() {
           {tab === "general" && <GeneralTab project={p} admin={admin} />}
           {tab === "members" && <MembersTab projectKey={key} me={me.data} admin={admin} readOnly={readOnly} />}
           {tab === "telegram" && <TelegramTab project={p} readOnly={readOnly} />}
+          {tab === "github" && <GitHubTab project={p} readOnly={readOnly} />}
           {tab === "notifications" && <NotificationsTab project={p} readOnly={readOnly} />}
           {tab === "audit" && <AuditTab projectKey={key} />}
           {tab === "trash" && <TrashTab projectKey={key} readOnly={readOnly} />}

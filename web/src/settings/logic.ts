@@ -3,12 +3,13 @@
 import type { AuditEntry, TaskTrashItem } from "../api/client";
 import { errorText, parseApiError } from "../api/errors";
 
-export type SettingsTab = "general" | "members" | "telegram" | "notifications" | "audit" | "trash";
+export type SettingsTab = "general" | "members" | "telegram" | "github" | "notifications" | "audit" | "trash";
 
 export const SETTINGS_TABS: { id: SettingsTab; label: string; adminOnly: boolean }[] = [
   { id: "general", label: "Общее", adminOnly: false },
   { id: "members", label: "Участники", adminOnly: false },
   { id: "telegram", label: "Telegram", adminOnly: false },
+  { id: "github", label: "GitHub", adminOnly: false },
   { id: "notifications", label: "Уведомления", adminOnly: false },
   { id: "audit", label: "Журнал", adminOnly: true },
   { id: "trash", label: "Корзина", adminOnly: true },
@@ -17,10 +18,11 @@ export const SETTINGS_TABS: { id: SettingsTab; label: string; adminOnly: boolean
 /**
  * Вкладки для пользователя: настройки доступны менеджеру и администратору системы (§7.9);
  * Журнал и Корзина — только администратору (§2), менеджер их не видит. Исполнителю — ничего.
+ * «GitHub» — только если интеграция подключена (§12.1, github_enabled в GET /me).
  */
-export function visibleTabs(opts: { manager: boolean; admin: boolean }): SettingsTab[] {
+export function visibleTabs(opts: { manager: boolean; admin: boolean; github?: boolean }): SettingsTab[] {
   if (!opts.manager && !opts.admin) return [];
-  return SETTINGS_TABS.filter((t) => !t.adminOnly || opts.admin).map((t) => t.id);
+  return SETTINGS_TABS.filter((t) => (!t.adminOnly || opts.admin) && (t.id !== "github" || opts.github)).map((t) => t.id);
 }
 
 /** Вкладка из адреса (?tab=…); недоступная или неизвестная — первая доступная. */

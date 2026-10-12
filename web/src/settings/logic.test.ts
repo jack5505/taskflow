@@ -35,6 +35,18 @@ describe("вкладки настроек (§7.9, §2)", () => {
       "trash",
     ]);
     expect(visibleTabs({ manager: false, admin: true })).toHaveLength(6);
+    expect(visibleTabs({ manager: false, admin: true, github: true })).toHaveLength(7);
+  });
+
+  it("вкладка GitHub — только при подключённой интеграции (§12.1)", () => {
+    expect(visibleTabs({ manager: true, admin: false, github: true })).toEqual([
+      "general",
+      "members",
+      "telegram",
+      "github",
+      "notifications",
+    ]);
+    expect(visibleTabs({ manager: true, admin: false, github: false })).not.toContain("github");
   });
 
   it("менеджер не видит Журнал и Корзину", () => {
