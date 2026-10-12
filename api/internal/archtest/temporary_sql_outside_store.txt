@@ -6,12 +6,5 @@ auth/password_reset.go 1
 auth/service.go 1
 notification/due.go 2
 notification/notification.go 1
-outbox/relay.go 3
 project/members.go 1
 project/service.go 11
-sprint/report.go 5
-sprint/snapshot.go 3
-sprint/sprint.go 5
-telegram/account.go 5
-telegram/digest_summary.go 4
-telegram/group_bind.go 5

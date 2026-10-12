@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -61,19 +60,17 @@ func (d *Digest) Summaries(ctx context.Context, now time.Time) (int64, error) {
 			slog.Error("telegram: summary", "project", p.Key, "err", err) // остальные проекты — своим чередом
 			continue
 		}
-		mark := d.db.WithContext(ctx).Exec(`INSERT INTO daily_summaries (project_id, date) VALUES (?, ?) ON CONFLICT DO NOTHING`,
-			p.ID, p.Today.Format(time.DateOnly))
-		if mark.Error != nil {
-			return sent, fmt.Errorf("telegram: summary mark: %w", mark.Error)
+		marked, err := markSummary(d.db.WithContext(ctx), p.ID, p.Today)
+		if err != nil {
+			return sent, err
 		}
-		if mark.RowsAffected == 0 {
+		if !marked {
 			continue // другой процесс воркера успел раньше
 		}
 		if err := d.out.Send(ctx, Message{Op: OpSend, ChatID: p.TelegramChatID, Text: text}, 0); err != nil {
 			// Очередь недоступна — снимаем отметку, следующий проход в пределах окна повторит.
 			slog.Error("telegram: summary not queued", "project", p.Key, "err", err)
-			if err := d.db.WithContext(ctx).Exec(`DELETE FROM daily_summaries WHERE project_id = ? AND date = ?`,
-				p.ID, p.Today.Format(time.DateOnly)).Error; err != nil {
+			if err := unmarkSummary(d.db.WithContext(ctx), p.ID, p.Today); err != nil {
 				slog.Error("telegram: summary unmark", "project", p.Key, "err", err)
 			}
 			continue
@@ -98,13 +95,9 @@ func (d *Digest) summarized(ctx context.Context, ps []project.SummaryCandidate) 
 			dates = append(dates, day)
 		}
 	}
-	var rows []struct {
-		ProjectID uuid.UUID
-		Date      time.Time
-	}
-	if err := d.db.WithContext(ctx).Raw(`SELECT project_id, date FROM daily_summaries WHERE project_id IN ? AND date IN ?`,
-		ids, dates).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("telegram: sent summaries: %w", err)
+	rows, err := summaryMarks(d.db.WithContext(ctx), ids, dates)
+	if err != nil {
+		return nil, err
 	}
 	done := map[uuid.UUID]bool{}
 	for _, r := range rows {
@@ -209,9 +202,5 @@ func (d *Digest) SendDue(ctx context.Context, r notification.Due) error {
 
 // CleanupSummaries удаляет отметки о сводках старше недели (воркер, раз в сутки).
 func (d *Digest) CleanupSummaries(ctx context.Context, now time.Time) (int64, error) {
-	res := d.db.WithContext(ctx).Exec(`DELETE FROM daily_summaries WHERE date < ?::date - 7`, now.UTC().Format(time.DateOnly))
-	if res.Error != nil {
-		return 0, fmt.Errorf("telegram: cleanup summaries: %w", res.Error)
-	}
-	return res.RowsAffected, nil
+	return deleteSummariesBefore(d.db.WithContext(ctx), now.UTC().AddDate(0, 0, -7))
 }

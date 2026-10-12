@@ -2,10 +2,8 @@ package sprint
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,14 +37,9 @@ type snapshotRow struct {
 // проектов (only — только этот). Спринты, у которых снимок за вчера уже есть, отсеиваются до
 // подсчёта задач: воркер ходит раз в минуту, и почти всегда делать ему нечего.
 func snapshotYesterday(db *gorm.DB, now time.Time, only *uuid.UUID) (int64, error) {
-	var active []struct {
-		ID        uuid.UUID
-		ProjectID uuid.UUID
-		StartDate *time.Time
-	}
-	if err := db.Raw(`SELECT id, project_id, start_date FROM sprints
-		WHERE state = 'active' AND (CAST(? AS uuid) IS NULL OR id = ?)`, only, only).Scan(&active).Error; err != nil {
-		return 0, fmt.Errorf("sprint: snapshot: %w", err)
+	active, err := activeForSnapshot(db, only)
+	if err != nil {
+		return 0, err
 	}
 	if len(active) == 0 {
 		return 0, nil
@@ -84,17 +77,13 @@ func snapshotYesterday(db *gorm.DB, now time.Time, only *uuid.UUID) (int64, erro
 	if len(due) == 0 {
 		return 0, nil
 	}
-	var taken []struct {
-		SprintID uuid.UUID
-		Date     time.Time
-	}
-	if err := db.Raw(`SELECT sprint_id, date FROM sprint_daily_snapshots WHERE sprint_id IN ? AND date IN ?`, ids, days).
-		Scan(&taken).Error; err != nil {
-		return 0, fmt.Errorf("sprint: snapshot: %w", err)
+	taken, err := takenSnapshots(db, ids, days)
+	if err != nil {
+		return 0, err
 	}
 	done := make(map[snapshotRow]bool, len(taken))
 	for _, t := range taken {
-		done[snapshotRow{SprintID: t.SprintID, Date: t.Date.Format(time.DateOnly)}] = true
+		done[t] = true
 	}
 	rows := due[:0]
 	ids = ids[:0]
@@ -116,24 +105,12 @@ func insertSnapshots(db *gorm.DB, rows []snapshotRow, ids []uuid.UUID, replace b
 	if err != nil {
 		return 0, err
 	}
-	conflict := `DO NOTHING`
-	if replace {
-		conflict = `DO UPDATE SET open_tasks = EXCLUDED.open_tasks,
-			open_estimate_minutes = EXCLUDED.open_estimate_minutes, done_tasks = EXCLUDED.done_tasks, updated_at = now()`
-	}
-	values := make([]string, len(rows))
-	args := make([]any, 0, 5*len(rows))
+	full := make([]snapshotRow, len(rows)) // строки вызывающего не меняются
 	for i, r := range rows {
-		st := stats[r.SprintID]
-		values[i] = "(?, ?, ?, ?, ?)"
-		args = append(args, r.SprintID, r.Date, st.OpenTasks, st.OpenEstimateMinutes, st.DoneTasks)
+		r.SnapshotStats = stats[r.SprintID]
+		full[i] = r
 	}
-	res := db.Exec(`INSERT INTO sprint_daily_snapshots (sprint_id, date, open_tasks, open_estimate_minutes, done_tasks)
-		VALUES `+strings.Join(values, ", ")+` ON CONFLICT (sprint_id, date) `+conflict, args...)
-	if res.Error != nil {
-		return 0, fmt.Errorf("sprint: snapshot: %w", res.Error)
-	}
-	return res.RowsAffected, nil
+	return writeSnapshots(db, full, replace)
 }
 
 // snapshotOnClose — снимок в момент закрытия (§3.8) на сегодняшнюю дату по поясу проекта, в
