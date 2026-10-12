@@ -18,6 +18,8 @@ import (
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
+	"github.com/jack5505/taskflow/api/internal/sprint/sprintdb"
+	"github.com/jack5505/taskflow/api/internal/task/taskdb"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -145,27 +147,6 @@ type ListItem struct {
 	MyOpenTasks  int           `json:"my_open_tasks"`
 }
 
-// listSQL — проекты со спринтом и счётчиками одним запросом: LATERAL на проект вместо N+1.
-// Активный спринт в проекте один (§5), LIMIT 1 — страховка от дубля, id — для устойчивого выбора.
-// Открытые — как в «Моих задачах» (task.Mine): не done и не cancelled; «на мне» — только пока
-// пользователь участник, иначе счётчик разошёлся бы с блоком «Мои задачи».
-const listSQL = `SELECT p.*, m.role AS my_role,
-		s.id AS sprint_id, s.name AS sprint_name,
-		to_char(s.start_date, 'YYYY-MM-DD') AS sprint_start, to_char(s.end_date, 'YYYY-MM-DD') AS sprint_end,
-		COALESCE(c.open_tasks, 0) AS open_tasks, COALESCE(c.my_open_tasks, 0) AS my_open_tasks
-	FROM projects p
-	LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = @user
-	LEFT JOIN LATERAL (
-		SELECT id, name, start_date, end_date FROM sprints
-		WHERE project_id = p.id AND state = 'active' ORDER BY start_date, id LIMIT 1
-	) s ON true
-	LEFT JOIN LATERAL (
-		SELECT count(*) AS open_tasks, count(*) FILTER (WHERE assignee_id = @user AND m.user_id IS NOT NULL) AS my_open_tasks
-		FROM tasks
-		WHERE project_id = p.id AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')
-	) c ON true
-	WHERE `
-
 // List — проекты, в которых пользователь участник; администратору — все (§7.2).
 func (s *Service) List(ctx context.Context, u *user.User, f ListFilter) ([]ListItem, error) {
 	if f.Deleted && !u.IsSystemAdmin {
@@ -179,19 +160,35 @@ func (s *Service) List(ctx context.Context, u *user.User, f ListFilter) ([]ListI
 		where += " AND m.user_id IS NOT NULL"
 	}
 	var rows []struct {
-		Project     `gorm:"embedded"`
-		MyRole      *string
-		SprintID    *uuid.UUID
-		SprintName  *string
-		SprintStart *string
-		SprintEnd   *string
-		OpenTasks   int
-		MyOpenTasks int
+		Project `gorm:"embedded"`
+		MyRole  *string
 	}
-	err := s.db.WithContext(ctx).Raw(listSQL+where+" ORDER BY p.key",
-		sql.Named("user", u.ID), sql.Named("archived", f.Archived)).Scan(&rows).Error
+	var sprints map[uuid.UUID]sprintdb.Active
+	var counts map[uuid.UUID]taskdb.OpenCounts
+	// Проекты, спринты и счётчики — из одного снимка базы (read-only REPEATABLE READ), как раньше
+	// одним запросом.
+	err := s.db.WithContext(ctx).Transaction(func(db *gorm.DB) error {
+		if err := db.Raw(`SELECT p.*, m.role AS my_role FROM projects p
+		LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = @user
+		WHERE `+where+` ORDER BY p.key`, sql.Named("user", u.ID), sql.Named("archived", f.Archived)).Scan(&rows).Error; err != nil {
+			return fmt.Errorf("project: list: %w", err)
+		}
+		ids := make([]uuid.UUID, len(rows))
+		for i := range rows {
+			ids[i] = rows[i].ID
+		}
+		// Активный спринт (§5: один) и открытые задачи — как в «Моих задачах» (task.Mine): не done и
+		// не cancelled; «на мне» — только пока пользователь участник, иначе счётчик разошёлся бы
+		// с блоком «Мои задачи».
+		var err error
+		if sprints, err = sprintdb.ActiveOfProjects(db, ids); err != nil {
+			return err
+		}
+		counts, err = taskdb.OpenCountsOf(db, ids, u.ID)
+		return err
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
-		return nil, fmt.Errorf("project: list: %w", err)
+		return nil, err
 	}
 	out := make([]ListItem, len(rows))
 	for i := range rows {
@@ -200,12 +197,25 @@ func (s *Service) List(ctx context.Context, u *user.User, f ListFilter) ([]ListI
 		if r.MyRole != nil {
 			role = *r.MyRole
 		}
-		out[i] = ListItem{View: newView(&r.Project, role), OpenTasks: r.OpenTasks, MyOpenTasks: r.MyOpenTasks}
-		if r.SprintID != nil {
-			out[i].ActiveSprint = &ActiveSprint{ID: *r.SprintID, Name: *r.SprintName, StartDate: r.SprintStart, EndDate: r.SprintEnd}
+		c := counts[r.ID]
+		out[i] = ListItem{View: newView(&r.Project, role), OpenTasks: c.Open}
+		if role != "" {
+			out[i].MyOpenTasks = c.Mine
+		}
+		if sp, ok := sprints[r.ID]; ok {
+			out[i].ActiveSprint = &ActiveSprint{ID: sp.ID, Name: sp.Name, StartDate: dateString(sp.StartDate), EndDate: dateString(sp.EndDate)}
 		}
 	}
 	return out, nil
+}
+
+// dateString — дата как to_char(…, 'YYYY-MM-DD'); nil — nil.
+func dateString(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.Format(time.DateOnly)
+	return &s
 }
 
 type CreateInput struct {
@@ -489,21 +499,21 @@ func LockForUpdate(tx *gorm.DB, id uuid.UUID) (*Project, error) {
 // ManagerIn — права менеджера (§2) по строкам в транзакции: менеджер проекта или администратор
 // системы, оба активные. Не участник (и не администратор) или деактивированный — ErrNotFound.
 func ManagerIn(tx *gorm.DB, projectID, userID uuid.UUID) (bool, error) {
-	var admin []bool
-	if err := tx.Raw(`SELECT is_system_admin FROM users WHERE id = ? AND is_active`, userID).Scan(&admin).Error; err != nil {
-		return false, fmt.Errorf("project: actor: %w", err)
+	admin, found, err := user.ActiveAdmin(tx, userID)
+	if err != nil {
+		return false, err
 	}
-	if len(admin) == 0 {
+	if !found {
 		return false, ErrNotFound
 	}
 	role, err := memberRole(tx, projectID, userID)
 	if err != nil {
 		return false, err
 	}
-	if role == "" && !admin[0] {
+	if role == "" && !admin {
 		return false, ErrNotFound
 	}
-	return admin[0] || role == RoleManager, nil
+	return admin || role == RoleManager, nil
 }
 
 // RoleIn — роль пользователя в проекте внутри транзакции, "" — не участник

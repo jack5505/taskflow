@@ -125,6 +125,19 @@ func LockManagedBy(tx *gorm.DB, userID uuid.UUID) ([]uuid.UUID, error) {
 // по ключу (§3.1: «последний менеджер»). Строки проектов вызывающий уже заблокировал; здесь
 // блокировок нет.
 func SoleManagerKeys(tx *gorm.DB, userID uuid.UUID, projectIDs []uuid.UUID) ([]string, error) {
+	sole, err := soleManaged(tx, userID, projectIDs)
+	if err != nil || len(sole) == 0 {
+		return nil, err
+	}
+	var keys []string
+	if err := tx.Raw(`SELECT key FROM projects WHERE id IN ? ORDER BY key`, sole).Scan(&keys).Error; err != nil {
+		return nil, fmt.Errorf("project: last manager keys: %w", err)
+	}
+	return keys, nil
+}
+
+// soleManaged — проекты из projectIDs без других активных менеджеров, кроме userID.
+func soleManaged(tx *gorm.DB, userID uuid.UUID, projectIDs []uuid.UUID) ([]uuid.UUID, error) {
 	if len(projectIDs) == 0 {
 		return nil, nil
 	}
@@ -154,12 +167,19 @@ func SoleManagerKeys(tx *gorm.DB, userID uuid.UUID, projectIDs []uuid.UUID) ([]s
 			sole = append(sole, id)
 		}
 	}
-	if len(sole) == 0 {
+	return sole, nil
+}
+
+// LockShareLive — неудалённый проект id, строка FOR SHARE (операции над задачей берут её после
+// строки задачи: задача → проект); нет или удалён — nil.
+func LockShareLive(tx *gorm.DB, id uuid.UUID) (*Project, error) {
+	var p Project
+	res := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR SHARE`, id).Scan(&p)
+	if res.Error != nil {
+		return nil, fmt.Errorf("project: lock share: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
 		return nil, nil
 	}
-	var keys []string
-	if err := tx.Raw(`SELECT key FROM projects WHERE id IN ? ORDER BY key`, sole).Scan(&keys).Error; err != nil {
-		return nil, fmt.Errorf("project: last manager keys: %w", err)
-	}
-	return keys, nil
+	return &p, nil
 }

@@ -1,9 +1,11 @@
 package project
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -11,6 +13,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 var (
@@ -31,14 +34,39 @@ type MemberView struct {
 
 // Members — участники проекта: менеджеры первыми, затем по имени.
 func (s *Service) Members(ctx context.Context, a *Access) ([]MemberView, error) {
-	list := []MemberView{}
-	err := s.db.WithContext(ctx).Raw(`SELECT m.user_id, u.email, u.display_name, m.role, u.is_active
-		FROM project_members m JOIN users u ON u.id = m.user_id
-		WHERE m.project_id = ? ORDER BY m.role = 'manager' DESC, u.display_name, u.email`, a.Project.ID).Scan(&list).Error
-	if err != nil {
+	db := s.db.WithContext(ctx)
+	var roles []struct {
+		UserID uuid.UUID
+		Role   string
+	}
+	if err := db.Raw(`SELECT user_id, role FROM project_members WHERE project_id = ?`, a.Project.ID).Scan(&roles).Error; err != nil {
 		return nil, fmt.Errorf("project: members: %w", err)
 	}
+	role := make(map[uuid.UUID]string, len(roles))
+	ids := make([]uuid.UUID, len(roles))
+	for i, r := range roles {
+		ids[i], role[r.UserID] = r.UserID, r.Role
+	}
+	// Пользователи — по имени и email в сортировке базы; менеджеры первыми (стабильно).
+	contacts, err := user.ContactsOrdered(db, ids)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]MemberView, 0, len(contacts))
+	for _, c := range contacts {
+		list = append(list, MemberView{UserID: c.ID, Email: c.Email, DisplayName: c.DisplayName, Role: role[c.ID], IsActive: c.IsActive})
+	}
+	slices.SortStableFunc(list, func(a, b MemberView) int {
+		return cmp.Compare(boolRank(b.Role == RoleManager), boolRank(a.Role == RoleManager))
+	})
 	return list, nil
+}
+
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // PutMember добавляет участника или меняет его роль (§2: менеджер и администратор).
@@ -178,13 +206,11 @@ func checkNotLastManager(tx *gorm.DB, p *Project, userID uuid.UUID, active bool)
 	if !active {
 		return nil
 	}
-	var others int64
-	if err := tx.Raw(`SELECT count(*) FROM project_members m JOIN users u ON u.id = m.user_id
-		WHERE m.project_id = ? AND m.role = 'manager' AND m.user_id <> ? AND u.is_active`, p.ID, userID).
-		Scan(&others).Error; err != nil {
-		return fmt.Errorf("project: last manager check: %w", err)
+	sole, err := soleManaged(tx, userID, []uuid.UUID{p.ID})
+	if err != nil {
+		return err
 	}
-	if others == 0 {
+	if len(sole) > 0 {
 		return ErrLastManager.With("projects", []string{p.Key})
 	}
 	return nil
@@ -199,13 +225,12 @@ type userRow struct {
 // lockUser — строка пользователя-цели FOR NO KEY UPDATE (как у деактивации; с проверками
 // внешних ключей не конфликтует).
 func lockUser(tx *gorm.DB, userID uuid.UUID) (*userRow, error) {
-	var rows []userRow
-	if err := tx.Raw(`SELECT is_active, email, display_name FROM users WHERE id = ? FOR NO KEY UPDATE`, userID).
-		Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("project: user: %w", err)
+	u, err := user.LockNoKeyUpdate(tx, userID)
+	if err != nil {
+		return nil, err
 	}
-	if len(rows) == 0 {
+	if u == nil {
 		return nil, ErrUserNotFound
 	}
-	return &rows[0], nil
+	return &userRow{IsActive: u.IsActive, Email: u.Email, DisplayName: u.DisplayName}, nil
 }
