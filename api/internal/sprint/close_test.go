@@ -2,6 +2,7 @@ package sprint_test
 
 import (
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -122,7 +123,7 @@ func TestCloseReviewFixes(t *testing.T) {
 // после закрытия положит её в бэклог.
 func TestCloseAndReopenRace(t *testing.T) {
 	f := newFixture(t)
-	for i := range 8 {
+	for i := range 20 {
 		old := f.sprint(t, `{`+dates+`}`)
 		d := f.task(t, old, "")
 		rec, _ := f.do(t, "POST", "/api/v1/sprints/"+old+"/start", f.manager, "")
@@ -136,21 +137,10 @@ func TestCloseAndReopenRace(t *testing.T) {
 		rec, _ = f.do(t, "POST", "/api/v1/sprints/"+cur+"/start", f.manager, "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-		var wg sync.WaitGroup
-		codes := make([]int, 2)
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			rec, _ := f.do(t, "POST", "/api/v1/sprints/"+cur+"/close", f.manager, `{"move_open_to":"backlog"}`)
-			codes[0] = rec.Code
-		}()
-		go func() {
-			defer wg.Done()
-			rec, _ := f.do(t, "POST", "/api/v1/tasks/"+d+"/transition", f.manager, `{"to":"in_progress"}`)
-			codes[1] = rec.Code
-		}()
-		wg.Wait()
-		require.Equal(t, []int{http.StatusOK, http.StatusOK}, codes, "попытка %d", i)
+		got := concurrently(t, f,
+			[3]string{"POST", "/api/v1/sprints/" + cur + "/close", `{"move_open_to":"backlog"}`},
+			[3]string{"POST", "/api/v1/tasks/" + d + "/transition", `{"to":"in_progress"}`})
+		require.Equal(t, []string{"200", "200"}, got, "попытка %d", i)
 		require.Nil(t, f.sprintOf(t, d), "попытка %d: незакрытая задача не осталась в закрытом спринте", i)
 	}
 }
@@ -160,25 +150,14 @@ func TestCloseAndReopenRace(t *testing.T) {
 // в объём — записи нет.
 func TestStartAndMoveOutRace(t *testing.T) {
 	f := newFixture(t)
-	for i := range 8 {
+	for i := range 20 {
 		s := f.sprint(t, `{`+dates+`}`)
 		k := f.task(t, s, "")
 		f.task(t, s, "") // спринт не пустой и без k
-		var wg sync.WaitGroup
-		codes := make([]int, 2)
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			rec, _ := f.do(t, "POST", "/api/v1/sprints/"+s+"/start", f.manager, "")
-			codes[0] = rec.Code
-		}()
-		go func() {
-			defer wg.Done()
-			rec, _ := f.do(t, "POST", "/api/v1/tasks/"+k+"/move", f.manager, `{"sprint_id":null,"after_task_id":null}`)
-			codes[1] = rec.Code
-		}()
-		wg.Wait()
-		require.Equal(t, []int{http.StatusOK, http.StatusOK}, codes, "попытка %d", i)
+		got := concurrently(t, f,
+			[3]string{"POST", "/api/v1/sprints/" + s + "/start", ""},
+			[3]string{"POST", "/api/v1/tasks/" + k + "/move", `{"sprint_id":null,"after_task_id":null}`})
+		require.Equal(t, []string{"200", "200"}, got, "попытка %d", i)
 		var inScope, removed int64
 		require.NoError(t, f.db.Raw(`SELECT count(*) FROM sprint_start_scope ss JOIN tasks t ON t.id = ss.task_id
 			WHERE ss.sprint_id = ? AND t.key = ?`, s, k).Scan(&inScope).Error)
@@ -188,4 +167,28 @@ func TestStartAndMoveOutRace(t *testing.T) {
 		rec, _ := f.do(t, "POST", "/api/v1/sprints/"+s+"/close", f.manager, `{"move_open_to":"backlog"}`)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	}
+}
+
+// concurrently выполняет запросы менеджера одновременно: горутины ждут общего старта, чтобы
+// запросы действительно пересеклись. Ответ — код, а для неуспешных — код и тело (для сообщения).
+func concurrently(t *testing.T, f *fixture, reqs ...[3]string) []string {
+	t.Helper()
+	got := make([]string, len(reqs))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, r := range reqs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			rec, _ := f.do(t, r[0], r[1], f.manager, r[2])
+			got[i] = strconv.Itoa(rec.Code)
+			if rec.Code != http.StatusOK {
+				got[i] += " " + rec.Body.String()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return got
 }

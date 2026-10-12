@@ -24,7 +24,7 @@ type MoveInput struct {
 // Перестановки в проекте сериализуются (reorderProject в change()): два переноса не получат одну
 // позицию, а перенумерация секции не встанет в deadlock со встречным переносом.
 func (s *Service) Move(ctx context.Context, u *user.User, key string, in MoveInput) (*Task, error) {
-	pre := preLock{reorder: true}
+	pre := preLock{reorder: true, sprintCheck: in.SprintID.Set}
 	if in.SprintID.Value != nil {
 		pre.sprints = []uuid.UUID{*in.SprintID.Value}
 	}
