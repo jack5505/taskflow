@@ -142,11 +142,12 @@ func notifyTaskPeople(ctx context.Context, db *gorm.DB, projectID, taskID, repor
 // проекта (иначе уведомление раскрыло бы чужой проект).
 func notifyUsers(ctx context.Context, db *gorm.DB, projectID, taskID uuid.UUID, targets []uuid.UUID,
 	by uuid.UUID, typ string, data map[string]any, eventID uuid.UUID) error {
+	targets = slices.DeleteFunc(slices.Clone(targets), func(id uuid.UUID) bool { return id == by })
 	if len(targets) == 0 {
 		return nil
 	}
 	qdb := db.WithContext(ctx)
-	active, err := user.ActiveTimezones(qdb, targets)
+	active, err := user.ActiveAmong(qdb, targets)
 	if err != nil {
 		return err
 	}
@@ -155,7 +156,7 @@ func notifyUsers(ctx context.Context, db *gorm.DB, projectID, taskID uuid.UUID, 
 		return err
 	}
 	for _, uid := range targets {
-		if _, ok := active[uid]; uid == by || !ok || !members[uid] {
+		if !active[uid] || !members[uid] {
 			continue
 		}
 		id := taskID
@@ -275,12 +276,12 @@ func userDeactivated(db *gorm.DB) events.Handler {
 		if err != nil {
 			return err
 		}
-		type project struct {
+		type projectTasks struct {
 			ProjectID  uuid.UUID `json:"project_id"`
 			ProjectKey string    `json:"project_key"`
 			Tasks      []string  `json:"released_tasks"`
 		}
-		byManager := map[uuid.UUID][]project{}
+		byManager := map[uuid.UUID][]projectTasks{}
 		var order []uuid.UUID
 		for _, r := range rows {
 			list, seen := byManager[r.ManagerID]
@@ -288,7 +289,7 @@ func userDeactivated(db *gorm.DB) events.Handler {
 				order = append(order, r.ManagerID)
 			}
 			if n := len(list); n == 0 || list[n-1].ProjectID != r.ProjectID {
-				list = append(list, project{ProjectID: r.ProjectID, ProjectKey: r.ProjectKey})
+				list = append(list, projectTasks{ProjectID: r.ProjectID, ProjectKey: r.ProjectKey})
 			}
 			list[len(list)-1].Tasks = append(list[len(list)-1].Tasks, r.TaskKey)
 			byManager[r.ManagerID] = list
@@ -323,12 +324,7 @@ func releasedByManager(db *gorm.DB, userID uuid.UUID, keys []string) ([]released
 	if err != nil || len(tasks) == 0 {
 		return nil, err
 	}
-	var projectIDs []uuid.UUID
-	for _, t := range tasks {
-		if !slices.Contains(projectIDs, t.ProjectID) {
-			projectIDs = append(projectIDs, t.ProjectID)
-		}
-	}
+	projectIDs := uniq(tasks, func(t task.KeyRef) uuid.UUID { return t.ProjectID })
 	projects, err := project.LiveBriefs(db, projectIDs, false)
 	if err != nil {
 		return nil, err
@@ -337,20 +333,14 @@ func releasedByManager(db *gorm.DB, userID uuid.UUID, keys []string) ([]released
 	if err != nil {
 		return nil, err
 	}
-	var managerIDs []uuid.UUID
-	for _, m := range managers {
-		if m.UserID != userID && !slices.Contains(managerIDs, m.UserID) {
-			managerIDs = append(managerIDs, m.UserID)
-		}
-	}
-	active, err := user.ActiveTimezones(db, managerIDs)
+	active, err := user.ActiveAmong(db, uniq(managers, func(m project.Membership) uuid.UUID { return m.UserID }))
 	if err != nil {
 		return nil, err
 	}
 	var rows []releasedRow
 	for _, m := range managers {
 		p, live := projects[m.ProjectID]
-		if _, ok := active[m.UserID]; !ok || !live || m.UserID == userID {
+		if !active[m.UserID] || !live || m.UserID == userID {
 			continue
 		}
 		for _, t := range tasks {

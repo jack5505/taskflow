@@ -43,7 +43,7 @@ type Brief struct {
 	Timezone string
 }
 
-// LiveBriefs — неудалённые проекты из ids по id; openOnly — ещё и не архивные.
+// LiveBriefs — неудалённые проекты из ids по id; openOnly — ещё и не архивные. Блокировок не берёт.
 func LiveBriefs(db *gorm.DB, ids []uuid.UUID, openOnly bool) (map[uuid.UUID]Brief, error) {
 	out := make(map[uuid.UUID]Brief, len(ids))
 	if len(ids) == 0 {
@@ -60,7 +60,7 @@ func LiveBriefs(db *gorm.DB, ids []uuid.UUID, openOnly bool) (map[uuid.UUID]Brie
 	return out, nil
 }
 
-// Memberships — какие пары «проект — пользователь» из projectIDs × userIDs — участие.
+// Memberships — какие пары «проект — пользователь» из projectIDs × userIDs — участие. Блокировок не берёт.
 func Memberships(db *gorm.DB, projectIDs, userIDs []uuid.UUID) (map[Membership]bool, error) {
 	out := map[Membership]bool{}
 	if len(projectIDs) == 0 || len(userIDs) == 0 {
