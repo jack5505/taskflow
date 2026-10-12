@@ -179,32 +179,13 @@ func List(ctx context.Context, db *gorm.DB, projectID uuid.UUID, f Filter) (*Pag
 	if limit <= 0 || limit > MaxLimit {
 		limit = 50
 	}
-	where := []string{"project_id = ?"}
-	args := []any{projectID}
-	if f.From != nil {
-		where, args = append(where, "created_at >= ?"), append(args, *f.From)
-	}
-	if f.To != nil {
-		where, args = append(where, "created_at < ?"), append(args, *f.To)
-	}
-	if f.ActorID != nil {
-		where, args = append(where, "actor_id = ?"), append(args, *f.ActorID)
-	}
-	if f.Action != "" {
-		where, args = append(where, "action = ?"), append(args, f.Action)
-	}
-	if f.Cursor != "" {
-		at, id, err := decodeCursor(f.Cursor)
-		if err != nil {
-			return nil, err
-		}
-		where, args = append(where, "(created_at, id) < (?, ?)"), append(args, at, id)
-	}
-	items := []Entry{}
-	err := db.WithContext(ctx).Raw(`SELECT * FROM audit_logs WHERE `+strings.Join(where, " AND ")+
-		` ORDER BY created_at DESC, id DESC LIMIT ?`, append(args, limit+1)...).Scan(&items).Error
+	after, err := parseCursor(f.Cursor)
 	if err != nil {
-		return nil, fmt.Errorf("audit: list: %w", err)
+		return nil, err
+	}
+	items, err := entries(db.WithContext(ctx), projectID, f, after, limit+1)
+	if err != nil {
+		return nil, err
 	}
 	page := &Page{Items: items}
 	if len(items) > limit {

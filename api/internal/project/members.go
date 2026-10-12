@@ -35,12 +35,9 @@ type MemberView struct {
 // Members — участники проекта: менеджеры первыми, затем по имени.
 func (s *Service) Members(ctx context.Context, a *Access) ([]MemberView, error) {
 	db := s.db.WithContext(ctx)
-	var roles []struct {
-		UserID uuid.UUID
-		Role   string
-	}
-	if err := db.Raw(`SELECT user_id, role FROM project_members WHERE project_id = ?`, a.Project.ID).Scan(&roles).Error; err != nil {
-		return nil, fmt.Errorf("project: members: %w", err)
+	roles, err := memberRoles(db, a.Project.ID)
+	if err != nil {
+		return nil, err
 	}
 	role := make(map[uuid.UUID]string, len(roles))
 	ids := make([]uuid.UUID, len(roles))

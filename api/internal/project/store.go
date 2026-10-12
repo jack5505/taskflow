@@ -1,6 +1,8 @@
 package project
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -182,4 +184,128 @@ func LockShareLive(tx *gorm.DB, id uuid.UUID) (*Project, error) {
 		return nil, nil
 	}
 	return &p, nil
+}
+
+// lockProject — строка неудалённого проекта FOR UPDATE по условию where ("id = ?" или "key = ?").
+func lockProject(tx *gorm.DB, where string, arg any, p *Project) error {
+	res := tx.Raw(`SELECT * FROM projects WHERE `+where+` AND deleted_at IS NULL FOR UPDATE`, arg).Scan(p)
+	if res.Error != nil {
+		return fmt.Errorf("project: lock: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// memberRole — роль пользователя в проекте, "" — не участник.
+func memberRole(tx *gorm.DB, projectID, userID uuid.UUID) (string, error) {
+	var roles []string
+	if err := tx.Raw(`SELECT role FROM project_members WHERE project_id = ? AND user_id = ?`, projectID, userID).
+		Scan(&roles).Error; err != nil {
+		return "", fmt.Errorf("project: membership: %w", err)
+	}
+	if len(roles) == 0 {
+		return "", nil
+	}
+	return roles[0], nil
+}
+
+// projectByKey — проект по ключу; withDeleted — и удалённый. Нет — ErrNotFound.
+func projectByKey(db *gorm.DB, key string, withDeleted bool) (*Project, error) {
+	var p Project
+	q := db
+	if withDeleted {
+		q = q.Unscoped()
+	}
+	err := q.First(&p, "key = ?", key).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("project: find: %w", err)
+	}
+	return &p, nil
+}
+
+// reloadProject перечитывает строку проекта p.
+func reloadProject(tx *gorm.DB, p *Project) error {
+	return tx.First(p, "id = ?", p.ID).Error
+}
+
+// lockAnyByKey — проект по ключу (и удалённый) в p, строка FOR UPDATE; нет — ErrNotFound.
+func lockAnyByKey(tx *gorm.DB, key string, p *Project) error {
+	res := tx.Raw(`SELECT * FROM projects WHERE key = ? FOR UPDATE`, key).Scan(p)
+	if res.Error != nil {
+		return fmt.Errorf("project: find: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// incrementTaskCounter — следующий номер задачи неудалённого неархивного проекта (UPDATE …
+// RETURNING); проект удалён или в архиве — ok = false.
+func incrementTaskCounter(tx *gorm.DB, projectID uuid.UUID) (n int, ok bool, err error) {
+	var ns []int
+	if err := tx.Raw(`UPDATE projects SET task_counter = task_counter + 1
+		WHERE id = ? AND deleted_at IS NULL AND NOT is_archived RETURNING task_counter`, projectID).Scan(&ns).Error; err != nil {
+		return 0, false, fmt.Errorf("project: next task number: %w", err)
+	}
+	if len(ns) != 1 {
+		return 0, false, nil
+	}
+	return ns[0], true, nil
+}
+
+// archivedFlag — is_archived неудалённого проекта; удалён или нет — nil.
+func archivedFlag(tx *gorm.DB, projectID uuid.UUID) (*bool, error) {
+	var flags []bool
+	if err := tx.Raw(`SELECT is_archived FROM projects WHERE id = ? AND deleted_at IS NULL`, projectID).Scan(&flags).Error; err != nil {
+		return nil, fmt.Errorf("project: next task number: %w", err)
+	}
+	if len(flags) != 1 {
+		return nil, nil
+	}
+	return &flags[0], nil
+}
+
+// listRow — проект списка с ролью пользователя.
+type listRow struct {
+	Project `gorm:"embedded"`
+	MyRole  *string
+}
+
+// listRows — проекты по фильтру f с ролью userID, по ключу; membersOnly — только где он участник.
+func listRows(db *gorm.DB, userID uuid.UUID, membersOnly bool, f ListFilter) ([]listRow, error) {
+	where := "p.deleted_at IS NULL AND p.is_archived = @archived"
+	if f.Deleted {
+		where = "p.deleted_at IS NOT NULL"
+	}
+	if membersOnly {
+		where += " AND m.user_id IS NOT NULL"
+	}
+	var rows []listRow
+	if err := db.Raw(`SELECT p.*, m.role AS my_role FROM projects p
+		LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = @user
+		WHERE `+where+` ORDER BY p.key`, sql.Named("user", userID), sql.Named("archived", f.Archived)).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("project: list: %w", err)
+	}
+	return rows, nil
+}
+
+// memberRoleRow — участник проекта и его роль.
+type memberRoleRow struct {
+	UserID uuid.UUID
+	Role   string
+}
+
+// memberRoles — участники проекта с ролями.
+func memberRoles(db *gorm.DB, projectID uuid.UUID) ([]memberRoleRow, error) {
+	var roles []memberRoleRow
+	if err := db.Raw(`SELECT user_id, role FROM project_members WHERE project_id = ?`, projectID).Scan(&roles).Error; err != nil {
+		return nil, fmt.Errorf("project: members: %w", err)
+	}
+	return roles, nil
 }
