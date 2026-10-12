@@ -289,3 +289,19 @@ func TestGroupEventSurvivesRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, n, "после отправки события забыты")
 }
+
+// §12.4: переход от системы (GitHub) подписан «GitHub (логин)» из by_name.
+func TestGroupEventSystemActor(t *testing.T) {
+	b := newEventBot(t)
+	tk := b.createdCard(t, task.CreateInput{Title: "Из GitHub"})
+	_, err := b.tasks.Take(context.Background(), b.member, tk.Key)
+	require.NoError(t, err)
+	_, err = b.tasks.Transition(context.Background(), b.member, tk.Key, task.TransitionInput{To: "review"})
+	require.NoError(t, err)
+	b.publish(t, events.TaskTransitioned, `{"task_id":"`+tk.ID.String()+`","from":"in_progress","to":"review","by":"`+
+		uuid.Nil.String()+`","by_name":"GitHub (octo)"}`)
+	b.flush(t)
+	sent := b.sent(t)
+	require.Len(t, sent, 1)
+	require.Contains(t, sent[0]["text"], "GitHub (octo)")
+}

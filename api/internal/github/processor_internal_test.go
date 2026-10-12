@@ -214,15 +214,36 @@ func TestProcessorStatus(t *testing.T) {
 
 	e.deliver(t, "pull_request", pr("closed", 3, k1+": второй", "closed", false, false, login))
 	require.Equal(t, task.StatusInProgress, get(e.t1).Status, "закрыт без слияния — назад в работу")
-	var notes int64
-	require.NoError(t, e.db.Raw(`SELECT count(*) FROM task_history WHERE task_id = ? AND note = 'PR #3 закрыт без слияния' AND user_id IS NULL`,
-		e.t1.ID).Scan(&notes).Error)
-	require.EqualValues(t, 1, notes, "системная причина")
-
+	repo := *e.prj.GitHubRepo
+	var reason int64
+	require.NoError(t, e.db.Raw(`SELECT count(*) FROM comments WHERE task_id = ? AND author_id = ? AND body = 'PR #3 закрыт без слияния'`,
+		e.t1.ID, author.ID).Scan(&reason).Error)
+	require.EqualValues(t, 1, reason, "причина — комментарий связанного автора")
 	e.deliver(t, "pull_request", pr("reopened", 3, k1+": второй", "open", false, false, "stranger"))
 	require.Equal(t, task.StatusReview, get(e.t1).Status, "у задачи есть исполнитель — переводит система")
+	var sys int64
+	require.NoError(t, e.db.Raw(`SELECT count(*) FROM task_history WHERE task_id = ? AND field = 'status' AND user_id IS NULL AND note = ?`,
+		e.t1.ID, "PR "+repo+"#3, GitHub (stranger)").Scan(&sys).Error)
+	require.EqualValues(t, 1, sys, "система с логином GitHub и ссылкой на PR в примечании")
+
+	e.deliver(t, "pull_request", pr("opened", 4, k1+": черновик 2", "open", false, true, login))
+	e.deliver(t, "pull_request", pr("closed", 4, k1+": черновик 2", "closed", false, true, login))
+	require.Equal(t, task.StatusReview, get(e.t1).Status, "закрытый черновик статус не меняет")
+	e.deliver(t, "pull_request", pr("opened", 5, k1+": черновик 3", "open", false, true, login))
 	e.deliver(t, "pull_request", pr("closed", 3, k1+": второй", "closed", true, false, login))
-	require.Equal(t, task.StatusDone, get(e.t1).Status)
+	require.Equal(t, task.StatusDone, get(e.t1).Status, "открытый черновик слиянию не мешает")
+	var by []string
+	require.NoError(t, e.db.Raw(`SELECT coalesce(user_id::text, '') FROM task_history WHERE task_id = ? AND field = 'status' AND note = ?
+		ORDER BY created_at DESC LIMIT 1`, e.t1.ID, "PR "+repo+"#3").Scan(&by).Error)
+	require.Equal(t, []string{author.ID.String()}, by, "автор шага — связанный пользователь")
+
+	// Связанный, но не участник проекта — как несвязанный: задачу без исполнителя не берёт.
+	outsider := user.New(testutil.UniqueEmail(t), "x", "Чужой")
+	require.NoError(t, e.db.Create(outsider).Error)
+	ol := "out-" + e.prj.Key
+	require.NoError(t, user.SetGitHubLogin(e.db, outsider.ID, &ol))
+	e.deliver(t, "pull_request", pr("opened", 6, k2+": чужой", "open", false, false, ol))
+	require.Equal(t, task.StatusTodo, get(e.t2).Status)
 }
 
 // Битый payload — ошибка (событие повторится); неизвестное событие — без ошибки.

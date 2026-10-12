@@ -62,6 +62,7 @@ type personalEvent struct {
 	Title      string     `json:"title"`
 	ProjectID  uuid.UUID  `json:"project_id"`
 	By         uuid.UUID  `json:"by"`
+	ByName     string     `json:"by_name"` // действует система (GitHub, §12.4): «GitHub (логин)»
 	AssigneeID *uuid.UUID `json:"assignee_id"`
 	ReporterID uuid.UUID  `json:"reporter_id"`
 	UserID     uuid.UUID  `json:"user_id"` // timer.*, member.*
@@ -228,9 +229,11 @@ func (p *Personal) taskTransitioned(ctx context.Context, env events.Envelope) er
 	if err != nil || len(to) == 0 {
 		return err
 	}
-	by, err := p.name(ctx, e.By)
-	if err != nil {
-		return err
+	by := e.ByName
+	if by == "" {
+		if by, err = p.name(ctx, e.By); err != nil {
+			return err
+		}
 	}
 	text := Text(tmpl, taskText{Key: e.Key, Title: e.Title, By: by, Comment: e.Comment})
 	if tmpl != "p_review" {

@@ -179,6 +179,9 @@ func prEvent(e *pullRequestEvent) string {
 			return task.PROpened
 		}
 	case "closed":
+		if e.PullRequest.Draft {
+			return "" // черновик статус не меняет и при закрытии (§12.7)
+		}
 		if e.PullRequest.Merged {
 			return task.PRMergedEvent
 		}

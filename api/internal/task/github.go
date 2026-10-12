@@ -65,13 +65,7 @@ func prSteps(status, event string, otherOpen bool) []string {
 // автором PR, если он активный участник проекта; иначе статус не меняется. Удалённая задача,
 // удалённый или архивный проект — без изменений. changed — статус сменился.
 func (s *Service) ApplyPR(ctx context.Context, c PRChange) (changed bool, err error) {
-	if c.Event == PRClosedEvent {
-		c.AuthorID = nil // возврат в работу — от имени системы, причина — системный комментарий (§12.4)
-	}
 	ctx = audit.WithSource(ctx, audit.SourceGitHub)
-	if c.AuthorID != nil {
-		ctx = audit.WithActor(ctx, *c.AuthorID)
-	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Порядок блокировок как в openTask: пользователь → задача → проект.
 		if c.AuthorID != nil {
@@ -96,6 +90,8 @@ func (s *Service) ApplyPR(ctx context.Context, c PRChange) (changed bool, err er
 		if len(steps) == 0 {
 			return nil
 		}
+		// Автор шага — связанный активный участник проекта, иначе система с логином в примечании
+		// (§12.4, §12.5): чужой проекту пользователь задачу не двигает от своего имени.
 		a := actor{user: &user.User{Base: model.Base{ID: uuid.Nil}}, manager: true, admin: true, source: audit.SourceGitHub}
 		if c.AuthorID != nil {
 			role, err := project.RoleIn(tx, p.ID, *c.AuthorID)
@@ -106,18 +102,29 @@ func (s *Service) ApplyPR(ctx context.Context, c PRChange) (changed bool, err er
 			if err != nil {
 				return err
 			}
-			a.user.ID, a.member = *c.AuthorID, role != "" && active
+			if role != "" && active {
+				a.user.ID, a.member = *c.AuthorID, true
+				tx = tx.WithContext(audit.WithActor(ctx, *c.AuthorID))
+			}
 		}
 		if t.AssigneeID == nil && t.Status == StatusTodo && !a.member {
 			return nil // взять задачу некому: автор PR не связан или не участник (§12.4)
 		}
-		comment := ""
+		in := TransitionInput{Note: fmt.Sprintf("PR %s#%d", c.Repo, c.Number)}
 		if c.Event == PRClosedEvent {
-			comment = fmt.Sprintf("PR #%d закрыт без слияния", c.Number)
+			in.Comment = fmt.Sprintf("PR #%d закрыт без слияния", c.Number)
+		}
+		if !a.member {
+			in.ByName = fmt.Sprintf("GitHub (%s)", c.Login)
+			in.Note += ", " + in.ByName
+			if in.Comment != "" {
+				in.Note += ": " + in.Comment // комментарий без автора невозможен — причина в примечании
+			}
 		}
 		before := t
 		for _, to := range steps {
-			if err := applyTransition(tx, &t, a, TransitionInput{To: to, Comment: comment}); err != nil {
+			in.To = to
+			if err := applyTransition(tx, &t, a, in); err != nil {
 				return err
 			}
 		}
