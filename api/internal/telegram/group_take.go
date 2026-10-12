@@ -204,13 +204,13 @@ func (tc *TaskCommands) take(ctx context.Context, r *Request, ref *taskRef) erro
 
 // status — статус задачи до действия (выбор ответа, не проверка прав).
 func (tc *TaskCommands) status(ctx context.Context, key string) (string, error) {
-	return task.StatusByKey(tc.db.WithContext(ctx), key)
+	return task.StatusWithDeleted(tc.db.WithContext(ctx), key)
 }
 
 // announced — включено ли событие setting (§8.6) в проекте: тогда об успехе в группе напишет
 // сообщение о событии.
 func (tc *TaskCommands) announced(ctx context.Context, projectKey, setting string) (bool, error) {
-	settings, ok, err := project.SettingsByKey(tc.db.WithContext(ctx), projectKey)
+	settings, ok, err := project.SettingsWithDeleted(tc.db.WithContext(ctx), projectKey)
 	if err != nil || !ok {
 		return false, err
 	}

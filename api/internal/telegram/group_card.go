@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -112,7 +113,7 @@ func (c *Cards) Edit(ctx context.Context, taskID uuid.UUID) error {
 		Bucket("tg-card:"+taskID.String(), c.now()))
 }
 
-// groupTask — задача (и удалённая) с группой проекта и именами автора и исполнителя.
+// groupTask — задача (и удалённая) с группой проекта; имена — после loadNames.
 type groupTask struct {
 	task.Snapshot
 	// ChatID — группа проекта; у удалённого проекта nil.
@@ -123,9 +124,18 @@ type groupTask struct {
 	AssigneeUsername *string
 }
 
-// loadGroupTask — задача taskID для сообщений в группу; нет задачи — nil.
-func loadGroupTask(db *gorm.DB, taskID string) (*groupTask, error) {
-	t, err := task.SnapshotByID(db, taskID)
+// parseRef — id задачи из ссылки сообщения очереди (Message.Ref).
+func parseRef(ref string) (uuid.UUID, error) {
+	id, err := uuid.Parse(ref)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("telegram: task ref %q: %w", ref, err)
+	}
+	return id, nil
+}
+
+// loadGroupTask — задача id и группа её проекта; нет задачи — nil.
+func loadGroupTask(db *gorm.DB, id uuid.UUID) (*groupTask, error) {
+	t, err := task.SnapshotWithDeleted(db, id)
 	if err != nil || t == nil {
 		return nil, err
 	}
@@ -133,21 +143,33 @@ func loadGroupTask(db *gorm.DB, taskID string) (*groupTask, error) {
 	if err != nil || chat == nil {
 		return nil, err
 	}
-	ids := []uuid.UUID{t.ReporterID}
-	if t.AssigneeID != nil {
-		ids = append(ids, *t.AssigneeID)
+	return &groupTask{Snapshot: *t, ChatID: chat.ChatID, Settings: chat.Settings}, nil
+}
+
+// loadNames дописывает имена автора и исполнителя; автора нет — false.
+func (r *groupTask) loadNames(db *gorm.DB) (bool, error) {
+	ids := []uuid.UUID{r.ReporterID}
+	if r.AssigneeID != nil {
+		ids = append(ids, *r.AssigneeID)
 	}
 	users, err := user.Names(db, ids...)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	r := &groupTask{Snapshot: *t, ChatID: chat.ChatID, Settings: chat.Settings, Reporter: users[t.ReporterID].DisplayName}
-	if t.AssigneeID != nil {
-		if a, ok := users[*t.AssigneeID]; ok {
+	if r.AssigneeID != nil {
+		if a, ok := users[*r.AssigneeID]; ok {
 			r.Assignee, r.AssigneeUsername = &a.DisplayName, a.TelegramUsername
 		}
 	}
-	return r, nil
+	reporter, ok := users[r.ReporterID]
+	r.Reporter = reporter.DisplayName
+	return ok, nil
+}
+
+// readSnapshot выполняет чтения fn в одной read-only транзакции REPEATABLE READ: задача, проект
+// и имена — из одного состояния базы, как раньше одним запросом с JOIN.
+func readSnapshot(db *gorm.DB, fn func(tx *gorm.DB) error) error {
+	return db.Transaction(fn, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 }
 
 // cardRow — задача со всем, что печатается в карточке.
@@ -156,21 +178,35 @@ type cardRow struct {
 	Sprint *string
 }
 
+// load — карточка задачи taskID; нет задачи, проекта или автора — nil.
 func (c *Cards) load(ctx context.Context, taskID string) (*cardRow, error) {
-	db := c.db.WithContext(ctx)
-	t, err := loadGroupTask(db, taskID)
-	if err != nil || t == nil {
+	id, err := parseRef(taskID)
+	if err != nil {
 		return nil, err
 	}
-	r := &cardRow{groupTask: *t}
-	if t.SprintID != nil {
-		name, err := sprint.Name(db, *t.SprintID)
-		if err != nil {
-			return nil, err
+	var r *cardRow
+	err = readSnapshot(c.db.WithContext(ctx), func(tx *gorm.DB) error {
+		t, err := loadGroupTask(tx, id)
+		if err != nil || t == nil {
+			return err
 		}
-		if name != "" {
-			r.Sprint = &name
+		if ok, err := t.loadNames(tx); err != nil || !ok {
+			return err
 		}
+		r = &cardRow{groupTask: *t}
+		if t.SprintID != nil {
+			name, err := sprint.Name(tx, *t.SprintID)
+			if err != nil {
+				return err
+			}
+			if name != "" {
+				r.Sprint = &name
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -233,7 +269,11 @@ func (c *Cards) content(r *cardRow) (string, *models.InlineKeyboardMarkup) {
 // ставится ещё одна правка. Изменения, которых в карточке не видно, правку не вызывают.
 func (c *Cards) sent(ctx context.Context, m Message, msg *models.Message) error {
 	if msg != nil {
-		if err := task.SetMessage(c.db.WithContext(ctx), m.Ref, msg.ID); err != nil {
+		id, err := parseRef(m.Ref)
+		if err != nil {
+			return err
+		}
+		if err := task.SetMessage(c.db.WithContext(ctx), id, msg.ID); err != nil {
 			return err
 		}
 		if m.Replaces != 0 {

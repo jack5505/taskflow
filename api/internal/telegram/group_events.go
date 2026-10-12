@@ -160,8 +160,6 @@ func (ge *GroupEvents) queue(ctx context.Context, taskID uuid.UUID, ev taskEvent
 		Bucket("tg-event:"+taskID.String(), ge.now()))
 }
 
-// eventRow — задача и группа для сообщения о событии.
-
 // render собирает одно сообщение по неотправленным событиям задачи (KindHooks.Render): берётся
 // последнее событие, которое совпадает с текущим состоянием задачи (статусом или исполнителем), —
 // обработчики событий могут выполниться не по порядку, а писать нужно о последнем состоянии
@@ -180,9 +178,23 @@ func (ge *GroupEvents) render(ctx context.Context, m *Message) (bool, error) {
 	if len(list) == 0 {
 		return false, nil
 	}
-	db := ge.db.WithContext(ctx)
-	r, err := loadGroupTask(db, m.Ref)
+	id, err := parseRef(m.Ref)
 	if err != nil {
+		return false, err
+	}
+	db := ge.db.WithContext(ctx)
+	var r *groupTask
+	if err := readSnapshot(db, func(tx *gorm.DB) error {
+		var err error
+		if r, err = loadGroupTask(tx, id); err != nil || r == nil {
+			return err
+		}
+		if r.ChatID == nil || r.Deleted {
+			return nil // сообщения не будет — имена не нужны
+		}
+		_, err = r.loadNames(tx)
+		return err
+	}); err != nil {
 		return false, err
 	}
 	if r == nil {
@@ -201,7 +213,7 @@ func (ge *GroupEvents) render(ctx context.Context, m *Message) (bool, error) {
 	if ev == nil || r.ChatID == nil || r.Deleted || !project.EffectiveNotifications(r.Settings)[eventSetting[ev.Kind]] {
 		return false, ge.consume(ctx, key, len(list))
 	}
-	actor, err := user.DisplayName(db, ev.By)
+	actor, _, err := user.DisplayName(db, ev.By)
 	if err != nil {
 		return false, err
 	}
@@ -240,15 +252,15 @@ func (ge *GroupEvents) onComment(ctx context.Context, env events.Envelope) error
 		return err
 	}
 	db := ge.db.WithContext(ctx)
-	r, err := loadGroupTask(db, p.TaskID.String())
+	r, err := loadGroupTask(db, p.TaskID)
 	if err != nil {
 		return err
 	}
 	if r == nil || r.Deleted || r.ChatID == nil || !project.EffectiveNotifications(r.Settings)[project.NotifyCommentCreated] {
 		return nil
 	}
-	author, err := user.DisplayName(db, p.AuthorID)
-	if err != nil {
+	author, ok, err := user.DisplayName(db, p.AuthorID)
+	if err != nil || !ok {
 		return err
 	}
 	m := Message{Op: OpSend, ChatID: *r.ChatID, Text: Text("ev_comment", map[string]any{"Author": author, "Key": p.Key, "Body": p.Body})}

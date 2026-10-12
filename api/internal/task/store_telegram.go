@@ -30,8 +30,9 @@ type Snapshot struct {
 	SprintID          *uuid.UUID
 }
 
-// SnapshotByID — задача id (строка: ссылка из сообщения очереди бота), удалённая тоже. Нет — nil.
-func SnapshotByID(db *gorm.DB, id string) (*Snapshot, error) {
+// SnapshotWithDeleted — задача id, в том числе удалённая (бот показывает «Задача удалена», §4).
+// Нет — nil.
+func SnapshotWithDeleted(db *gorm.DB, id uuid.UUID) (*Snapshot, error) {
 	var s Snapshot
 	res := db.Raw(`SELECT id, project_id, key, title, type, priority, status, estimate_minutes, spent_minutes, due_date,
 			telegram_message_id, deleted_at IS NOT NULL AS deleted, reporter_id, assignee_id, sprint_id
@@ -45,8 +46,9 @@ func SnapshotByID(db *gorm.DB, id string) (*Snapshot, error) {
 	return &s, nil
 }
 
-// StatusByKey — статус задачи по ключу (и удалённой); нет такой — "".
-func StatusByKey(db *gorm.DB, key string) (string, error) {
+// StatusWithDeleted — статус задачи по ключу, в том числе удалённой (выбор ответа бота, не
+// проверка прав); нет такой — "".
+func StatusWithDeleted(db *gorm.DB, key string) (string, error) {
 	var st []string
 	if err := db.Raw(`SELECT status FROM tasks WHERE key = ?`, key).Scan(&st).Error; err != nil {
 		return "", fmt.Errorf("task: status: %w", err)
@@ -77,21 +79,18 @@ func FreeInSprint(db *gorm.DB, sprintID uuid.UUID, limit int) ([]Brief, error) {
 	return free, nil
 }
 
-// IDsWithMessage — id задач с ключами keys, у которых есть карточка в группе.
+// IDsWithMessage — id задач с ключами keys, у которых есть карточка в группе, в том числе
+// удалённых: карточку удалённой задачи тоже правят.
 func IDsWithMessage(db *gorm.DB, keys []string) ([]uuid.UUID, error) {
-	var rows []string
-	if err := db.Raw(`SELECT id FROM tasks WHERE key IN ? AND telegram_message_id IS NOT NULL`, keys).Scan(&rows).Error; err != nil {
+	var ids []uuid.UUID
+	if err := db.Raw(`SELECT id FROM tasks WHERE key IN ? AND telegram_message_id IS NOT NULL`, keys).Scan(&ids).Error; err != nil {
 		return nil, fmt.Errorf("task: tasks with card: %w", err)
-	}
-	ids := make([]uuid.UUID, len(rows))
-	for i, id := range rows {
-		ids[i] = uuid.MustParse(id)
 	}
 	return ids, nil
 }
 
 // SetMessage запоминает сообщение-карточку msgID задачи id (§8.3).
-func SetMessage(db *gorm.DB, id string, msgID int) error {
+func SetMessage(db *gorm.DB, id uuid.UUID, msgID int) error {
 	if err := db.Exec(`UPDATE tasks SET telegram_message_id = ? WHERE id = ?`, msgID, id).Error; err != nil {
 		return fmt.Errorf("task: card message id: %w", err)
 	}

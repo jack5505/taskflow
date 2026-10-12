@@ -33,8 +33,9 @@ func ChatOf(db *gorm.DB, projectID uuid.UUID) (*Chat, error) {
 	return &c, nil
 }
 
-// SettingsByKey — настройки событий §8.6 проекта по ключу (и удалённого); проекта нет — ok = false.
-func SettingsByKey(db *gorm.DB, key string) (settings events.JSON, ok bool, err error) {
+// SettingsWithDeleted — настройки событий §8.6 проекта по ключу, в том числе удалённого (выбор
+// ответа бота, не проверка прав); проекта нет — ok = false.
+func SettingsWithDeleted(db *gorm.DB, key string) (settings events.JSON, ok bool, err error) {
 	var raw []events.JSON
 	if err := db.Raw(`SELECT notification_settings FROM projects WHERE key = ?`, key).Scan(&raw).Error; err != nil {
 		return nil, false, fmt.Errorf("project: settings: %w", err)
@@ -66,13 +67,9 @@ func LockChatProjects(tx *gorm.DB, chatID int64) ([]Project, error) {
 
 // LockChatProjectIDs — id всех проектов группы chatID (и удалённых), строки FOR UPDATE.
 func LockChatProjectIDs(tx *gorm.DB, chatID int64) ([]uuid.UUID, error) {
-	var rows []string
-	if err := tx.Raw(`SELECT id FROM projects WHERE telegram_chat_id = ? FOR UPDATE`, chatID).Scan(&rows).Error; err != nil {
+	var ids []uuid.UUID
+	if err := tx.Raw(`SELECT id FROM projects WHERE telegram_chat_id = ? FOR UPDATE`, chatID).Scan(&ids).Error; err != nil {
 		return nil, fmt.Errorf("project: chat projects: %w", err)
-	}
-	ids := make([]uuid.UUID, len(rows))
-	for i, id := range rows {
-		ids[i] = uuid.MustParse(id)
 	}
 	return ids, nil
 }
@@ -106,7 +103,8 @@ func MoveChat(tx *gorm.DB, from, to int64) (int64, error) {
 	return res.RowsAffected, nil
 }
 
-// RenameChat запоминает новое название группы chatID у её проектов.
+// RenameChat запоминает новое название группы chatID у её проектов. updated_at не меняется:
+// название группы — не правка проекта пользователем.
 func RenameChat(db *gorm.DB, chatID int64, title *string) error {
 	if err := db.Exec(`UPDATE projects SET telegram_chat_title = ? WHERE telegram_chat_id = ?`, title, chatID).Error; err != nil {
 		return fmt.Errorf("project: rename chat: %w", err)

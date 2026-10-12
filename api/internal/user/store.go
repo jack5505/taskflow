@@ -30,13 +30,16 @@ func Names(db *gorm.DB, ids ...uuid.UUID) (map[uuid.UUID]Name, error) {
 	return out, nil
 }
 
-// DisplayName — имя пользователя id (и деактивированного); нет такого — "".
-func DisplayName(db *gorm.DB, id uuid.UUID) (string, error) {
-	var name string
-	if err := db.Raw(`SELECT display_name FROM users WHERE id = ?`, id).Scan(&name).Error; err != nil {
-		return "", fmt.Errorf("user: display name: %w", err)
+// DisplayName — имя пользователя id (и деактивированного); нет такого — ok = false.
+func DisplayName(db *gorm.DB, id uuid.UUID) (name string, ok bool, err error) {
+	var names []string
+	if err := db.Raw(`SELECT display_name FROM users WHERE id = ?`, id).Scan(&names).Error; err != nil {
+		return "", false, fmt.Errorf("user: display name: %w", err)
 	}
-	return name, nil
+	if len(names) == 0 {
+		return "", false, nil
+	}
+	return names[0], true, nil
 }
 
 // ActiveTelegramIDs — Telegram-аккаунты активных пользователей из ids, у кого он привязан, по id.
