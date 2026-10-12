@@ -13,6 +13,8 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // Типы сбоев §10.3: по каждому — не чаще одного оповещения за alertPeriod, диск — раз в сутки.
@@ -104,11 +106,10 @@ func (a *Alerter) Notify(ctx context.Context, kind, text string) bool {
 // Refresh перечитывает список получателей; Monitor зовёт его на каждом проходе, пока база доступна,
 // чтобы при её падении список уже был.
 func (a *Alerter) Refresh(ctx context.Context) error {
-	var ids []int64
 	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if err := a.db.WithContext(qctx).Raw(`SELECT telegram_user_id FROM users
-		WHERE is_system_admin AND is_active AND telegram_user_id IS NOT NULL ORDER BY id`).Scan(&ids).Error; err != nil {
+	ids, err := user.AdminTelegramIDs(a.db.WithContext(qctx))
+	if err != nil {
 		return err
 	}
 	a.mu.Lock()

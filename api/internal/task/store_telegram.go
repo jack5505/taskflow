@@ -59,24 +59,66 @@ func StatusWithDeleted(db *gorm.DB, key string) (string, error) {
 	return st[0], nil
 }
 
-// Brief — задача в списке бота.
-type Brief struct {
-	ID    uuid.UUID
-	Key   string
-	Title string
+// FreeTask — свободная задача спринта в списке бота.
+type FreeTask struct {
+	ID        uuid.UUID
+	ProjectID uuid.UUID
+	Key       string
+	Title     string
+	Priority  string
 }
 
-// FreeInSprint — до limit свободных задач спринта (todo без исполнителя, не удалённые) по
-// приоритету, затем по порядку на доске.
-func FreeInSprint(db *gorm.DB, sprintID uuid.UUID, limit int) ([]Brief, error) {
-	var free []Brief
-	if err := db.Raw(`SELECT id, key, title FROM tasks
-		WHERE sprint_id = ? AND status = 'todo' AND assignee_id IS NULL AND deleted_at IS NULL
+// freeInSprints — свободные задачи спринтов: todo без исполнителя, не удалённые (§8.3, §8.5).
+const freeInSprints = `sprint_id IN ? AND status = 'todo' AND assignee_id IS NULL AND deleted_at IS NULL`
+
+// FreeInSprints — до limit свободных задач спринтов sprintIDs по приоритету, затем по порядку на
+// доске. Архив проекта (§3.2: задачи архивного проекта взять нельзя) модуль task не знает:
+// вызывающий передаёт только спринты неархивных проектов.
+func FreeInSprints(db *gorm.DB, sprintIDs []uuid.UUID, limit int) ([]FreeTask, error) {
+	var free []FreeTask
+	if err := db.Raw(`SELECT id, project_id, key, title, priority FROM tasks WHERE `+freeInSprints+`
 		ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, position, number
-		LIMIT ?`, sprintID, limit).Scan(&free).Error; err != nil {
+		LIMIT ?`, sprintIDs, limit).Scan(&free).Error; err != nil {
 		return nil, fmt.Errorf("task: sprint free tasks: %w", err)
 	}
 	return free, nil
+}
+
+// FreeCounts — число свободных задач в каждом спринте sprintIDs; спринта без свободных задач в
+// ответе нет.
+func FreeCounts(db *gorm.DB, sprintIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	var rows []struct {
+		SprintID uuid.UUID
+		Free     int
+	}
+	if err := db.Raw(`SELECT sprint_id, count(*) AS free FROM tasks WHERE `+freeInSprints+`
+		GROUP BY sprint_id`, sprintIDs).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("task: sprint free counts: %w", err)
+	}
+	out := make(map[uuid.UUID]int, len(rows))
+	for _, r := range rows {
+		out[r.SprintID] = r.Free
+	}
+	return out, nil
+}
+
+// StatusTotal — задачи спринта одного статуса: число, списано и оценка в минутах.
+type StatusTotal struct {
+	Status   string
+	N        int
+	Spent    int
+	Estimate int
+}
+
+// SprintTotals — неудалённые задачи спринта sprintID по статусам.
+func SprintTotals(db *gorm.DB, sprintID uuid.UUID) ([]StatusTotal, error) {
+	var st []StatusTotal
+	if err := db.Raw(`SELECT status, count(*) AS n, COALESCE(SUM(spent_minutes), 0) AS spent,
+			COALESCE(SUM(estimate_minutes), 0) AS estimate
+		FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL GROUP BY status`, sprintID).Scan(&st).Error; err != nil {
+		return nil, fmt.Errorf("task: sprint statuses: %w", err)
+	}
+	return st, nil
 }
 
 // IDsWithMessage — id задач с ключами keys, у которых есть карточка в группе, в том числе

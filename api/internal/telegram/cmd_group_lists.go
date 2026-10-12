@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/duration"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/sprint"
 	"github.com/jack5505/taskflow/api/internal/task"
 )
 
@@ -38,29 +38,13 @@ type sprintSummary struct {
 // activeSprint — сводка активного спринта проекта (§8.5 /sprint): название, даты, задачи по
 // статусам, списано из оценки (оценка без отменённых задач). Нет активного спринта — nil.
 func activeSprint(db *gorm.DB, projectID uuid.UUID) (*sprintSummary, error) {
-	var sp []struct {
-		ID                 uuid.UUID
-		Name               string
-		StartDate, EndDate *time.Time
+	sp, err := sprint.ActiveOf(db, projectID)
+	if err != nil || sp == nil {
+		return nil, err
 	}
-	if err := db.Raw(`SELECT id, name, start_date, end_date FROM sprints WHERE project_id = ? AND state = 'active'
-		ORDER BY start_date, id LIMIT 1`,
-		projectID).Scan(&sp).Error; err != nil {
-		return nil, fmt.Errorf("telegram: active sprint: %w", err)
-	}
-	if len(sp) == 0 {
-		return nil, nil
-	}
-	var st []struct {
-		Status   string
-		N        int
-		Spent    int
-		Estimate int
-	}
-	if err := db.Raw(`SELECT status, count(*) AS n, COALESCE(SUM(spent_minutes), 0) AS spent,
-			COALESCE(SUM(estimate_minutes), 0) AS estimate
-		FROM tasks WHERE sprint_id = ? AND deleted_at IS NULL GROUP BY status`, sp[0].ID).Scan(&st).Error; err != nil {
-		return nil, fmt.Errorf("telegram: sprint statuses: %w", err)
+	st, err := task.SprintTotals(db, sp.ID)
+	if err != nil {
+		return nil, err
 	}
 	counts := map[string]int{}
 	spent, estimate := 0, 0
@@ -77,9 +61,9 @@ func activeSprint(db *gorm.DB, projectID uuid.UUID) (*sprintSummary, error) {
 			parts = append(parts, fmt.Sprintf("%s: %d", task.StatusName(s), counts[s]))
 		}
 	}
-	s := &sprintSummary{Name: sp[0].Name, Statuses: strings.Join(parts, " · "),
+	s := &sprintSummary{Name: sp.Name, Statuses: strings.Join(parts, " · "),
 		Spent: duration.Format(spent), Estimate: duration.Format(estimate)}
-	if start, end := sp[0].StartDate, sp[0].EndDate; start != nil && end != nil {
+	if start, end := sp.StartDate, sp.EndDate; start != nil && end != nil {
 		layout := "02.01"
 		if start.Year() != end.Year() {
 			layout = "02.01.2006" // спринт через Новый год
@@ -139,14 +123,6 @@ func sprintCommand(db *gorm.DB, groups *Groups) HandlerFunc {
 	}
 }
 
-// freeTask — строка /tasks.
-type freeTask struct {
-	ID         uuid.UUID
-	ProjectID  uuid.UUID
-	Key, Title string
-	Priority   string
-}
-
 // freeLine и freeGroup — данные шаблона cmd_tasks.
 type freeLine struct{ Key, Title, Priority string }
 
@@ -167,32 +143,39 @@ func tasksCommand(db *gorm.DB, groups *Groups) HandlerFunc {
 		if err != nil || ps == nil {
 			return err
 		}
+		qdb := db.WithContext(ctx)
 		ids := make([]uuid.UUID, len(ps))
+		archived := map[uuid.UUID]bool{}
 		for i, p := range ps {
-			ids[i] = p.ID
+			ids[i], archived[p.ID] = p.ID, p.IsArchived
 		}
-		// Проекты с активным спринтом и число свободных задач в каждом.
-		var counts []struct {
-			ProjectID uuid.UUID
-			Free      int
-		}
-		if err := db.WithContext(ctx).Raw(`SELECT s.project_id, count(t.id) AS free FROM sprints s
-			LEFT JOIN tasks t ON t.sprint_id = s.id AND t.status = 'todo' AND t.assignee_id IS NULL AND t.deleted_at IS NULL
-			WHERE s.project_id IN ? AND s.state = 'active' GROUP BY s.project_id`, ids).Scan(&counts).Error; err != nil {
-			return fmt.Errorf("telegram: active sprints: %w", err)
+		// Проекты с активным спринтом и число свободных задач в каждом; брать можно только задачи
+		// неархивных проектов (§3.2).
+		active, err := sprint.ActiveIn(qdb, ids)
+		if err != nil {
+			return err
 		}
 		freeCount := map[uuid.UUID]int{}
-		for _, c := range counts {
-			freeCount[c.ProjectID] = c.Free
-		}
-		var free []freeTask
-		if err := db.WithContext(ctx).Raw(`SELECT t.id, t.project_id, t.key, t.title, t.priority
-			FROM tasks t JOIN sprints s ON s.id = t.sprint_id AND s.state = 'active'
-			JOIN projects p ON p.id = t.project_id AND NOT p.is_archived
-			WHERE t.project_id IN ? AND t.status = 'todo' AND t.assignee_id IS NULL AND t.deleted_at IS NULL
-			ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.position, t.number
-			LIMIT ?`, ids, MaxFreeTasks).Scan(&free).Error; err != nil {
-			return fmt.Errorf("telegram: free tasks: %w", err)
+		var free []task.FreeTask
+		if len(active) > 0 {
+			var all, open []uuid.UUID
+			for _, sp := range active {
+				if all = append(all, sp.ID); !archived[sp.ProjectID] {
+					open = append(open, sp.ID)
+				}
+			}
+			bySprint, err := task.FreeCounts(qdb, all)
+			if err != nil {
+				return err
+			}
+			for _, sp := range active {
+				freeCount[sp.ProjectID] += bySprint[sp.ID]
+			}
+			if len(open) > 0 {
+				if free, err = task.FreeInSprints(qdb, open, MaxFreeTasks); err != nil {
+					return err
+				}
+			}
 		}
 
 		data := struct{ Projects []freeGroup }{}

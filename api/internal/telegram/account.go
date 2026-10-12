@@ -95,8 +95,8 @@ func (a *Accounts) IssueLinkCode(ctx context.Context, userID uuid.UUID) (*LinkCo
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Блокировка пользователя: два одновременных запроса иначе оба удалят «прежние» коды
 		// до вставки и оставят два действующих.
-		if err := tx.Exec(`SELECT 1 FROM users WHERE id = ? FOR UPDATE`, userID).Error; err != nil {
-			return fmt.Errorf("telegram: lock user: %w", err)
+		if err := user.LockRow(tx, userID); err != nil {
+			return err
 		}
 		if err := tx.Exec(`DELETE FROM one_time_codes WHERE kind = ? AND user_id = ? AND used_at IS NULL`,
 			CodeUserLink, userID).Error; err != nil {
@@ -131,7 +131,7 @@ func (a *Accounts) IssueLinkCode(ctx context.Context, userID uuid.UUID) (*LinkCo
 // деактивирован — ErrCodeInvalid. Этот Telegram уже у другого пользователя — ErrLinkedToOther,
 // код при этом не гасится: после /unlink им можно воспользоваться.
 func (a *Accounts) Link(ctx context.Context, code string, tgID int64, username string) (*user.User, error) {
-	var u user.User
+	var u *user.User
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var c OneTimeCode
 		res := tx.Raw(`SELECT * FROM one_time_codes WHERE code = ? AND kind = ? FOR UPDATE`,
@@ -142,22 +142,21 @@ func (a *Accounts) Link(ctx context.Context, code string, tgID int64, username s
 		if res.RowsAffected == 0 || c.UsedAt != nil || !a.now().Before(c.ExpiresAt) || c.UserID == nil {
 			return ErrCodeInvalid
 		}
-		res = tx.Raw(`SELECT * FROM users WHERE id = ? AND is_active FOR UPDATE`, *c.UserID).Scan(&u)
-		if res.Error != nil {
-			return fmt.Errorf("telegram: lock user: %w", res.Error)
+		var err error
+		if u, err = user.LockActive(tx, *c.UserID); err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if u == nil {
 			return ErrCodeInvalid
 		}
-		var other int64
-		if err := tx.Raw(`SELECT count(*) FROM users WHERE telegram_user_id = ? AND id <> ?`, tgID, u.ID).
-			Scan(&other).Error; err != nil {
-			return fmt.Errorf("telegram: check link: %w", err)
+		taken, err := user.TelegramTaken(tx, tgID, u.ID)
+		if err != nil {
+			return err
 		}
-		if other > 0 {
+		if taken {
 			return ErrLinkedToOther
 		}
-		err := tx.Model(&u).Updates(map[string]any{"telegram_user_id": tgID, "telegram_username": nullable(username)}).Error
+		err = user.SetTelegram(tx, u, tgID, nullable(username))
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			return ErrLinkedToOther // тот же Telegram одновременно привязали к другому аккаунту
 		}
@@ -169,37 +168,27 @@ func (a *Accounts) Link(ctx context.Context, code string, tgID int64, username s
 	if err != nil {
 		return nil, err
 	}
-	return &u, nil
+	return u, nil
 }
 
 // Unlink снимает привязку Telegram у пользователя (§8.1, шаг 6). Без привязки — ничего не делает.
 func (a *Accounts) Unlink(ctx context.Context, userID uuid.UUID) error {
-	err := a.db.WithContext(ctx).Exec(`UPDATE users SET telegram_user_id = NULL, telegram_username = NULL, updated_at = now()
-		WHERE id = ? AND telegram_user_id IS NOT NULL`, userID).Error
-	if err != nil {
-		return fmt.Errorf("telegram: unlink: %w", err)
-	}
-	return nil
+	return user.ClearTelegram(a.db.WithContext(ctx), userID)
 }
 
 // ByTelegram — активный пользователь, привязанный к tgID; nil — не привязан. username
 // (без @) обновляется, если изменился: §3.1 — при каждом сообщении боту.
 func (a *Accounts) ByTelegram(ctx context.Context, tgID int64, username string) (*user.User, error) {
-	var u user.User
-	res := a.db.WithContext(ctx).Raw(`SELECT * FROM users WHERE telegram_user_id = ? AND is_active`, tgID).Scan(&u)
-	if res.Error != nil {
-		return nil, fmt.Errorf("telegram: user by telegram id: %w", res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return nil, nil
+	u, err := user.ActiveByTelegram(a.db.WithContext(ctx), tgID)
+	if err != nil || u == nil {
+		return nil, err
 	}
 	if cur := deref(u.TelegramUsername); cur != username {
-		// UpdateColumn: служебное поле, updated_at профиля не трогаем.
-		if err := a.db.WithContext(ctx).Model(&u).UpdateColumn("telegram_username", nullable(username)).Error; err != nil {
-			return nil, fmt.Errorf("telegram: update username: %w", err)
+		if err := user.SetTelegramUsername(a.db.WithContext(ctx), u, nullable(username)); err != nil {
+			return nil, err
 		}
 	}
-	return &u, nil
+	return u, nil
 }
 
 // CleanupCodes удаляет коды, истёкшие больше суток назад (воркер, раз в сутки).

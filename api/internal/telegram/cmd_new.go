@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
@@ -94,10 +93,9 @@ func newTaskProject(ctx context.Context, r *Request, projects *project.Service, 
 			}
 		}
 		// Проекты, где пользователь участник (и администратор — тоже только свои).
-		if err := groups.db.WithContext(ctx).Raw(`SELECT p.key FROM projects p
-			JOIN project_members m ON m.project_id = p.id AND m.user_id = ?
-			WHERE p.deleted_at IS NULL AND NOT p.is_archived ORDER BY p.key`, r.User.ID).Scan(&keys).Error; err != nil {
-			return "", "", nil, fmt.Errorf("telegram: user projects: %w", err)
+		var err error
+		if keys, err = project.OpenKeysOf(groups.db.WithContext(ctx), r.User.ID); err != nil {
+			return "", "", nil, err
 		}
 	} else {
 		ps, err := groups.ChatProjects(ctx, r.Chat.ID)
