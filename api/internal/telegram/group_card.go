@@ -15,6 +15,9 @@ import (
 	"github.com/jack5505/taskflow/api/internal/duration"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/sprint"
+	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // KindCard — карточка задачи в группе проекта (§8.3): Message.Ref — id задачи.
@@ -90,13 +93,12 @@ func (c *Cards) onDeactivated(ctx context.Context, env events.Envelope) error {
 	if len(p.Released) == 0 {
 		return nil
 	}
-	var ids []string
-	if err := c.db.WithContext(ctx).Raw(`SELECT id FROM tasks WHERE key IN ? AND telegram_message_id IS NOT NULL`, p.Released).
-		Scan(&ids).Error; err != nil {
-		return fmt.Errorf("telegram: released tasks: %w", err)
+	ids, err := task.IDsWithMessage(c.db.WithContext(ctx), p.Released)
+	if err != nil {
+		return err
 	}
 	for _, id := range ids {
-		if err := c.Edit(ctx, uuid.MustParse(id)); err != nil {
+		if err := c.Edit(ctx, id); err != nil {
 			return err
 		}
 	}
@@ -110,46 +112,67 @@ func (c *Cards) Edit(ctx context.Context, taskID uuid.UUID) error {
 		Bucket("tg-card:"+taskID.String(), c.now()))
 }
 
+// groupTask — задача (и удалённая) с группой проекта и именами автора и исполнителя.
+type groupTask struct {
+	task.Snapshot
+	// ChatID — группа проекта; у удалённого проекта nil.
+	ChatID           *int64
+	Settings         events.JSON
+	Reporter         string
+	Assignee         *string
+	AssigneeUsername *string
+}
+
+// loadGroupTask — задача taskID для сообщений в группу; нет задачи — nil.
+func loadGroupTask(db *gorm.DB, taskID string) (*groupTask, error) {
+	t, err := task.SnapshotByID(db, taskID)
+	if err != nil || t == nil {
+		return nil, err
+	}
+	chat, err := project.ChatOf(db, t.ProjectID)
+	if err != nil || chat == nil {
+		return nil, err
+	}
+	ids := []uuid.UUID{t.ReporterID}
+	if t.AssigneeID != nil {
+		ids = append(ids, *t.AssigneeID)
+	}
+	users, err := user.Names(db, ids...)
+	if err != nil {
+		return nil, err
+	}
+	r := &groupTask{Snapshot: *t, ChatID: chat.ChatID, Settings: chat.Settings, Reporter: users[t.ReporterID].DisplayName}
+	if t.AssigneeID != nil {
+		if a, ok := users[*t.AssigneeID]; ok {
+			r.Assignee, r.AssigneeUsername = &a.DisplayName, a.TelegramUsername
+		}
+	}
+	return r, nil
+}
+
 // cardRow — задача со всем, что печатается в карточке.
 type cardRow struct {
-	ID                uuid.UUID
-	Key               string
-	Title             string
-	Type              string
-	Priority          string
-	Status            string
-	EstimateMinutes   *int
-	DueDate           *time.Time
-	TelegramMessageID *int
-	Deleted           bool
-	AssigneeID        *uuid.UUID
-	ChatID            *int64
-	Settings          events.JSON
-	Reporter          string
-	Assignee          *string
-	AssigneeUsername  *string
-	Sprint            *string
+	groupTask
+	Sprint *string
 }
 
 func (c *Cards) load(ctx context.Context, taskID string) (*cardRow, error) {
-	var r cardRow
-	res := c.db.WithContext(ctx).Raw(`SELECT t.id, t.key, t.title, t.type, t.priority, t.status, t.estimate_minutes,
-			t.due_date, t.telegram_message_id, t.deleted_at IS NOT NULL AS deleted, t.assignee_id,
-			CASE WHEN p.deleted_at IS NULL THEN p.telegram_chat_id END AS chat_id, p.notification_settings AS settings,
-			r.display_name AS reporter, a.display_name AS assignee, a.telegram_username AS assignee_username, s.name AS sprint
-		FROM tasks t
-		JOIN projects p ON p.id = t.project_id
-		JOIN users r ON r.id = t.reporter_id
-		LEFT JOIN users a ON a.id = t.assignee_id
-		LEFT JOIN sprints s ON s.id = t.sprint_id
-		WHERE t.id = ?`, taskID).Scan(&r)
-	if res.Error != nil {
-		return nil, fmt.Errorf("telegram: card task: %w", res.Error)
+	db := c.db.WithContext(ctx)
+	t, err := loadGroupTask(db, taskID)
+	if err != nil || t == nil {
+		return nil, err
 	}
-	if res.RowsAffected == 0 {
-		return nil, nil
+	r := &cardRow{groupTask: *t}
+	if t.SprintID != nil {
+		name, err := sprint.Name(db, *t.SprintID)
+		if err != nil {
+			return nil, err
+		}
+		if name != "" {
+			r.Sprint = &name
+		}
 	}
-	return &r, nil
+	return r, nil
 }
 
 // render собирает карточку при отправке (KindHooks.Render). Группа отключена — отправлять
@@ -210,8 +233,8 @@ func (c *Cards) content(r *cardRow) (string, *models.InlineKeyboardMarkup) {
 // ставится ещё одна правка. Изменения, которых в карточке не видно, правку не вызывают.
 func (c *Cards) sent(ctx context.Context, m Message, msg *models.Message) error {
 	if msg != nil {
-		if err := c.db.WithContext(ctx).Exec(`UPDATE tasks SET telegram_message_id = ? WHERE id = ?`, msg.ID, m.Ref).Error; err != nil {
-			return fmt.Errorf("telegram: card message id: %w", err)
+		if err := task.SetMessage(c.db.WithContext(ctx), m.Ref, msg.ID); err != nil {
+			return err
 		}
 		if m.Replaces != 0 {
 			// Прежняя карточка больше не правится — убираем её, чтобы не висела с устаревшим

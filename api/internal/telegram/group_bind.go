@@ -15,6 +15,8 @@ import (
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // Действия журнала (§3.8: подключение групп).
@@ -132,9 +134,8 @@ func (g *Groups) Bind(ctx context.Context, code string, chatID int64, title stri
 		if p.TelegramChatID != nil {
 			return nil // та же группа: ничего не меняется
 		}
-		if err := tx.Exec(`UPDATE projects SET telegram_chat_id = ?, telegram_chat_title = ?, updated_at = now() WHERE id = ?`,
-			chatID, nullable(title), p.ID).Error; err != nil {
-			return fmt.Errorf("telegram: bind group: %w", err)
+		if err := project.SetChat(tx, p.ID, chatID, nullable(title)); err != nil {
+			return err
 		}
 		p.TelegramChatID, p.TelegramChatTitle = &chatID, nullable(title)
 		return audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: AuditGroupBound, EntityType: "project", EntityID: p.ID.String(),
@@ -145,11 +146,7 @@ func (g *Groups) Bind(ctx context.Context, code string, chatID int64, title stri
 
 // ChatProjects — проекты, подключённые к группе chatID, по ключу.
 func (g *Groups) ChatProjects(ctx context.Context, chatID int64) ([]project.Project, error) {
-	var ps []project.Project
-	if err := g.db.WithContext(ctx).Where("telegram_chat_id = ?", chatID).Order("key").Find(&ps).Error; err != nil {
-		return nil, fmt.Errorf("telegram: chat projects: %w", err)
-	}
-	return ps, nil
+	return project.ChatProjects(g.db.WithContext(ctx), chatID)
 }
 
 // Unbind отключает проект от группы chatID командой /unbind (§8.2, шаг 5): только менеджер этого
@@ -186,9 +183,9 @@ func (g *Groups) Disconnect(ctx context.Context, a *project.Access) error {
 func (g *Groups) BotRemoved(ctx context.Context, chatID int64) ([]project.Project, error) {
 	var ps []project.Project
 	err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Raw(`SELECT * FROM projects WHERE telegram_chat_id = ? AND deleted_at IS NULL ORDER BY key FOR UPDATE`,
-			chatID).Scan(&ps).Error; err != nil {
-			return fmt.Errorf("telegram: chat projects: %w", err)
+		var err error
+		if ps, err = project.LockChatProjects(tx, chatID); err != nil {
+			return err
 		}
 		for i := range ps {
 			if err := unbind(tx, &ps[i]); err != nil {
@@ -210,35 +207,22 @@ func (g *Groups) BotRemoved(ctx context.Context, chatID int64) ([]project.Projec
 func (g *Groups) Migrate(ctx context.Context, from, to int64) (int64, error) {
 	var n int64
 	err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var rows []string
-		if err := tx.Raw(`SELECT id FROM projects WHERE telegram_chat_id = ? FOR UPDATE`, from).Scan(&rows).Error; err != nil {
-			return fmt.Errorf("telegram: chat projects: %w", err)
-		}
-		ids := make([]uuid.UUID, len(rows))
-		for i, id := range rows {
-			ids[i] = uuid.MustParse(id)
-		}
-		if err := forgetMessages(tx, ids...); err != nil {
+		ids, err := project.LockChatProjectIDs(tx, from)
+		if err != nil {
 			return err
 		}
-		res := tx.Exec(`UPDATE projects SET telegram_chat_id = ?, updated_at = now() WHERE telegram_chat_id = ?`, to, from)
-		if res.Error != nil {
-			return fmt.Errorf("telegram: migrate chat: %w", res.Error)
+		if err := task.ForgetMessages(tx, ids...); err != nil {
+			return err
 		}
-		n = res.RowsAffected
-		return nil
+		n, err = project.MoveChat(tx, from, to)
+		return err
 	})
 	return n, err
 }
 
 // Rename запоминает новое название группы у её проектов (служебное сообщение new_chat_title).
 func (g *Groups) Rename(ctx context.Context, chatID int64, title string) error {
-	err := g.db.WithContext(ctx).Exec(`UPDATE projects SET telegram_chat_title = ? WHERE telegram_chat_id = ?`,
-		nullable(title), chatID).Error
-	if err != nil {
-		return fmt.Errorf("telegram: rename chat: %w", err)
-	}
-	return nil
+	return project.RenameChat(g.db.WithContext(ctx), chatID, nullable(title))
 }
 
 // ManagersToNotify — активные менеджеры проектов с привязанным Telegram и их проекты из ps
@@ -252,20 +236,24 @@ func (g *Groups) ManagersToNotify(ctx context.Context, ps []project.Project) (ma
 	for i, p := range ps {
 		byID[p.ID], ids[i] = p, p.ID
 	}
-	var rows []struct {
-		TelegramUserID int64
-		ProjectID      uuid.UUID
-	}
-	err := g.db.WithContext(ctx).Raw(`SELECT u.telegram_user_id, m.project_id FROM project_members m
-		JOIN users u ON u.id = m.user_id
-		WHERE m.project_id IN ? AND m.role = ? AND u.is_active AND u.telegram_user_id IS NOT NULL
-		ORDER BY u.telegram_user_id`, ids, project.RoleManager).Scan(&rows).Error
+	db := g.db.WithContext(ctx)
+	managers, err := project.Managers(db, ids)
 	if err != nil {
-		return nil, fmt.Errorf("telegram: managers: %w", err)
+		return nil, err
+	}
+	userIDs := make([]uuid.UUID, len(managers))
+	for i, m := range managers {
+		userIDs[i] = m.UserID
+	}
+	tg, err := user.ActiveTelegramIDs(db, userIDs)
+	if err != nil {
+		return nil, err
 	}
 	out := map[int64][]project.Project{}
-	for _, r := range rows {
-		out[r.TelegramUserID] = append(out[r.TelegramUserID], byID[r.ProjectID])
+	for _, m := range managers {
+		if tgID, ok := tg[m.UserID]; ok {
+			out[tgID] = append(out[tgID], byID[m.ProjectID])
+		}
 	}
 	for _, list := range out {
 		slices.SortFunc(list, func(a, b project.Project) int { return cmp.Compare(a.Key, b.Key) })
@@ -297,28 +285,14 @@ func lockManaged(tx *gorm.DB, projectID, userID uuid.UUID) (*project.Project, er
 // unbind снимает группу с заблокированного проекта p и пишет журнал. Номера сообщений задач
 // забываются: в следующей группе это будут чужие сообщения.
 func unbind(tx *gorm.DB, p *project.Project) error {
-	if err := forgetMessages(tx, p.ID); err != nil {
+	if err := task.ForgetMessages(tx, p.ID); err != nil {
 		return err
 	}
-	if err := tx.Exec(`UPDATE projects SET telegram_chat_id = NULL, telegram_chat_title = NULL, updated_at = now() WHERE id = ?`,
-		p.ID).Error; err != nil {
-		return fmt.Errorf("telegram: unbind group: %w", err)
+	if err := project.ClearChat(tx, p.ID); err != nil {
+		return err
 	}
 	old := map[string]any{"telegram_chat_id": p.TelegramChatID, "telegram_chat_title": p.TelegramChatTitle}
 	p.TelegramChatID, p.TelegramChatTitle = nil, nil
 	return audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: AuditGroupUnbound, EntityType: "project",
 		EntityID: p.ID.String(), Old: old})
-}
-
-// forgetMessages очищает telegram_message_id задач проектов.
-func forgetMessages(tx *gorm.DB, projectIDs ...uuid.UUID) error {
-	if len(projectIDs) == 0 {
-		return nil
-	}
-	err := tx.Exec(`UPDATE tasks SET telegram_message_id = NULL
-		WHERE project_id IN ? AND telegram_message_id IS NOT NULL`, projectIDs).Error
-	if err != nil {
-		return fmt.Errorf("telegram: forget task messages: %w", err)
-	}
-	return nil
 }

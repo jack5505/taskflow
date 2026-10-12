@@ -14,6 +14,8 @@ import (
 	"github.com/jack5505/taskflow/api/internal/duration"
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // KindTaskEvent — сообщение в группу о событии задачи (§8.6): Message.Ref — id задачи.
@@ -159,20 +161,6 @@ func (ge *GroupEvents) queue(ctx context.Context, taskID uuid.UUID, ev taskEvent
 }
 
 // eventRow — задача и группа для сообщения о событии.
-type eventRow struct {
-	Key               string
-	Title             string
-	Deleted           bool
-	TelegramMessageID *int
-	SpentMinutes      int
-	EstimateMinutes   *int
-	ChatID            *int64
-	Settings          events.JSON
-	Assignee          *string
-	AssigneeUsername  *string
-	Status            string
-	AssigneeID        *uuid.UUID
-}
 
 // render собирает одно сообщение по неотправленным событиям задачи (KindHooks.Render): берётся
 // последнее событие, которое совпадает с текущим состоянием задачи (статусом или исполнителем), —
@@ -192,17 +180,13 @@ func (ge *GroupEvents) render(ctx context.Context, m *Message) (bool, error) {
 	if len(list) == 0 {
 		return false, nil
 	}
-	var r eventRow
-	res := ge.db.WithContext(ctx).Raw(`SELECT t.key, t.title, t.deleted_at IS NOT NULL AS deleted, t.telegram_message_id,
-			t.spent_minutes, t.estimate_minutes, t.status, t.assignee_id,
-			CASE WHEN p.deleted_at IS NULL THEN p.telegram_chat_id END AS chat_id, p.notification_settings AS settings,
-			a.display_name AS assignee, a.telegram_username AS assignee_username
-		FROM tasks t
-		JOIN projects p ON p.id = t.project_id
-		LEFT JOIN users a ON a.id = t.assignee_id
-		WHERE t.id = ?`, m.Ref).Scan(&r)
-	if res.Error != nil {
-		return false, fmt.Errorf("telegram: event task: %w", res.Error)
+	db := ge.db.WithContext(ctx)
+	r, err := loadGroupTask(db, m.Ref)
+	if err != nil {
+		return false, err
+	}
+	if r == nil {
+		return false, ge.consume(ctx, key, len(list))
 	}
 	var ev *taskEvent
 	for i := len(list) - 1; i >= 0 && ev == nil; i-- {
@@ -214,12 +198,12 @@ func (ge *GroupEvents) render(ctx context.Context, m *Message) (bool, error) {
 			ev = &e
 		}
 	}
-	if res.RowsAffected == 0 || ev == nil || r.ChatID == nil || r.Deleted || !project.EffectiveNotifications(r.Settings)[eventSetting[ev.Kind]] {
+	if ev == nil || r.ChatID == nil || r.Deleted || !project.EffectiveNotifications(r.Settings)[eventSetting[ev.Kind]] {
 		return false, ge.consume(ctx, key, len(list))
 	}
-	var actor string
-	if err := ge.db.WithContext(ctx).Raw(`SELECT display_name FROM users WHERE id = ?`, ev.By).Scan(&actor).Error; err != nil {
-		return false, fmt.Errorf("telegram: event actor: %w", err)
+	actor, err := user.DisplayName(db, ev.By)
+	if err != nil {
+		return false, err
 	}
 	data := map[string]any{"Key": r.Key, "Title": r.Title, "Actor": actor, "Comment": ev.Comment,
 		"Assignee": mention(r.Assignee, r.AssigneeUsername), "Spent": spentText(r.SpentMinutes, r.EstimateMinutes)}
@@ -255,23 +239,19 @@ func (ge *GroupEvents) onComment(ctx context.Context, env events.Envelope) error
 	if err := decodePayload(env, &p); err != nil {
 		return err
 	}
-	var r struct {
-		ChatID            *int64
-		Settings          events.JSON
-		TelegramMessageID *int
-		Author            string
+	db := ge.db.WithContext(ctx)
+	r, err := loadGroupTask(db, p.TaskID.String())
+	if err != nil {
+		return err
 	}
-	res := ge.db.WithContext(ctx).Raw(`SELECT CASE WHEN p.deleted_at IS NULL AND t.deleted_at IS NULL THEN p.telegram_chat_id END AS chat_id,
-			p.notification_settings AS settings, t.telegram_message_id, u.display_name AS author
-		FROM tasks t JOIN projects p ON p.id = t.project_id JOIN users u ON u.id = ?
-		WHERE t.id = ?`, p.AuthorID, p.TaskID).Scan(&r)
-	if res.Error != nil {
-		return fmt.Errorf("telegram: comment task: %w", res.Error)
-	}
-	if res.RowsAffected == 0 || r.ChatID == nil || !project.EffectiveNotifications(r.Settings)[project.NotifyCommentCreated] {
+	if r == nil || r.Deleted || r.ChatID == nil || !project.EffectiveNotifications(r.Settings)[project.NotifyCommentCreated] {
 		return nil
 	}
-	m := Message{Op: OpSend, ChatID: *r.ChatID, Text: Text("ev_comment", map[string]any{"Author": r.Author, "Key": p.Key, "Body": p.Body})}
+	author, err := user.DisplayName(db, p.AuthorID)
+	if err != nil {
+		return err
+	}
+	m := Message{Op: OpSend, ChatID: *r.ChatID, Text: Text("ev_comment", map[string]any{"Author": author, "Key": p.Key, "Body": p.Body})}
 	if r.TelegramMessageID != nil {
 		m.ReplyTo = *r.TelegramMessageID
 	}
@@ -280,16 +260,11 @@ func (ge *GroupEvents) onComment(ctx context.Context, env events.Envelope) error
 
 // groupChat — группа проекта, если она есть и событие setting включено.
 func (ge *GroupEvents) groupChat(ctx context.Context, projectID uuid.UUID, setting string) (int64, bool, error) {
-	var r struct {
-		ChatID   *int64
-		Settings events.JSON
+	r, err := project.ChatOf(ge.db.WithContext(ctx), projectID)
+	if err != nil {
+		return 0, false, err
 	}
-	res := ge.db.WithContext(ctx).Raw(`SELECT telegram_chat_id AS chat_id, notification_settings AS settings
-		FROM projects WHERE id = ? AND deleted_at IS NULL`, projectID).Scan(&r)
-	if res.Error != nil {
-		return 0, false, fmt.Errorf("telegram: project chat: %w", res.Error)
-	}
-	if res.RowsAffected == 0 || r.ChatID == nil || !project.EffectiveNotifications(r.Settings)[setting] {
+	if r == nil || r.ChatID == nil || !project.EffectiveNotifications(r.Settings)[setting] {
 		return 0, false, nil
 	}
 	return *r.ChatID, true, nil
@@ -314,16 +289,9 @@ func (ge *GroupEvents) onSprintStarted(ctx context.Context, env events.Envelope)
 	if err != nil || !ok {
 		return err
 	}
-	var free []struct {
-		ID    uuid.UUID
-		Key   string
-		Title string
-	}
-	if err := ge.db.WithContext(ctx).Raw(`SELECT id, key, title FROM tasks
-		WHERE sprint_id = ? AND status = 'todo' AND assignee_id IS NULL AND deleted_at IS NULL
-		ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, position, number
-		LIMIT ?`, p.SprintID, maxSprintTasks+1).Scan(&free).Error; err != nil {
-		return fmt.Errorf("telegram: sprint free tasks: %w", err)
+	free, err := task.FreeInSprint(ge.db.WithContext(ctx), p.SprintID, maxSprintTasks+1)
+	if err != nil {
+		return err
 	}
 	more := len(free) > maxSprintTasks
 	if more {

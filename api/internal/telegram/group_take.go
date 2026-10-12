@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
-	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 )
@@ -205,24 +204,17 @@ func (tc *TaskCommands) take(ctx context.Context, r *Request, ref *taskRef) erro
 
 // status — статус задачи до действия (выбор ответа, не проверка прав).
 func (tc *TaskCommands) status(ctx context.Context, key string) (string, error) {
-	var st []string
-	if err := tc.db.WithContext(ctx).Raw(`SELECT status FROM tasks WHERE key = ?`, key).Scan(&st).Error; err != nil {
-		return "", fmt.Errorf("telegram: task status: %w", err)
-	}
-	if len(st) == 0 {
-		return "", nil
-	}
-	return st[0], nil
+	return task.StatusByKey(tc.db.WithContext(ctx), key)
 }
 
 // announced — включено ли событие setting (§8.6) в проекте: тогда об успехе в группе напишет
 // сообщение о событии.
 func (tc *TaskCommands) announced(ctx context.Context, projectKey, setting string) (bool, error) {
-	var raw []events.JSON
-	if err := tc.db.WithContext(ctx).Raw(`SELECT notification_settings FROM projects WHERE key = ?`, projectKey).Scan(&raw).Error; err != nil {
-		return false, fmt.Errorf("telegram: project settings: %w", err)
+	settings, ok, err := project.SettingsByKey(tc.db.WithContext(ctx), projectKey)
+	if err != nil || !ok {
+		return false, err
 	}
-	return len(raw) == 1 && project.EffectiveNotifications(raw[0])[setting], nil
+	return project.EffectiveNotifications(settings)[setting], nil
 }
 
 // taskErrorText — ответ на отказ сервиса задач (§8.4, §8.5, §9.3); ошибка сервера — err.
