@@ -67,7 +67,7 @@ func (s *Service) AddComment(ctx context.Context, u *user.User, key, body string
 	}
 	var view CommentView
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func (s *Service) onComment(ctx context.Context, u *user.User, id uuid.UUID, fn 
 		if key == "" {
 			return ErrCommentNotFound
 		}
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}

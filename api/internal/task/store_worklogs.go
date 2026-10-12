@@ -59,12 +59,18 @@ func worklogsByID(tx *gorm.DB, id uuid.UUID) ([]WorklogView, error) {
 	return v, nil
 }
 
-// dayUsed — минуты пользователя за дату по всем задачам без записи exclude, под advisory-блокировкой
-// пользователя до конца транзакции (повторный захват в той же транзакции не ждёт).
-func dayUsed(tx *gorm.DB, userID uuid.UUID, date time.Time, exclude uuid.UUID) (int, error) {
+// lockWorklogDay — advisory-блокировка записей времени пользователя до конца транзакции
+// (повторный захват в той же транзакции не ждёт).
+func lockWorklogDay(tx *gorm.DB, userID uuid.UUID) error {
 	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('worklog-day:' || ?))`, userID.String()).Error; err != nil {
-		return 0, fmt.Errorf("task: worklog lock: %w", err)
+		return fmt.Errorf("task: worklog lock: %w", err)
 	}
+	return nil
+}
+
+// dayUsed — минуты пользователя за дату по всем задачам без записи exclude. Вызывать под
+// lockWorklogDay.
+func dayUsed(tx *gorm.DB, userID uuid.UUID, date time.Time, exclude uuid.UUID) (int, error) {
 	var used int
 	if err := tx.Raw(`SELECT COALESCE(sum(minutes), 0) FROM worklogs WHERE user_id = ? AND work_date = ? AND id <> ?`,
 		userID, date.Format(time.DateOnly), exclude).Scan(&used).Error; err != nil {

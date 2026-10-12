@@ -153,7 +153,7 @@ func (s *Service) AddAttachment(ctx context.Context, u *user.User, key string, i
 	path := filepath.Join(s.files.dir, id.String())
 	var view AttachmentView
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
@@ -326,7 +326,7 @@ func (s *Service) DeleteAttachment(ctx context.Context, u *user.User, id uuid.UU
 		if key == "" {
 			return ErrAttachmentNotFound
 		}
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}

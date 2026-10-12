@@ -65,19 +65,18 @@ func (s *Service) Trash(ctx context.Context, u *user.User, key string, limit int
 	if limit < 1 || limit > MaxLimit {
 		return nil, fieldError("limit", "целое число от 1 до 200")
 	}
-	where := []string{"t.project_id = ?", "t.deleted_at IS NOT NULL"}
-	args := []any{projectID}
+	var after *trashCursor
 	if cursor != "" {
 		at, id, err := decodeTrashCursor(cursor)
 		if err != nil {
 			return nil, err
 		}
-		where, args = append(where, "(t.deleted_at, t.id) < (?, ?)"), append(args, at, id)
+		after = &trashCursor{at, id}
 	}
 	var rows []trashRow
 	// Кто удалил — последняя запись истории deleted_at со значением (не восстановление).
 	db := s.db.WithContext(ctx)
-	if err := trashRows(db, where, args, limit+1, &rows); err != nil {
+	if err := trashRows(db, projectID, after, limit+1, &rows); err != nil {
 		return nil, err
 	}
 	if err := fillNames(db, rows[:min(len(rows), limit)], func(r *trashRow) *uuid.UUID { return r.DeletedByID },

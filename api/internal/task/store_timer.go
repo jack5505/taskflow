@@ -65,11 +65,15 @@ func timerTaskIDs(tx *gorm.DB, userID uuid.UUID) ([]uuid.UUID, error) {
 	return ids, nil
 }
 
-// lockTaskRow — задача id (и удалённая), строка FOR UPDATE.
+// lockTaskRow — задача id (и удалённая), строка FOR UPDATE; нет — nil.
 func lockTaskRow(tx *gorm.DB, id uuid.UUID) (*Task, error) {
 	var t Task
-	if err := tx.Raw(`SELECT * FROM tasks WHERE id = ? FOR UPDATE`, id).Scan(&t).Error; err != nil {
-		return nil, fmt.Errorf("task: timer task: %w", err)
+	res := tx.Raw(`SELECT * FROM tasks WHERE id = ? FOR UPDATE`, id).Scan(&t)
+	if res.Error != nil {
+		return nil, fmt.Errorf("task: timer task: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
 	}
 	return &t, nil
 }
