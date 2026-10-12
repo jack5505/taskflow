@@ -8,11 +8,6 @@ project/service.go tasks 1
 project/service.go users 1
 task/list.go project_members 1
 task/list.go projects 2
-task/service.go sprints 1
 task/timer.go projects 2
 task/timer.go users 2
 task/transition.go projects 1
-task/transition.go sprint_log 1
-task/transition.go sprints 3
-task/update.go sprints 1
-task/worklogs.go sprints 1

@@ -17,6 +17,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/sprint/sprintdb"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -398,11 +399,11 @@ func worklogWritable(tx *gorm.DB, o *opened, op worklogOp) error {
 }
 
 func sprintNotClosed(tx *gorm.DB, id uuid.UUID) error {
-	var states []string
-	if err := tx.Raw(`SELECT state FROM sprints WHERE id = ?`, id).Scan(&states).Error; err != nil {
-		return fmt.Errorf("task: worklog sprint state: %w", err)
+	state, err := sprintdb.State(tx, id)
+	if err != nil {
+		return err
 	}
-	if len(states) > 0 && states[0] == "closed" {
+	if state == "closed" {
 		return errSprintClosed
 	}
 	return nil
