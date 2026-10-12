@@ -1,13 +1,16 @@
 package sprint
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -85,23 +88,38 @@ func (s *Service) Report(ctx context.Context, u *user.User, id uuid.UUID) (*Repo
 	}
 	// Задачи спринта сейчас; у завершённого к ним прибавляются незакрытые из снимка закрытия —
 	// при закрытии они ушли в бэклог или следующий спринт (§5.4).
-	if err := db.Raw(`SELECT c.tasks + COALESCE(sn.open_tasks, 0) AS tasks,
-			c.estimate_minutes + COALESCE(sn.open_estimate_minutes, 0) AS estimate_minutes
-		FROM (SELECT count(*) AS tasks, COALESCE(SUM(estimate_minutes), 0) AS estimate_minutes
-			FROM tasks WHERE sprint_id = @s AND deleted_at IS NULL) c
-		LEFT JOIN LATERAL (SELECT open_tasks, open_estimate_minutes FROM sprint_daily_snapshots
-			WHERE sprint_id = @s AND @closed ORDER BY date DESC LIMIT 1) sn ON true`,
-		map[string]any{"s": id, "closed": v.State == StateClosed}).Scan(&r.Current).Error; err != nil {
-		return nil, fmt.Errorf("sprint: report current: %w", err)
+	r.Current = Totals{Tasks: v.TasksCount, EstimateMinutes: v.EstimateMinutes}
+	if v.State == StateClosed {
+		var sn []Totals
+		if err := db.Raw(`SELECT open_tasks AS tasks, open_estimate_minutes AS estimate_minutes FROM sprint_daily_snapshots
+			WHERE sprint_id = ? ORDER BY date DESC LIMIT 1`, id).Scan(&sn).Error; err != nil {
+			return nil, fmt.Errorf("sprint: report current: %w", err)
+		}
+		if len(sn) > 0 {
+			r.Current.Tasks += sn[0].Tasks
+			r.Current.EstimateMinutes += sn[0].EstimateMinutes
+		}
 	}
 
 	var changes []Change
-	if err := db.Raw(`SELECT l.task_id, t.key, t.title, l.user_id AS "by", l.created_at AS "at", l.action
-		FROM sprint_log l JOIN tasks t ON t.id = l.task_id AND t.deleted_at IS NULL
-		WHERE l.sprint_id = ? ORDER BY l.created_at, l.id`, id).Scan(&changes).Error; err != nil {
+	if err := db.Raw(`SELECT task_id, user_id AS "by", created_at AS "at", action
+		FROM sprint_log WHERE sprint_id = ? ORDER BY created_at, id`, id).Scan(&changes).Error; err != nil {
 		return nil, fmt.Errorf("sprint: report log: %w", err)
 	}
+	ids := make([]uuid.UUID, len(changes))
+	for i, c := range changes {
+		ids[i] = c.TaskID
+	}
+	titles, err := task.LiveTitles(db, ids)
+	if err != nil {
+		return nil, err
+	}
 	for _, c := range changes {
+		t, ok := titles[c.TaskID]
+		if !ok {
+			continue // задача удалена
+		}
+		c.Key, c.Title = t.Key, t.Title
 		if c.Action == "added" {
 			r.Added = append(r.Added, c)
 		} else {
@@ -124,23 +142,52 @@ func (s *Service) Report(ctx context.Context, u *user.User, id uuid.UUID) (*Repo
 // до даты закрытия включительно по поясу проекта (у активного — без верхней границы). Так работа
 // над задачей в бэклоге и в соседнем спринте сюда не относится. Удалённые задачи не считаются.
 func (s *Service) spent(ctx context.Context, r *Report) error {
-	if err := s.db.WithContext(ctx).Raw(`WITH sp AS (
-			SELECT s.start_date, (s.closed_at AT TIME ZONE p.timezone)::date AS until
-			FROM sprints s JOIN projects p ON p.id = s.project_id WHERE s.id = @s),
-		st AS (
-			SELECT id AS task_id FROM tasks WHERE sprint_id = @s
-			UNION SELECT task_id FROM sprint_start_scope WHERE sprint_id = @s
-			UNION SELECT task_id FROM sprint_log WHERE sprint_id = @s)
-		SELECT w.user_id, u.display_name, SUM(w.minutes) AS minutes
-		FROM worklogs w JOIN st ON st.task_id = w.task_id
-		JOIN tasks t ON t.id = w.task_id AND t.deleted_at IS NULL
-		JOIN users u ON u.id = w.user_id
-		CROSS JOIN sp
-		WHERE w.work_date >= sp.start_date AND (sp.until IS NULL OR w.work_date <= sp.until)
-		GROUP BY w.user_id, u.display_name ORDER BY minutes DESC, u.display_name, w.user_id`,
-		map[string]any{"s": r.Sprint.ID}).Scan(&r.Spent).Error; err != nil {
+	sp := r.Sprint
+	if sp.StartDate == nil {
+		return nil // без даты начала записи не отбираются (как раньше: сравнение с NULL)
+	}
+	db := s.db.WithContext(ctx)
+	var until *time.Time
+	if sp.ClosedAt != nil {
+		zones, err := project.Timezones(db, []uuid.UUID{sp.ProjectID}, true)
+		if err != nil {
+			return err
+		}
+		d, err := dateIn(*sp.ClosedAt, zones[sp.ProjectID])
+		if err != nil {
+			return err
+		}
+		until = &d
+	}
+	ids, err := task.IDsInSprint(db, sp.ID)
+	if err != nil {
+		return err
+	}
+	// Задачи, бывшие в спринте после старта: на старте и в журнале (уникальность — UNION).
+	var logged []uuid.UUID
+	if err := db.Raw(`SELECT task_id FROM sprint_start_scope WHERE sprint_id = @s
+		UNION SELECT task_id FROM sprint_log WHERE sprint_id = @s`, map[string]any{"s": sp.ID}).Scan(&logged).Error; err != nil {
 		return fmt.Errorf("sprint: report spent: %w", err)
 	}
+	byUser, err := task.SpentByUser(db, append(ids, logged...), sp.StartDate.Time, until)
+	if err != nil {
+		return err
+	}
+	minutes := make(map[uuid.UUID]int, len(byUser))
+	userIDs := make([]uuid.UUID, len(byUser))
+	for i, m := range byUser {
+		userIDs[i], minutes[m.UserID] = m.UserID, m.Minutes
+	}
+	// Имена — в порядке базы (display_name, id); стабильная сортировка по минутам сохраняет его
+	// у равных: как ORDER BY minutes DESC, display_name, user_id.
+	names, err := user.NamesOrdered(db, userIDs)
+	if err != nil {
+		return err
+	}
+	for _, n := range names {
+		r.Spent = append(r.Spent, Spent{UserID: n.ID, DisplayName: n.DisplayName, Minutes: minutes[n.ID]})
+	}
+	slices.SortStableFunc(r.Spent, func(a, b Spent) int { return cmp.Compare(b.Minutes, a.Minutes) })
 	for i := range r.Spent {
 		r.Spent[i].Hours = hours(r.Spent[i].Minutes)
 		r.SpentMinutes += r.Spent[i].Minutes
