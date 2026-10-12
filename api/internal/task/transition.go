@@ -395,7 +395,7 @@ func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if state != "closed" {
+	if state != sprintdb.StateClosed {
 		return nil
 	}
 	active, err := sprintdb.ActiveID(tx, t.ProjectID)
@@ -463,7 +463,7 @@ func sprintChanged(tx *gorm.DB, t *Task, from, to *uuid.UUID, by uuid.UUID) erro
 		if err != nil {
 			return err
 		}
-		if state != "active" {
+		if state != sprintdb.StateActive {
 			continue
 		}
 		if err := sprintdb.Log(tx, *step.sprint, t.ID, actor, step.action); err != nil {

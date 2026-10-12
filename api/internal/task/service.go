@@ -270,7 +270,7 @@ func checkSprint(tx *gorm.DB, projectID, sprintID uuid.UUID) error {
 	if state == "" {
 		return fieldError("sprint_id", "нет такого спринта в проекте")
 	}
-	if state == "closed" {
+	if state == sprintdb.StateClosed {
 		return fieldError("sprint_id", "спринт завершён")
 	}
 	return nil
