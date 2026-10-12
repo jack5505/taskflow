@@ -169,9 +169,56 @@ func CurrentTimer(ctx context.Context, db *gorm.DB, userID uuid.UUID, now time.T
 // обход идёт дальше, ошибки возвращаются вместе. Возвращает число остановленных.
 func (s *Service) StopStaleTimers(ctx context.Context) (int64, error) {
 	now := s.now()
-	return s.stopTimersWhere(ctx, now, `a.started_at <= ? OR t.deleted_at IS NOT NULL OR t.status <> 'in_progress'
-		   OR t.assignee_id IS DISTINCT FROM a.user_id OR NOT u.is_active OR p.is_archived OR p.deleted_at IS NOT NULL`,
-		now.Add(-TimerLimit))
+	db := s.db.WithContext(ctx)
+	rows, err := timerRows(db, "", nil)
+	if err != nil {
+		return 0, err
+	}
+	var userIDs, projectIDs []uuid.UUID
+	for _, r := range rows {
+		userIDs, projectIDs = append(userIDs, r.UserID), append(projectIDs, r.ProjectID)
+	}
+	active, err := user.ActiveAmong(db, userIDs)
+	if err != nil {
+		return 0, err
+	}
+	open, err := project.LiveBriefs(db, projectIDs, true)
+	if err != nil {
+		return 0, err
+	}
+	var stale []uuid.UUID
+	for _, r := range rows {
+		_, projectOpen := open[r.ProjectID]
+		if !r.StartedAt.After(now.Add(-TimerLimit)) || r.Deleted || r.Status != StatusInProgress ||
+			r.AssigneeID == nil || *r.AssigneeID != r.UserID || !active[r.UserID] || !projectOpen {
+			stale = append(stale, r.UserID)
+		}
+	}
+	return s.stopTimersOf(ctx, now, stale)
+}
+
+// timerRow — запущенный таймер и его задача.
+type timerRow struct {
+	UserID     uuid.UUID
+	StartedAt  time.Time
+	Deleted    bool
+	Status     string
+	AssigneeID *uuid.UUID
+	ProjectID  uuid.UUID
+}
+
+// timerRows — запущенные таймеры с их задачами (where — условие по задаче t), по пользователю.
+func timerRows(db *gorm.DB, where string, arg any) ([]timerRow, error) {
+	q, args := `SELECT a.user_id, a.started_at, t.deleted_at IS NOT NULL AS deleted, t.status, t.assignee_id, t.project_id
+		FROM active_timers a JOIN tasks t ON t.id = a.task_id`, []any{}
+	if where != "" {
+		q, args = q+` WHERE `+where, append(args, arg)
+	}
+	var rows []timerRow
+	if err := db.Raw(q+` ORDER BY a.user_id`, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("task: timers: %w", err)
+	}
+	return rows, nil
 }
 
 // StopProjectTimers — таймеры проекта при его архивации и удалении (§3.2): воркер по событию
@@ -179,19 +226,20 @@ func (s *Service) StopStaleTimers(ctx context.Context) (int64, error) {
 // Остановка в самой транзакции архивации невозможна без deadlock: она держит проект FOR UPDATE
 // раньше задач, а операции над задачами берут задачу раньше проекта.
 func (s *Service) StopProjectTimers(ctx context.Context, projectID uuid.UUID, at time.Time) (int64, error) {
-	return s.stopTimersWhere(ctx, at, `t.project_id = ?`, projectID)
+	rows, err := timerRows(s.db.WithContext(ctx), `t.project_id = ?`, projectID)
+	if err != nil {
+		return 0, err
+	}
+	users := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		users[i] = r.UserID
+	}
+	return s.stopTimersOf(ctx, at, users)
 }
 
-// stopTimersWhere — остановка таймеров, подходящих под where (по a — таймер, t — задача,
-// p — проект, u — пользователь), в отдельной транзакции на пользователя; под блокировкой
-// условие «таймер больше не может идти» проверяется заново (timerStale).
-func (s *Service) stopTimersWhere(ctx context.Context, at time.Time, where string, args ...any) (int64, error) {
-	var users []uuid.UUID
-	if err := s.db.WithContext(ctx).Raw(`SELECT a.user_id FROM active_timers a
-		JOIN tasks t ON t.id = a.task_id JOIN projects p ON p.id = t.project_id JOIN users u ON u.id = a.user_id
-		WHERE `+where+` ORDER BY a.user_id`, args...).Scan(&users).Error; err != nil {
-		return 0, fmt.Errorf("task: stale timers: %w", err)
-	}
+// stopTimersOf — остановка таймеров пользователей users в отдельной транзакции на каждого; под
+// блокировкой условие «таймер больше не может идти» проверяется заново (timerStale).
+func (s *Service) stopTimersOf(ctx context.Context, at time.Time, users []uuid.UUID) (int64, error) {
 	var n int64
 	var errs []error
 	for _, id := range users {
@@ -224,12 +272,15 @@ func timerStale(tx *gorm.DB, timer *ActiveTimer, t *Task, now time.Time) (bool, 
 		t.AssigneeID == nil || *t.AssigneeID != timer.UserID {
 		return true, nil
 	}
-	var ok bool
-	if err := tx.Raw(`SELECT u.is_active AND NOT p.is_archived AND p.deleted_at IS NULL
-		FROM users u, projects p WHERE u.id = ? AND p.id = ?`, timer.UserID, t.ProjectID).Scan(&ok).Error; err != nil {
-		return false, fmt.Errorf("task: timer check: %w", err)
+	active, err := user.IsActive(tx, timer.UserID)
+	if err != nil || !active {
+		return !active, err
 	}
-	return !ok, nil
+	open, err := project.LiveBriefs(tx, []uuid.UUID{t.ProjectID}, true)
+	if err != nil {
+		return false, err
+	}
+	return len(open) == 0, nil
 }
 
 // StopUserTimer — остановка таймера пользователя внутри чужой транзакции (деактивация §3.1).

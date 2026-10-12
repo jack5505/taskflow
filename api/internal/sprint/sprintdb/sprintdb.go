@@ -5,6 +5,7 @@ package sprintdb
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -67,4 +68,30 @@ func Log(tx *gorm.DB, sprintID, taskID uuid.UUID, by *uuid.UUID, action string) 
 		return fmt.Errorf("sprint: log: %w", err)
 	}
 	return nil
+}
+
+// Active — активный спринт проекта.
+type Active struct {
+	ID                 uuid.UUID
+	ProjectID          uuid.UUID
+	Name               string
+	StartDate, EndDate *time.Time
+}
+
+// ActiveOfProjects — активный спринт каждого проекта из projectIDs (§5: один; если вдруг
+// несколько — самый ранний по start_date, затем id); без активного — нет в ответе.
+func ActiveOfProjects(db *gorm.DB, projectIDs []uuid.UUID) (map[uuid.UUID]Active, error) {
+	out := make(map[uuid.UUID]Active, len(projectIDs))
+	if len(projectIDs) == 0 {
+		return out, nil
+	}
+	var rows []Active
+	if err := db.Raw(`SELECT DISTINCT ON (project_id) id, project_id, name, start_date, end_date FROM sprints
+		WHERE project_id IN ? AND state = 'active' ORDER BY project_id, start_date, id`, projectIDs).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("sprint: active: %w", err)
+	}
+	for _, r := range rows {
+		out[r.ProjectID] = r
+	}
+	return out, nil
 }

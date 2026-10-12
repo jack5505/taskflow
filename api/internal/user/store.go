@@ -329,3 +329,80 @@ func Timezone(db *gorm.DB, id uuid.UUID) (string, error) {
 	}
 	return tz, nil
 }
+
+// ActiveAdmin — флаг администратора активного пользователя id; нет или деактивирован — found = false.
+// Блокировок не берёт.
+func ActiveAdmin(db *gorm.DB, id uuid.UUID) (admin, found bool, err error) {
+	var flags []bool
+	if err := db.Raw(`SELECT is_system_admin FROM users WHERE id = ? AND is_active`, id).Scan(&flags).Error; err != nil {
+		return false, false, fmt.Errorf("user: actor: %w", err)
+	}
+	if len(flags) == 0 {
+		return false, false, nil
+	}
+	return flags[0], true, nil
+}
+
+// Contact — пользователь в списке участников: email, имя, активность.
+type Contact struct {
+	ID          uuid.UUID
+	Email       string
+	DisplayName string
+	IsActive    bool
+}
+
+// ContactsOrdered — пользователи ids по имени, затем email (сортировка базы). Блокировок не берёт.
+func ContactsOrdered(db *gorm.DB, ids []uuid.UUID) ([]Contact, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []Contact
+	if err := db.Raw(`SELECT id, email, display_name, is_active FROM users WHERE id IN ? ORDER BY display_name, email`, ids).
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("user: contacts: %w", err)
+	}
+	return rows, nil
+}
+
+// LockNoKeyUpdateByEmail — пользователь с email, строка FOR NO KEY UPDATE; нет — nil.
+func LockNoKeyUpdateByEmail(tx *gorm.DB, email string) (*User, error) {
+	var u User
+	res := tx.Raw(`SELECT * FROM users WHERE email = ? FOR NO KEY UPDATE`, email).Scan(&u)
+	if res.Error != nil {
+		return nil, fmt.Errorf("user: lock: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &u, nil
+}
+
+// ByID — пользователь id (и деактивированный). Нет — gorm.ErrRecordNotFound без обёртки: вызывающие
+// отличают «нет пользователя» от сбоя. Блокировок не берёт.
+func ByID(db *gorm.DB, id uuid.UUID) (*User, error) {
+	var u User
+	if err := db.First(&u, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// ByEmail — пользователь с email (citext, без учёта регистра). Нет — gorm.ErrRecordNotFound без
+// обёртки. Блокировок не берёт.
+func ByEmail(db *gorm.DB, email string) (*User, error) {
+	var u User
+	if err := db.First(&u, "email = ?", email).Error; err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// SetPasswordIf меняет хеш пароля пользователя id, только если текущий хеш — old (смену не
+// перебила параллельная). changed = false — хеш уже другой.
+func SetPasswordIf(tx *gorm.DB, id uuid.UUID, old, hash string) (changed bool, err error) {
+	res := tx.Model(&User{}).Where("id = ? AND password_hash = ?", id, old).Update("password_hash", hash)
+	if res.Error != nil {
+		return false, fmt.Errorf("user: save password: %w", res.Error)
+	}
+	return res.RowsAffected > 0, nil
+}

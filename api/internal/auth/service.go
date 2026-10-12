@@ -108,8 +108,7 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 		return nil, ErrLocked.With("retry_after_seconds", int(wait.Seconds()))
 	}
 
-	var u user.User
-	err = s.db.WithContext(ctx).Where("email = ?", email).First(&u).Error
+	u, err := user.ByEmail(s.db.WithContext(ctx), email)
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		// Хеш сравниваем и для несуществующего email: время ответа не выдаёт, есть ли пользователь.
@@ -130,7 +129,7 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 	if err := s.lock.reset(ctx, email); err != nil {
 		return nil, err
 	}
-	return s.issue(ctx, &u, userAgent)
+	return s.issue(ctx, u, userAgent)
 }
 
 // release возвращает попытку, взятую take; сбой Redis только в лог — попытка истечёт с окном.
@@ -178,8 +177,8 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, userAgent string) (
 		if !rt.ExpiresAt.After(now) {
 			return ErrBadRefresh
 		}
-		var u user.User
-		if err := tx.First(&u, "id = ?", rt.UserID).Error; err != nil {
+		u, err := user.ByID(tx, rt.UserID)
+		if err != nil {
 			return fmt.Errorf("auth: refresh user: %w", err)
 		}
 		if !u.IsActive {
@@ -188,8 +187,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, userAgent string) (
 		if err := tx.Model(&rt).Updates(map[string]any{"revoked_at": now, "rotated": true}).Error; err != nil {
 			return fmt.Errorf("auth: revoke refresh: %w", err)
 		}
-		var err error
-		session, err = s.issueTx(tx, &u, userAgent)
+		session, err = s.issueTx(tx, u, userAgent)
 		return err
 	})
 	if reusedBy != uuid.Nil {
@@ -229,8 +227,8 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (*user.U
 	if err != nil {
 		return nil, ErrNoToken
 	}
-	var u user.User
-	if err := s.db.WithContext(ctx).First(&u, "id = ?", id).Error; err != nil {
+	u, err := user.ByID(s.db.WithContext(ctx), id)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNoToken
 		}
@@ -239,7 +237,7 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (*user.U
 	if !u.IsActive {
 		return nil, ErrUserInactive
 	}
-	return &u, nil
+	return u, nil
 }
 
 // CleanupExpired удаляет просроченные и отозванные токены старше refreshTTL (воркер, раз в сутки).

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -125,15 +126,19 @@ func (s *Service) List(ctx context.Context, a *project.Access, f ListFilter) (*P
 		add("("+sectionExpr+", t.position, t.number) > (?, ?, ?)", section, pos, num)
 	}
 	var items []ListItem
-	err := s.db.WithContext(ctx).Raw(`SELECT t.*,
-			(t.due_date IS NOT NULL AND t.status NOT IN ('done', 'cancelled')
-			 AND t.due_date < (?::timestamptz AT TIME ZONE p.timezone)::date) AS overdue
-		FROM tasks t JOIN projects p ON p.id = t.project_id
+	err := s.db.WithContext(ctx).Raw(`SELECT t.* FROM tasks t
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY `+sectionExpr+`, t.position, t.number LIMIT ?`,
-		append(append([]any{s.now()}, args...), limit+1)...).Scan(&items).Error
+		ORDER BY `+sectionExpr+`, t.position, t.number LIMIT ?`, append(args, limit+1)...).Scan(&items).Error
 	if err != nil {
 		return nil, fmt.Errorf("task: list: %w", err)
+	}
+	today, err := todayIn(a.Project.Timezone, s.now())
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		t := &items[i]
+		t.Overdue = t.DueDate != nil && t.Status != StatusDone && t.Status != StatusCancelled && t.DueDate.Before(today)
 	}
 	page := &Page{Items: items}
 	if page.Items == nil {
@@ -169,16 +174,62 @@ const MaxMine = 200
 // удалённых (§7.2), по сроку (без срока — в конце), просроченные оказываются сверху; не больше MaxMine.
 func (s *Service) Mine(ctx context.Context, u *user.User) ([]MyTask, error) {
 	list := []MyTask{}
-	err := s.db.WithContext(ctx).Raw(`SELECT t.key, t.title, p.key AS project_key, p.name AS project_name, t.status,
-			t.due_date, t.spent_minutes, t.estimate_minutes, t.updated_at, t.sprint_id,
-			(t.due_date IS NOT NULL AND t.due_date < (?::timestamptz AT TIME ZONE p.timezone)::date) AS overdue
-		FROM tasks t
-		JOIN projects p ON p.id = t.project_id AND p.deleted_at IS NULL AND NOT p.is_archived
-		JOIN project_members m ON m.project_id = p.id AND m.user_id = t.assignee_id
-		WHERE t.assignee_id = ? AND t.deleted_at IS NULL AND t.status NOT IN ('done', 'cancelled')
-		ORDER BY t.due_date NULLS LAST, p.key, t.number LIMIT ?`, s.now(), u.ID, MaxMine).Scan(&list).Error
+	db := s.db.WithContext(ctx)
+	// Проекты, где пользователь участник, неудалённые и неархивные, — по ключу (ProjectsOf).
+	mine, err := project.ProjectsOf(db, u.ID)
 	if err != nil {
+		return nil, err
+	}
+	var open []project.UserProject
+	for _, p := range mine {
+		if !p.IsArchived {
+			open = append(open, p)
+		}
+	}
+	if len(open) == 0 {
+		return list, nil
+	}
+	ids := make([]uuid.UUID, len(open))
+	for i, p := range open {
+		ids[i] = p.ID
+	}
+	zones, err := project.Timezones(db, ids, false)
+	if err != nil {
+		return nil, err
+	}
+	// Порядок проектов по ключу — как ORDER BY p.key: позиция в open.
+	rank := make([]string, len(open))
+	args := []any{u.ID, ids}
+	for i, p := range open {
+		rank[i] = "WHEN ? THEN " + strconv.Itoa(i)
+		args = append(args, p.ID)
+	}
+	var rows []struct {
+		MyTask
+		ProjectID uuid.UUID
+	}
+	if err := db.Raw(`SELECT key, title, status, due_date, spent_minutes, estimate_minutes, updated_at, sprint_id, project_id
+		FROM tasks WHERE assignee_id = ? AND project_id IN ? AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')
+		ORDER BY due_date NULLS LAST, CASE project_id `+strings.Join(rank, " ")+` END, number LIMIT ?`,
+		append(args, MaxMine)...).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("task: my tasks: %w", err)
+	}
+	byID := make(map[uuid.UUID]project.UserProject, len(open))
+	for _, p := range open {
+		byID[p.ID] = p
+	}
+	for _, r := range rows {
+		t := r.MyTask
+		p := byID[r.ProjectID]
+		t.ProjectKey, t.ProjectName = p.Key, p.Name
+		if t.DueDate != nil {
+			today, err := todayIn(zones[r.ProjectID], s.now())
+			if err != nil {
+				return nil, err
+			}
+			t.Overdue = t.DueDate.Before(today)
+		}
+		list = append(list, t)
 	}
 	return list, nil
 }
@@ -228,4 +279,14 @@ func decodeCursor(c string) (string, float64, int, error) {
 		return "", 0, 0, bad
 	}
 	return parts[0], pos, num, nil
+}
+
+// todayIn — сегодняшняя дата по поясу tz (полночь UTC, как даты из базы).
+func todayIn(tz string, now time.Time) (time.Time, error) {
+	loc, err := model.Location(tz)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("task: %w", err)
+	}
+	y, m, d := now.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
 }

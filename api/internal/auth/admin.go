@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/mail"
@@ -57,28 +56,29 @@ func (s *Service) EnsureSystemAdmin(ctx context.Context, email, displayName stri
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		nu := user.New(email, "", displayName) // пустой хеш не совпадёт ни с одним паролем
 		nu.IsSystemAdmin = true
-		res := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "email"}}, DoNothing: true}).Create(nu)
-		if res.Error != nil {
-			return fmt.Errorf("auth: create admin: %w", res.Error)
+		created, err := user.CreateNew(tx, nu)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 1 {
+		if created {
 			u, result = *nu, AdminCreated
 			return audit.Write(tx, audit.Record{Action: audit.UserCreated, EntityType: "user", EntityID: nu.ID.String(),
 				New: map[string]any{"email": nu.Email, "display_name": nu.DisplayName, "is_system_admin": true}})
 		}
-		found := tx.Raw(`SELECT * FROM users WHERE email = ? FOR NO KEY UPDATE`, email).Scan(&u)
-		if found.Error != nil {
-			return fmt.Errorf("auth: find admin: %w", found.Error)
+		found, err := user.LockNoKeyUpdateByEmail(tx, email)
+		if err != nil {
+			return err
 		}
-		if found.RowsAffected == 0 {
+		if found == nil {
 			return fmt.Errorf("auth: admin %s пропал после ON CONFLICT", email)
 		}
+		u = *found
 		if !u.IsActive {
 			return ErrAdminInactive
 		}
 		if !u.IsSystemAdmin {
-			if err := tx.Model(&u).Update("is_system_admin", true).Error; err != nil {
-				return fmt.Errorf("auth: promote admin: %w", err)
+			if err := user.Update(tx, &u, map[string]any{"is_system_admin": true}); err != nil {
+				return err
 			}
 			result = AdminPromoted
 			return audit.Write(tx, audit.Record{Action: audit.UserUpdated, EntityType: "user", EntityID: u.ID.String(),
@@ -172,17 +172,16 @@ func PasswordInviteHandler(s *Service) asynq.HandlerFunc {
 		if err := json.Unmarshal(t.Payload(), &p); err != nil {
 			return fmt.Errorf("auth: invite payload: %w: %w", err, asynq.SkipRetry)
 		}
-		var u user.User
-		err := s.db.WithContext(ctx).First(&u, "id = ?", p.UserID).Error
+		u, err := user.ByID(s.db.WithContext(ctx), p.UserID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("auth: invite: пользователь %s ещё не виден (транзакция не закоммичена?)", p.UserID)
 		}
 		if err != nil {
 			return fmt.Errorf("auth: invite user: %w", err)
 		}
-		if !u.IsActive || HasPassword(&u) {
+		if !u.IsActive || HasPassword(u) {
 			return nil
 		}
-		return s.SendPasswordSetLink(ctx, &u)
+		return s.SendPasswordSetLink(ctx, u)
 	}
 }

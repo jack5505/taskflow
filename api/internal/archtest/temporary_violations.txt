@@ -1,13 +1,3 @@
 # Временные нарушения владения таблицами (эпик #140): «файл (от api/internal) таблица число_обращений».
 # Список только сокращается: исправил обращение — уменьши число или удали строку, иначе TestTableOwnership упадёт.
 # Новые строки сюда не добавляются — вызывайте функцию модуля-владельца (api/CLAUDE.md).
-auth/admin.go users 1
-project/members.go users 3
-project/service.go sprints 1
-project/service.go tasks 1
-project/service.go users 1
-task/list.go project_members 1
-task/list.go projects 2
-task/timer.go projects 2
-task/timer.go users 2
-task/transition.go projects 1

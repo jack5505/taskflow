@@ -100,8 +100,7 @@ func (s *Service) SendPasswordReset(ctx context.Context, email string) error {
 	if s.mailer == nil {
 		return errNoMailer
 	}
-	var u user.User
-	err := s.db.WithContext(ctx).First(&u, "email = ?", email).Error
+	u, err := user.ByEmail(s.db.WithContext(ctx), email)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
@@ -111,7 +110,7 @@ func (s *Service) SendPasswordReset(ctx context.Context, email string) error {
 	if !u.IsActive {
 		return nil
 	}
-	return s.sendLink(ctx, &u, mail.PasswordReset)
+	return s.sendLink(ctx, u, mail.PasswordReset)
 }
 
 // passwordLink выпускает одноразовую ссылку на 24 часа. Прежние ссылки не гасятся —
@@ -151,8 +150,8 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 		if res.RowsAffected == 0 || pt.UsedAt != nil || !pt.ExpiresAt.After(now) {
 			return ErrBadPasswordToken
 		}
-		var u user.User
-		if err := tx.First(&u, "id = ?", pt.UserID).Error; err != nil {
+		u, err := user.ByID(tx, pt.UserID)
+		if err != nil {
 			return fmt.Errorf("auth: password link user: %w", err)
 		}
 		if !u.IsActive {
@@ -162,8 +161,8 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 		if err != nil {
 			return fmt.Errorf("auth: hash password: %w", err)
 		}
-		if err := tx.Model(&u).Update("password_hash", hash).Error; err != nil {
-			return fmt.Errorf("auth: save password: %w", err)
+		if err := user.Update(tx, u, map[string]any{"password_hash": hash}); err != nil {
+			return err
 		}
 		if err := tx.Model(&PasswordToken{}).Where("user_id = ? AND used_at IS NULL", u.ID).
 			Update("used_at", now).Error; err != nil {

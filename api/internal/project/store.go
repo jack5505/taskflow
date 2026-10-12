@@ -163,3 +163,17 @@ func SoleManagerKeys(tx *gorm.DB, userID uuid.UUID, projectIDs []uuid.UUID) ([]s
 	}
 	return keys, nil
 }
+
+// LockShareLive — неудалённый проект id, строка FOR SHARE (операции над задачей берут её после
+// строки задачи: задача → проект); нет или удалён — nil.
+func LockShareLive(tx *gorm.DB, id uuid.UUID) (*Project, error) {
+	var p Project
+	res := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR SHARE`, id).Scan(&p)
+	if res.Error != nil {
+		return nil, fmt.Errorf("project: lock share: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &p, nil
+}

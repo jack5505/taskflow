@@ -179,13 +179,14 @@ func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (
 	if res.RowsAffected == 0 {
 		return nil, ErrNotFound
 	}
-	pr := tx.Raw(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL FOR SHARE`, o.task.ProjectID).Scan(&o.project)
-	if pr.Error != nil {
-		return nil, fmt.Errorf("task: project: %w", pr.Error)
+	p, err := project.LockShareLive(tx, o.task.ProjectID)
+	if err != nil {
+		return nil, err
 	}
-	if pr.RowsAffected == 0 {
+	if p == nil {
 		return nil, ErrNotFound
 	}
+	o.project = *p
 	role, err := project.RoleIn(tx, o.project.ID, u.ID)
 	if err != nil {
 		return nil, err

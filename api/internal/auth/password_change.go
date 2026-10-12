@@ -45,8 +45,8 @@ func (s *Service) ChangePassword(ctx context.Context, u *user.User, current, nex
 	}
 
 	// Хеш перечитываем из базы: пользователь в контексте запроса мог устареть.
-	var stored user.User
-	if err := s.db.WithContext(ctx).Select("id", "password_hash").First(&stored, "id = ?", u.ID).Error; err != nil {
+	stored, err := user.ByID(s.db.WithContext(ctx), u.ID)
+	if err != nil {
 		s.release(ctx, s.pwLock, id) // пароль не проверен — попытка не в счёт
 		return fmt.Errorf("auth: load user: %w", err)
 	}
@@ -64,12 +64,11 @@ func (s *Service) ChangePassword(ctx context.Context, u *user.User, current, nex
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Условие по старому хешу: если пароль успели сменить параллельно (другая вкладка,
 		// ссылка из письма), проверенный выше «текущий» уже не текущий.
-		res := tx.Model(&user.User{}).Where("id = ? AND password_hash = ?", u.ID, stored.PasswordHash).
-			Update("password_hash", hash)
-		if res.Error != nil {
-			return fmt.Errorf("auth: save password: %w", res.Error)
+		changed, err := user.SetPasswordIf(tx, u.ID, stored.PasswordHash, hash)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if !changed {
 			return ErrBadCurrentPassword
 		}
 		now := s.now()
