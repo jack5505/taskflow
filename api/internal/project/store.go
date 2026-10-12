@@ -309,3 +309,20 @@ func memberRoles(db *gorm.DB, projectID uuid.UUID) ([]memberRoleRow, error) {
 	}
 	return roles, nil
 }
+
+// ErrRepoTaken — репозиторий уже привязан к другому проекту (§12.7).
+var ErrRepoTaken = errors.New("project: github repository is bound to another project")
+
+// SetGitHubRepo привязывает репозиторий repo (установка installationID) к проекту id; строку
+// проекта вызывающий уже заблокировал. Репозиторий у другого проекта — ErrRepoTaken.
+func SetGitHubRepo(tx *gorm.DB, id uuid.UUID, repo *string, installationID *int64) error {
+	err := tx.Exec(`UPDATE projects SET github_repo = ?, github_installation_id = ?, updated_at = now() WHERE id = ?`,
+		repo, installationID, id).Error
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrRepoTaken
+	}
+	if err != nil {
+		return fmt.Errorf("project: github repo: %w", err)
+	}
+	return nil
+}
