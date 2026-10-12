@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -128,19 +127,9 @@ func recordDue(tx *gorm.DB, cand []Due) ([]Due, error) {
 	if len(cand) == 0 {
 		return nil, nil
 	}
-	values := make([]string, len(cand))
-	args := make([]any, 0, 4*len(cand))
-	for i, r := range cand {
-		values[i] = "(?, ?, ?, ?)"
-		args = append(args, r.TaskID, r.Kind, r.DueDate.Format(time.DateOnly), r.UserID)
-	}
-	var inserted []struct {
-		TaskID uuid.UUID
-		Kind   string
-	}
-	if err := tx.Raw(`INSERT INTO due_reminders (task_id, kind, due_date, user_id) VALUES `+strings.Join(values, ", ")+`
-		ON CONFLICT DO NOTHING RETURNING task_id, kind`, args...).Scan(&inserted).Error; err != nil {
-		return nil, fmt.Errorf("notification: due reminders: %w", err)
+	inserted, err := insertDue(tx, cand)
+	if err != nil {
+		return nil, err
 	}
 	type key struct {
 		task uuid.UUID
@@ -242,9 +231,5 @@ func DueReminders(ctx context.Context, db *gorm.DB, now time.Time, send func(con
 // CleanupDue удаляет записи об отправленных напоминаниях, срок которых прошёл больше недели назад:
 // условия отправки для них уже не выполнятся (воркер, раз в сутки).
 func CleanupDue(ctx context.Context, db *gorm.DB, now time.Time) (int64, error) {
-	res := db.WithContext(ctx).Exec(`DELETE FROM due_reminders WHERE due_date < ?::date - 7`, now.UTC().Format(time.DateOnly))
-	if res.Error != nil {
-		return 0, fmt.Errorf("notification: cleanup due: %w", res.Error)
-	}
-	return res.RowsAffected, nil
+	return deleteDueBefore(db.WithContext(ctx), now.UTC().AddDate(0, 0, -7))
 }
