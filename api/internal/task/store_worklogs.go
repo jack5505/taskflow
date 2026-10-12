@@ -89,3 +89,15 @@ func refreshSpent(tx *gorm.DB, t *Task) (int, error) {
 	}
 	return t.SpentMinutes, nil
 }
+
+// projectOfKey — проект задачи по ключу без блокировки; нет задачи — nil.
+func projectOfKey(tx *gorm.DB, key string) (*uuid.UUID, error) {
+	var ids []uuid.UUID
+	if err := tx.Raw(`SELECT project_id FROM tasks WHERE key = ?`, key).Scan(&ids).Error; err != nil {
+		return nil, fmt.Errorf("task: project of key: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return &ids[0], nil
+}
