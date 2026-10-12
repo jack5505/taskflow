@@ -15,6 +15,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/duration"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -66,17 +67,10 @@ type personalEvent struct {
 	UserID     uuid.UUID  `json:"user_id"` // timer.*, member.*
 }
 
-// recipient — кому отправить личное уведомление.
-type recipient struct {
-	ID       uuid.UUID
-	ChatID   int64 // личный чат = telegram_user_id
-	Settings []byte
-}
-
 // recipients — получатели из ids без by: активные, с привязанным Telegram, с включённым
 // уведомлением setting; если projectID задан — ещё и участники проекта (иначе уведомление
 // раскрыло бы чужой проект). Порядок и дубли ids сохраняются как есть, кроме повторов.
-func (p *Personal) recipients(ctx context.Context, ids []uuid.UUID, by uuid.UUID, setting string, projectID *uuid.UUID) ([]recipient, error) {
+func (p *Personal) recipients(ctx context.Context, ids []uuid.UUID, by uuid.UUID, setting string, projectID *uuid.UUID) ([]user.Recipient, error) {
 	var want []uuid.UUID
 	for _, id := range ids {
 		if id != uuid.Nil && id != by && !containsID(want, id) {
@@ -86,20 +80,20 @@ func (p *Personal) recipients(ctx context.Context, ids []uuid.UUID, by uuid.UUID
 	if len(want) == 0 {
 		return nil, nil
 	}
-	q := `SELECT u.id, u.telegram_user_id AS chat_id, u.notification_settings::text AS settings FROM users u
-		WHERE u.id IN ? AND u.is_active AND u.telegram_user_id IS NOT NULL`
-	args := []any{want}
-	if projectID != nil {
-		q += ` AND EXISTS (SELECT 1 FROM project_members m WHERE m.user_id = u.id AND m.project_id = ?)`
-		args = append(args, *projectID)
+	db := p.db.WithContext(ctx)
+	rows, err := user.TelegramRecipients(db, want)
+	if err != nil {
+		return nil, err
 	}
-	var rows []recipient
-	if err := p.db.WithContext(ctx).Raw(q, args...).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("telegram: recipients: %w", err)
+	var members map[uuid.UUID]bool
+	if projectID != nil && len(rows) > 0 {
+		if members, err = project.MembersAmong(db, *projectID, want); err != nil {
+			return nil, err
+		}
 	}
 	out := rows[:0]
 	for _, r := range rows {
-		if user.EffectiveNotifications(events.JSON(r.Settings))[setting] {
+		if (projectID == nil || members[r.ID]) && user.EffectiveNotifications(r.Settings)[setting] {
 			out = append(out, r)
 		}
 	}
@@ -118,7 +112,7 @@ func containsID(ids []uuid.UUID, id uuid.UUID) bool {
 // notify ставит в очередь одно сообщение каждому получателю. Если очередь отказала на середине,
 // событие повторится и первые получатели могут получить сообщение дважды: доставка «хотя бы раз»,
 // как у всех обработчиков событий (повтор возможен только при сбое Redis).
-func (p *Personal) notify(ctx context.Context, to []recipient, text string, kb *models.InlineKeyboardMarkup) error {
+func (p *Personal) notify(ctx context.Context, to []user.Recipient, text string, kb *models.InlineKeyboardMarkup) error {
 	for _, r := range to {
 		if err := p.out.Send(ctx, Message{Op: OpSend, ChatID: r.ChatID, Text: text, Keyboard: kb}, 0); err != nil {
 			return err
@@ -129,11 +123,8 @@ func (p *Personal) notify(ctx context.Context, to []recipient, text string, kb *
 
 // name — display_name пользователя (кто действовал).
 func (p *Personal) name(ctx context.Context, id uuid.UUID) (string, error) {
-	var name string
-	if err := p.db.WithContext(ctx).Raw(`SELECT display_name FROM users WHERE id = ?`, id).Scan(&name).Error; err != nil {
-		return "", fmt.Errorf("telegram: user name: %w", err)
-	}
-	return name, nil
+	name, _, err := user.DisplayName(p.db.WithContext(ctx), id)
+	return name, err
 }
 
 func decodeEvent(env events.Envelope, v any) error {
@@ -178,10 +169,9 @@ func (p *Personal) taskAssigned(ctx context.Context, env events.Envelope) error 
 	if err != nil {
 		return err
 	}
-	var status string
-	if err := p.db.WithContext(ctx).Raw(`SELECT status FROM tasks WHERE id = ? AND deleted_at IS NULL`, e.TaskID).
-		Scan(&status).Error; err != nil {
-		return fmt.Errorf("telegram: task status: %w", err)
+	status, err := task.StatusOf(p.db.WithContext(ctx), e.TaskID)
+	if err != nil {
+		return err
 	}
 	if status == "" {
 		return nil // задачу уже удалили — назначение неактуально, а «Открыть» вело бы на 404
@@ -369,9 +359,9 @@ func (p *Personal) membership(ctx context.Context, env events.Envelope) error {
 	if err != nil {
 		return err
 	}
-	var name string
-	if err := p.db.WithContext(ctx).Raw(`SELECT name FROM projects WHERE id = ?`, e.ProjectID).Scan(&name).Error; err != nil {
-		return fmt.Errorf("telegram: project name: %w", err)
+	name, err := project.NameWithDeleted(p.db.WithContext(ctx), e.ProjectID)
+	if err != nil {
+		return err
 	}
 	tmpl := map[string]string{events.MemberAdded: "p_member_added", events.MemberRemoved: "p_member_removed",
 		events.MemberRoleChanged: "p_member_role"}[env.Type]

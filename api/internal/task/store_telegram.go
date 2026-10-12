@@ -150,3 +150,43 @@ func ForgetMessages(tx *gorm.DB, projectIDs ...uuid.UUID) error {
 	}
 	return nil
 }
+
+// StatusOf — статус неудалённой задачи id; нет или удалена — "".
+func StatusOf(db *gorm.DB, id uuid.UUID) (string, error) {
+	var status string
+	if err := db.Raw(`SELECT status FROM tasks WHERE id = ? AND deleted_at IS NULL`, id).Scan(&status).Error; err != nil {
+		return "", fmt.Errorf("task: status: %w", err)
+	}
+	return status, nil
+}
+
+// Overdue — просроченная задача проекта (§3.3).
+type Overdue struct {
+	Key, Title string
+	AssigneeID *uuid.UUID
+	DueDate    time.Time
+}
+
+// overdueWhere — неудалённые незакрытые задачи проекта со сроком раньше today (§3.3).
+const overdueWhere = `project_id = ? AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled') AND due_date < ?`
+
+// OverdueIn — до limit просроченных задач проекта projectID на дату today (по поясу проекта),
+// по сроку, затем по номеру.
+func OverdueIn(db *gorm.DB, projectID uuid.UUID, today time.Time, limit int) ([]Overdue, error) {
+	var rows []Overdue
+	if err := db.Raw(`SELECT key, title, assignee_id, due_date FROM tasks WHERE `+overdueWhere+`
+		ORDER BY due_date, number LIMIT ?`, projectID, today.Format(time.DateOnly), limit).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("task: overdue: %w", err)
+	}
+	return rows, nil
+}
+
+// OverdueCount — число просроченных задач проекта projectID на дату today.
+func OverdueCount(db *gorm.DB, projectID uuid.UUID, today time.Time) (int, error) {
+	var n int
+	if err := db.Raw(`SELECT count(*) FROM tasks WHERE `+overdueWhere, projectID, today.Format(time.DateOnly)).
+		Scan(&n).Error; err != nil {
+		return 0, fmt.Errorf("task: overdue count: %w", err)
+	}
+	return n, nil
+}

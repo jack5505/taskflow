@@ -2,6 +2,7 @@ package project
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -138,4 +139,70 @@ func OpenKeysOf(db *gorm.DB, userID uuid.UUID) ([]string, error) {
 		return nil, fmt.Errorf("project: user projects: %w", err)
 	}
 	return keys, nil
+}
+
+// SummaryCandidate — проект, которому по его поясу пора отправить ежедневную сводку (§8.6).
+type SummaryCandidate struct {
+	ID             uuid.UUID
+	Key, Name      string
+	TelegramChatID int64
+	Settings       events.JSON
+	Today          time.Time // сегодняшняя дата по поясу проекта
+}
+
+// SummaryCandidates — неудалённые неархивные проекты с группой, у которых с daily_summary_time по
+// их поясу прошло от нуля до window. Отправлена ли уже сводка, проверяет модуль telegram.
+func SummaryCandidates(db *gorm.DB, now time.Time, window time.Duration) ([]SummaryCandidate, error) {
+	var rows []SummaryCandidate
+	if err := db.Raw(`SELECT p.id, p.key, p.name, p.telegram_chat_id, p.notification_settings AS settings,
+			(CAST(@now AS timestamptz) AT TIME ZONE p.timezone)::date AS today
+		FROM projects p
+		WHERE p.telegram_chat_id IS NOT NULL AND p.deleted_at IS NULL AND NOT p.is_archived
+			AND (CAST(@now AS timestamptz) AT TIME ZONE p.timezone) - ((CAST(@now AS timestamptz) AT TIME ZONE p.timezone)::date + p.daily_summary_time)
+				BETWEEN interval '0' AND CAST(@window AS interval)`,
+		map[string]any{"now": now, "window": fmt.Sprintf("%d seconds", int(window.Seconds()))}).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("project: summary candidates: %w", err)
+	}
+	return rows, nil
+}
+
+// MembersAmong — кто из userIDs участник проекта projectID.
+func MembersAmong(db *gorm.DB, projectID uuid.UUID, userIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	var ids []uuid.UUID
+	if err := db.Raw(`SELECT user_id FROM project_members WHERE project_id = ? AND user_id IN ?`, projectID, userIDs).
+		Scan(&ids).Error; err != nil {
+		return nil, fmt.Errorf("project: members: %w", err)
+	}
+	out := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
+}
+
+// NameWithDeleted — название проекта id, в том числе удалённого; нет такого — "".
+func NameWithDeleted(db *gorm.DB, id uuid.UUID) (string, error) {
+	var name string
+	if err := db.Raw(`SELECT name FROM projects WHERE id = ?`, id).Scan(&name).Error; err != nil {
+		return "", fmt.Errorf("project: name: %w", err)
+	}
+	return name, nil
+}
+
+// LiveRole — роль userID в неудалённом проекте projectID: live = false — проекта нет или он
+// удалён; role "" — не участник.
+func LiveRole(db *gorm.DB, projectID, userID uuid.UUID) (live bool, role string, err error) {
+	var rows []struct{ Role *string }
+	if err := db.Raw(`SELECT m.role FROM projects p
+		LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = ?
+		WHERE p.id = ? AND p.deleted_at IS NULL`, userID, projectID).Scan(&rows).Error; err != nil {
+		return false, "", fmt.Errorf("project: role: %w", err)
+	}
+	if len(rows) == 0 {
+		return false, "", nil
+	}
+	if rows[0].Role == nil {
+		return true, "", nil
+	}
+	return true, *rows[0].Role, nil
 }

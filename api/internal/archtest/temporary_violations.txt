@@ -44,16 +44,6 @@ task/trash.go users 1
 task/update.go sprints 1
 task/worklogs.go sprints 1
 task/worklogs.go users 3
-telegram/digest_summary.go projects 1
-telegram/digest_summary.go tasks 2
-telegram/digest_summary.go users 2
-telegram/personal_notify.go project_members 1
-telegram/personal_notify.go projects 1
-telegram/personal_notify.go tasks 1
-telegram/personal_notify.go users 2
-telegram/personal_review.go project_members 1
-telegram/personal_review.go projects 1
-telegram/personal_review.go tasks 1
 users/service.go project_members 4
 users/service.go projects 4
 users/service.go users 3
