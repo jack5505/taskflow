@@ -68,12 +68,15 @@ type FreeTask struct {
 	Priority  string
 }
 
-// FreeInSprints — до limit свободных задач спринтов sprintIDs (todo без исполнителя, не удалённые)
-// по приоритету, затем по порядку на доске.
+// freeInSprints — свободные задачи спринтов: todo без исполнителя, не удалённые (§8.3, §8.5).
+const freeInSprints = `sprint_id IN ? AND status = 'todo' AND assignee_id IS NULL AND deleted_at IS NULL`
+
+// FreeInSprints — до limit свободных задач спринтов sprintIDs по приоритету, затем по порядку на
+// доске. Архив проекта (§3.2: задачи архивного проекта взять нельзя) модуль task не знает:
+// вызывающий передаёт только спринты неархивных проектов.
 func FreeInSprints(db *gorm.DB, sprintIDs []uuid.UUID, limit int) ([]FreeTask, error) {
 	var free []FreeTask
-	if err := db.Raw(`SELECT id, project_id, key, title, priority FROM tasks
-		WHERE sprint_id IN ? AND status = 'todo' AND assignee_id IS NULL AND deleted_at IS NULL
+	if err := db.Raw(`SELECT id, project_id, key, title, priority FROM tasks WHERE `+freeInSprints+`
 		ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, position, number
 		LIMIT ?`, sprintIDs, limit).Scan(&free).Error; err != nil {
 		return nil, fmt.Errorf("task: sprint free tasks: %w", err)
@@ -81,15 +84,14 @@ func FreeInSprints(db *gorm.DB, sprintIDs []uuid.UUID, limit int) ([]FreeTask, e
 	return free, nil
 }
 
-// FreeCounts — число свободных задач (todo без исполнителя, не удалённых) в каждом спринте
-// sprintIDs; спринта без свободных задач в ответе нет.
+// FreeCounts — число свободных задач в каждом спринте sprintIDs; спринта без свободных задач в
+// ответе нет.
 func FreeCounts(db *gorm.DB, sprintIDs []uuid.UUID) (map[uuid.UUID]int, error) {
 	var rows []struct {
 		SprintID uuid.UUID
 		Free     int
 	}
-	if err := db.Raw(`SELECT sprint_id, count(*) AS free FROM tasks
-		WHERE sprint_id IN ? AND status = 'todo' AND assignee_id IS NULL AND deleted_at IS NULL
+	if err := db.Raw(`SELECT sprint_id, count(*) AS free FROM tasks WHERE `+freeInSprints+`
 		GROUP BY sprint_id`, sprintIDs).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("task: sprint free counts: %w", err)
 	}
