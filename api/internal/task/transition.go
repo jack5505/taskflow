@@ -71,6 +71,7 @@ type actor struct {
 	admin   bool // администратор системы
 	manager bool // менеджер проекта или администратор системы (§2)
 	source  string
+	sprints []uuid.UUID // спринты, заблокированные FOR SHARE раньше задачи (openTask)
 }
 
 // Transition — POST /tasks/{key}/transition (§4). Строка задачи блокируется FOR UPDATE.
@@ -80,6 +81,7 @@ func (s *Service) Transition(ctx context.Context, u *user.User, key string, in T
 	if in.AssigneeID != nil {
 		pre.users = []uuid.UUID{*in.AssigneeID}
 	}
+	pre.sprintCheck = in.To == StatusInProgress // переоткрытие done → in_progress переносит из закрытого спринта
 	return s.change(ctx, u, key, nil, pre, func(tx *gorm.DB, t *Task, a actor) error {
 		return applyTransition(tx, t, a, in)
 	})
@@ -132,6 +134,9 @@ type preLock struct {
 	users, sprints []uuid.UUID
 	withDeleted    bool // разрешить удалённую задачу (восстановление)
 	reorder        bool // перестановка: advisory-блокировка порядка задач проекта (см. Move)
+	// sprintCheck — операция может сменить спринт задачи (перенос, переоткрытие): текущий спринт
+	// задачи и активный спринт проекта тоже берутся FOR SHARE раньше задачи (#160).
+	sprintCheck bool
 }
 
 // opened — задача под блокировкой, её проект и права действующего пользователя.
@@ -195,13 +200,17 @@ func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock rowLock) 
 		return nil, ErrNotFound // корзину видит только администратор (§2) — раньше любых других ответов
 	}
 	_, source := audit.From(tx.Statement.Context)
-	o.actor = actor{user: u, member: role != "", admin: admin, manager: admin || role == project.RoleManager, source: source}
+	o.actor = actor{user: u, member: role != "", admin: admin, manager: admin || role == project.RoleManager, source: source,
+		sprints: pre.sprints}
 	return &o, nil
 }
 
 // change — общая часть изменений задачи. Порядок блокировок тот же, что у деактивации и закрытия
-// спринта: FOR SHARE строк действующего пользователя и pre, затем FOR UPDATE строки задачи,
-// затем FOR SHARE проекта. Права берутся из строк под блокировкой, а не из снимка при входе.
+// спринта: FOR SHARE строк действующего пользователя и pre (при pre.sprintCheck — ещё текущего
+// спринта задачи и активного спринта проекта), затем FOR UPDATE строки задачи, затем FOR SHARE
+// проекта. Спринты читаются до блокировок; если задачу перенесли или fn нужен ещё спринт
+// (needSprintLock), транзакция повторяется — fn может выполниться несколько раз и не должен иметь
+// побочных эффектов вне транзакции. Права берутся из строк под блокировкой, а не из снимка при входе.
 // ifMatch — версии из If-Match: nil — без сверки, иначе версия задачи должна быть в списке.
 // После fn — остановка таймеров, которым больше нельзя идти на задаче (§6.4), version+1 и сохранение; fn, вернувший errNoChange, ничего не меняет — тогда
 // возвращается задача, какой она была до fn.
@@ -211,40 +220,110 @@ func (s *Service) change(ctx context.Context, u *user.User, key string, ifMatch 
 		return nil, ErrNotFound
 	}
 	var t, before Task
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		o, err := openTask(tx, u, key, pre, forUpdate)
-		if err != nil {
-			return err
-		}
-		t = o.task
-		if err := project.EnsureWritable(&o.project); err != nil {
-			return err
-		}
-		if ifMatch != nil && !slices.Contains(ifMatch, t.Version) {
-			// §3.3: чужая правка — 409 с текущим состоянием, чтобы интерфейс показал её.
-			return apierr.Conflict(apierr.CodeVersionConflict, "Задачу уже изменил другой пользователь").
-				With("current", t).With("expected_version", ifMatch)
-		}
-		a := o.actor
-		before = t
-		if err := fn(tx, &t, a); err != nil {
-			return err
-		}
-		if t.Status != before.Status || !samePtr(t.AssigneeID, before.AssigneeID) || (t.DeletedAt == nil) != (before.DeletedAt == nil) {
-			if err := stopStaleTaskTimers(tx, &t, s.now()); err != nil {
+	var extra []uuid.UUID // спринты, которые понадобились в прошлой попытке (needSprintLock)
+	var err error
+	for range 3 {
+		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			p := pre
+			p.sprints = append(slices.Clone(pre.sprints), extra...)
+			var cur []uuid.UUID
+			if pre.sprintCheck {
+				// Текущий спринт задачи и активный спринт проекта — FOR SHARE раньше строки задачи
+				// (#160): закрытие и старт спринта держат их FOR UPDATE и блокируют задачи после.
+				var err error
+				if cur, err = sprintOfKey(tx, key); err != nil {
+					return err
+				}
+				active, err := activeSprintOfKey(tx, key)
+				if err != nil {
+					return err
+				}
+				p.sprints = append(append(p.sprints, cur...), active...)
+			}
+			o, err := openTask(tx, u, key, p, forUpdate)
+			if err != nil {
 				return err
 			}
+			if pre.sprintCheck && !samePtr(o.task.SprintID, firstID(cur)) {
+				return errSprintMoved // перенесли, пока брались блокировки — повтор
+			}
+			t = o.task
+			if err := project.EnsureWritable(&o.project); err != nil {
+				return err
+			}
+			if ifMatch != nil && !slices.Contains(ifMatch, t.Version) {
+				// §3.3: чужая правка — 409 с текущим состоянием, чтобы интерфейс показал её.
+				return apierr.Conflict(apierr.CodeVersionConflict, "Задачу уже изменил другой пользователь").
+					With("current", t).With("expected_version", ifMatch)
+			}
+			a := o.actor
+			before = t
+			if err := fn(tx, &t, a); err != nil {
+				return err
+			}
+			if t.Status != before.Status || !samePtr(t.AssigneeID, before.AssigneeID) || (t.DeletedAt == nil) != (before.DeletedAt == nil) {
+				if err := stopStaleTaskTimers(tx, &t, s.now()); err != nil {
+					return err
+				}
+			}
+			t.Version = before.Version + 1
+			return tx.Model(&t).Select("*").Omit("CreatedAt").Updates(&t).Error
+		})
+		var need needSprintLock
+		switch {
+		case errors.As(err, &need):
+			extra = append(extra, need.id)
+			continue
+		case errors.Is(err, errSprintMoved):
+			continue
 		}
-		t.Version = before.Version + 1
-		return tx.Model(&t).Select("*").Omit("CreatedAt").Updates(&t).Error
-	})
+		break
+	}
 	if errors.Is(err, errNoChange) {
 		return &before, nil
+	}
+	var need needSprintLock
+	if errors.As(err, &need) || errors.Is(err, errSprintMoved) {
+		// Три попытки подряд спринты менялись под руками — как одновременная правка (§3.3).
+		return nil, apierr.Conflict(apierr.CodeVersionConflict, "Задачу или её спринт одновременно меняют, повторите действие")
 	}
 	if err != nil {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// errSprintMoved — задачу перенесли в другой спринт, пока брались блокировки; change и worklogTx
+// повторяют транзакцию.
+var errSprintMoved = errors.New("task: sprint moved while locking")
+
+// needSprintLock — операции нужен спринт id под FOR SHARE, а взять его можно только раньше строки
+// задачи: change повторяет транзакцию, добавив его к блокировкам.
+type needSprintLock struct{ id uuid.UUID }
+
+func (e needSprintLock) Error() string {
+	return "task: нужна блокировка спринта " + e.id.String()
+}
+
+// activeSprintOfKey — активный спринт проекта задачи key без блокировки (пусто — нет).
+func activeSprintOfKey(tx *gorm.DB, key string) ([]uuid.UUID, error) {
+	projectID, err := projectOfKey(tx, key)
+	if err != nil || projectID == nil {
+		return nil, err
+	}
+	active, err := sprintdb.ActiveID(tx, *projectID)
+	if err != nil || active == nil {
+		return nil, err
+	}
+	return []uuid.UUID{*active}, nil
+}
+
+// firstID — первый id или nil.
+func firstID(ids []uuid.UUID) *uuid.UUID {
+	if len(ids) == 0 {
+		return nil
+	}
+	return &ids[0]
 }
 
 // applyTransition — правила и побочные эффекты одного перехода §4.
@@ -314,7 +393,7 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 		if !a.manager {
 			return errForbiddenTransition
 		}
-		if err := reopen(tx, t, in.AssigneeID, uid); err != nil {
+		if err := reopen(tx, t, in.AssigneeID, uid, a.sprints); err != nil {
 			return err
 		}
 		t.CompletedAt = nil
@@ -364,11 +443,12 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 
 // reopen — §4 done → in_progress: исполнитель сохраняется; деактивированного менеджер обязан
 // заменить активным участником (его строка уже под FOR SHARE — см. Transition). Из закрытого спринта задача
-// переходит в активный, нет активного — в бэклог. Спринт читается без блокировки: закрытие спринта
-// блокирует спринт, затем его задачи — встречная блокировка отсюда дала бы deadlock; в худшем случае
-// задача попадёт в только что закрытый спринт и уйдёт при следующем переносе.
+// переходит в активный, нет активного — в бэклог. Оба спринта должны быть под FOR SHARE, взятым
+// раньше задачи (Transition ставит pre.sprintCheck, locked — заблокированные): иначе одновременное
+// закрытие активного спринта не увидит задачу (#160). Активный спринт не из locked — needSprintLock,
+// change повторит транзакцию, взяв его.
 // Запись «добавлено после старта» в журнал спринта делает moveTo.
-func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
+func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID, locked []uuid.UUID) error {
 	if newAssignee != nil {
 		if err := checkAssignee(tx, t.ProjectID, *newAssignee); err != nil {
 			return err
@@ -398,6 +478,11 @@ func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
 	active, err := sprintdb.ActiveID(tx, t.ProjectID)
 	if err != nil {
 		return err
+	}
+	if active != nil && !slices.Contains(locked, *active) {
+		// Активный спринт нужно держать FOR SHARE раньше задачи, иначе одновременное закрытие
+		// его не увидит задачу (#160): change повторит транзакцию, взяв и его.
+		return needSprintLock{*active}
 	}
 	return moveTo(tx, t, active, by)
 }

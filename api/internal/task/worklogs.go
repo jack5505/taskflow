@@ -353,9 +353,6 @@ func openForWorklog(tx *gorm.DB, u *user.User, key string) (*opened, error) {
 	return o, nil
 }
 
-// errSprintMoved — задачу перенесли в другой спринт, пока брались блокировки; worklogTx повторит.
-var errSprintMoved = errors.New("task: worklog: sprint moved")
-
 // worklogTx — транзакция записи времени с повтором при errSprintMoved (не больше трёх попыток).
 func (s *Service) worklogTx(ctx context.Context, fn func(*gorm.DB) error) error {
 	var err error

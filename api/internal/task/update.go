@@ -62,6 +62,7 @@ func (s *Service) Update(ctx context.Context, u *user.User, key string, ifMatch 
 	if v := in.AssigneeID.Value; v != nil {
 		pre.users = []uuid.UUID{*v}
 	}
+	pre.sprintCheck = in.SprintID.Set
 	if v := in.SprintID.Value; v != nil {
 		pre.sprints = []uuid.UUID{*v}
 	}
