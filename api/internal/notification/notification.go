@@ -102,15 +102,12 @@ func List(ctx context.Context, db *gorm.DB, userID uuid.UUID, unreadOnly bool, l
 	if limit < 1 || limit > MaxLimit {
 		return nil, ErrBadLimit
 	}
-	var after *pageCursor
-	if cursor != "" {
-		at, id, err := decodeCursor(cursor)
-		if err != nil {
-			return nil, err
-		}
-		after = &pageCursor{at, id}
+	after, err := parseCursor(cursor)
+	if err != nil {
+		return nil, err
 	}
-	items, err := userNotifications(db.WithContext(ctx), userID, now.Add(-Retention), unreadOnly, after, limit+1)
+	since := now.Add(-Retention) // одна граница для списка и счётчика непрочитанных
+	items, err := userNotifications(db.WithContext(ctx), userID, since, unreadOnly, after, limit+1)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +118,7 @@ func List(ctx context.Context, db *gorm.DB, userID uuid.UUID, unreadOnly bool, l
 		page.NextCursor = base64.RawURLEncoding.EncodeToString([]byte(last.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + last.ID.String()))
 	}
 	if cursor == "" {
-		unread, err := unreadSince(db.WithContext(ctx), userID, now.Add(-Retention))
+		unread, err := unreadSince(db.WithContext(ctx), userID, since)
 		if err != nil {
 			return nil, err
 		}

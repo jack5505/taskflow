@@ -211,7 +211,7 @@ func memberRole(tx *gorm.DB, projectID, userID uuid.UUID) (string, error) {
 	return roles[0], nil
 }
 
-// projectByKey — проект по ключу; withDeleted — и удалённый. Нет — nil.
+// projectByKey — проект по ключу; withDeleted — и удалённый. Нет — ErrNotFound.
 func projectByKey(db *gorm.DB, key string, withDeleted bool) (*Project, error) {
 	var p Project
 	q := db
@@ -220,7 +220,7 @@ func projectByKey(db *gorm.DB, key string, withDeleted bool) (*Project, error) {
 	}
 	err := q.First(&p, "key = ?", key).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("project: find: %w", err)
@@ -233,13 +233,16 @@ func reloadProject(tx *gorm.DB, p *Project) error {
 	return tx.First(p, "id = ?", p.ID).Error
 }
 
-// lockAnyByKey — проект по ключу (и удалённый) в p, строка FOR UPDATE; нет — found = false.
-func lockAnyByKey(tx *gorm.DB, key string, p *Project) (found bool, err error) {
+// lockAnyByKey — проект по ключу (и удалённый) в p, строка FOR UPDATE; нет — ErrNotFound.
+func lockAnyByKey(tx *gorm.DB, key string, p *Project) error {
 	res := tx.Raw(`SELECT * FROM projects WHERE key = ? FOR UPDATE`, key).Scan(p)
 	if res.Error != nil {
-		return false, fmt.Errorf("project: find: %w", res.Error)
+		return fmt.Errorf("project: find: %w", res.Error)
 	}
-	return res.RowsAffected > 0, nil
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // incrementTaskCounter — следующий номер задачи неудалённого неархивного проекта (UPDATE …
@@ -256,16 +259,16 @@ func incrementTaskCounter(tx *gorm.DB, projectID uuid.UUID) (n int, ok bool, err
 	return ns[0], true, nil
 }
 
-// liveArchived — в архиве ли неудалённый проект; удалён или нет — live = false.
-func liveArchived(tx *gorm.DB, projectID uuid.UUID) (archived, live bool, err error) {
+// archivedFlag — is_archived неудалённого проекта; удалён или нет — nil.
+func archivedFlag(tx *gorm.DB, projectID uuid.UUID) (*bool, error) {
 	var flags []bool
 	if err := tx.Raw(`SELECT is_archived FROM projects WHERE id = ? AND deleted_at IS NULL`, projectID).Scan(&flags).Error; err != nil {
-		return false, false, fmt.Errorf("project: next task number: %w", err)
+		return nil, fmt.Errorf("project: next task number: %w", err)
 	}
 	if len(flags) != 1 {
-		return false, false, nil
+		return nil, nil
 	}
-	return flags[0], true, nil
+	return &flags[0], nil
 }
 
 // listRow — проект списка с ролью пользователя.

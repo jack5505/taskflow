@@ -145,7 +145,7 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 			return err
 		}
 		now := s.now()
-		if pt == nil || pt.UsedAt != nil || !pt.ExpiresAt.After(now) {
+		if pt.UsedAt != nil || !pt.ExpiresAt.After(now) {
 			return ErrBadPasswordToken
 		}
 		u, err := user.ByID(tx, pt.UserID)

@@ -158,10 +158,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, userAgent string) (
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		rt, err := lockRefreshToken(tx, hashToken(refreshToken))
 		if err != nil {
-			return err
-		}
-		if rt == nil {
-			return ErrBadRefresh
+			return err // и ErrBadRefresh — токена нет
 		}
 		now := s.now()
 		if rt.RevokedAt != nil {
@@ -182,7 +179,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, userAgent string) (
 		if !u.IsActive {
 			return ErrUserInactive
 		}
-		if err := tx.Model(&rt).Updates(map[string]any{"revoked_at": now, "rotated": true}).Error; err != nil {
+		if err := tx.Model(rt).Updates(map[string]any{"revoked_at": now, "rotated": true}).Error; err != nil {
 			return fmt.Errorf("auth: revoke refresh: %w", err)
 		}
 		session, err = s.issueTx(tx, u, userAgent)

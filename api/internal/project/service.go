@@ -92,9 +92,6 @@ func (s *Service) Access(ctx context.Context, u *user.User, key string) (*Access
 	if err != nil {
 		return nil, err
 	}
-	if p == nil {
-		return nil, ErrNotFound
-	}
 	role, err := memberRole(db, p.ID, u.ID)
 	if err != nil {
 		return nil, err
@@ -110,14 +107,7 @@ func (a *Access) View() View { return newView(a.Project, a.Role) }
 
 // FindWithDeleted — проект по ключу, в том числе удалённый (журнал и корзина администратора).
 func (s *Service) FindWithDeleted(ctx context.Context, key string) (*Project, error) {
-	p, err := projectByKey(s.db.WithContext(ctx), key, true)
-	if err != nil {
-		return nil, err
-	}
-	if p == nil {
-		return nil, ErrNotFound
-	}
-	return p, nil
+	return projectByKey(s.db.WithContext(ctx), key, true)
 }
 
 // ListFilter — фильтры списка (§7.2): обычные, «Архив», «Удалённые» (только администратор).
@@ -387,12 +377,8 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 func (s *Service) Restore(ctx context.Context, key string) (*Project, error) {
 	var p Project
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		found, err := lockAnyByKey(tx, key, &p)
-		if err != nil {
+		if err := lockAnyByKey(tx, key, &p); err != nil {
 			return err
-		}
-		if !found {
-			return ErrNotFound
 		}
 		if !p.DeletedAt.Valid {
 			return nil
@@ -420,11 +406,11 @@ func NextTaskNumber(tx *gorm.DB, projectID uuid.UUID) (int, error) {
 	if err != nil || ok {
 		return n, err
 	}
-	archived, live, err := liveArchived(tx, projectID)
+	archived, err := archivedFlag(tx, projectID)
 	if err != nil {
 		return 0, err
 	}
-	if live && archived {
+	if archived != nil && *archived {
 		return 0, ErrArchived
 	}
 	return 0, ErrNotFound

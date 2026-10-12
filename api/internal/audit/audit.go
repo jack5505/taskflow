@@ -179,13 +179,9 @@ func List(ctx context.Context, db *gorm.DB, projectID uuid.UUID, f Filter) (*Pag
 	if limit <= 0 || limit > MaxLimit {
 		limit = 50
 	}
-	var after *pageCursor
-	if f.Cursor != "" {
-		at, id, err := decodeCursor(f.Cursor)
-		if err != nil {
-			return nil, err
-		}
-		after = &pageCursor{at, id}
+	after, err := parseCursor(f.Cursor)
+	if err != nil {
+		return nil, err
 	}
 	items, err := entries(db.WithContext(ctx), projectID, f, after, limit+1)
 	if err != nil {

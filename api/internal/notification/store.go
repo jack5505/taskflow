@@ -77,3 +77,15 @@ func unreadSince(db *gorm.DB, userID uuid.UUID, since time.Time) (int64, error) 
 	}
 	return unread, nil
 }
+
+// parseCursor — курсор страницы; пустой — nil (первая страница).
+func parseCursor(c string) (*pageCursor, error) {
+	if c == "" {
+		return nil, nil
+	}
+	at, id, err := decodeCursor(c)
+	if err != nil {
+		return nil, err
+	}
+	return &pageCursor{at, id}, nil
+}
