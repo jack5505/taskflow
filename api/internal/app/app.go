@@ -9,6 +9,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
+	"github.com/jack5505/taskflow/api/internal/github"
 	"github.com/jack5505/taskflow/api/internal/httpserver"
 	"github.com/jack5505/taskflow/api/internal/me"
 	"github.com/jack5505/taskflow/api/internal/project"
@@ -28,6 +29,9 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects).WithAttachments(cfg.AttachmentsDir, cfg.AttachmentMaxBytes, cfg.JWTSecret)
 	srv := httpserver.New(cfg, g, rdb)
+	if cfg.GitHubEnabled() {
+		srv.Mount(github.NewWebhook(cfg.GitHubWebhookSecret, github.NewIntake(rdb, jobs)).Register)
+	}
 	if cfg.TelegramWebhook() {
 		srv.Mount(telegram.NewWebhook(cfg.TelegramWebhookSecret, telegram.NewIntake(rdb, jobs)).Register)
 	}

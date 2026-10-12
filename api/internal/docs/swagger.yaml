@@ -1697,6 +1697,60 @@ paths:
       summary: Изменить комментарий
       tags:
       - comments
+  /api/v1/github/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Приём событий GitHub App (§12.2). Подпись X-Hub-Signature-256 (HMAC-SHA256
+        тела секретом App) проверяется на каждом запросе, неверная — 401. Ответ 202
+        отдаётся сразу, обработка — в очереди; повторная доставка с тем же X-GitHub-Delivery
+        (7 дней) не обрабатывается. Маршрут есть, только если задан GITHUB_APP_ID.
+      parameters:
+      - description: sha256=<hex HMAC тела>
+        in: header
+        name: X-Hub-Signature-256
+        required: true
+        type: string
+      - description: id доставки
+        in: header
+        name: X-GitHub-Delivery
+        required: true
+        type: string
+      - description: тип события
+        in: header
+        name: X-GitHub-Event
+        required: true
+        type: string
+      - description: payload события GitHub
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: 'accepted: true'
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: VALIDATION_FAILED — нет заголовка доставки или события
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: неверная подпись
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "413":
+          description: PAYLOAD_TOO_LARGE
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Webhook GitHub App
+      tags:
+      - github
   /api/v1/me:
     get:
       description: Текущий пользователь, его личные уведомления §8.7 (все ключи, с

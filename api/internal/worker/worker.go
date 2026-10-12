@@ -16,6 +16,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/auth"
 	"github.com/jack5505/taskflow/api/internal/config"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/github"
 	"github.com/jack5505/taskflow/api/internal/mail"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/outbox"
@@ -79,6 +80,9 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	mux.Handle(mail.TaskType, mail.Handler(smtp))
 	mux.Handle(auth.TaskPasswordReset, auth.PasswordResetHandler(authSvc))
 	mux.Handle(auth.TaskPasswordInvite, auth.PasswordInviteHandler(authSvc))
+	if cfg.GitHubEnabled() {
+		github.Mount(mux, github.NewProcessor())
+	}
 	accounts := telegram.NewAccounts(g, cfg.TelegramBotUsername)
 	var digest *telegram.Digest // сводки в группы и личные напоминания о сроке (§8.6, §8.7)
 	if cfg.TelegramEnabled() {

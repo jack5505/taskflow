@@ -557,6 +557,82 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/github/webhook": {
+            "post": {
+                "description": "Приём событий GitHub App (§12.2). Подпись X-Hub-Signature-256 (HMAC-SHA256 тела секретом App) проверяется на каждом запросе, неверная — 401. Ответ 202 отдаётся сразу, обработка — в очереди; повторная доставка с тем же X-GitHub-Delivery (7 дней) не обрабатывается. Маршрут есть, только если задан GITHUB_APP_ID.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "github"
+                ],
+                "summary": "Webhook GitHub App",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "sha256=\u003chex HMAC тела\u003e",
+                        "name": "X-Hub-Signature-256",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "id доставки",
+                        "name": "X-GitHub-Delivery",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "тип события",
+                        "name": "X-GitHub-Event",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "payload события GitHub",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "accepted: true",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED — нет заголовка доставки или события",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "неверная подпись",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "413": {
+                        "description": "PAYLOAD_TOO_LARGE",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/me": {
             "get": {
                 "security": [

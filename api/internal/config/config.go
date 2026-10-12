@@ -29,6 +29,14 @@ type Config struct {
 	TelegramAPIURL        string // Bot API; в тестах — фейковый сервер
 	TelegramPolling       bool   // long polling вместо webhook, только не в production (§8.8)
 
+	// GitHub App (ТЗ §12). Интеграция выключена, пока GITHUB_APP_ID пуст.
+	GitHubAppID          string
+	GitHubPrivateKeyFile string // PEM приватного ключа App
+	GitHubWebhookSecret  string
+	GitHubClientID       string // авторизация пользователя App — связка аккаунтов (§12.5)
+	GitHubClientSecret   string
+	GitHubAPIURL         string // REST API; в тестах — фейковый сервер
+
 	SMTPHost     string
 	SMTPPort     string
 	SMTPUser     string
@@ -51,6 +59,12 @@ func Load() (*Config, error) {
 		TelegramWebhookSecret: os.Getenv("TELEGRAM_WEBHOOK_SECRET"),
 		TelegramBotUsername:   os.Getenv("TELEGRAM_BOT_USERNAME"),
 		TelegramAPIURL:        getenv("TELEGRAM_API_URL", "https://api.telegram.org"),
+		GitHubAppID:           os.Getenv("GITHUB_APP_ID"),
+		GitHubPrivateKeyFile:  os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"),
+		GitHubWebhookSecret:   os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		GitHubClientID:        os.Getenv("GITHUB_CLIENT_ID"),
+		GitHubClientSecret:    os.Getenv("GITHUB_CLIENT_SECRET"),
+		GitHubAPIURL:          getenv("GITHUB_API_URL", "https://api.github.com"),
 		SMTPHost:              os.Getenv("SMTP_HOST"),
 		SMTPPort:              getenv("SMTP_PORT", "587"),
 		SMTPUser:              os.Getenv("SMTP_USER"),
@@ -83,7 +97,34 @@ func Load() (*Config, error) {
 	if err := c.checkTelegram(); err != nil {
 		return nil, err
 	}
+	if err := c.checkGitHub(); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// GitHubEnabled — интеграция с GitHub включена: задан GITHUB_APP_ID (§12.1).
+func (c *Config) GitHubEnabled() bool { return c.GitHubAppID != "" }
+
+// checkGitHub: без GITHUB_APP_ID настройки не проверяются. С ним нужны ключ App и секрет
+// вебхуков: без секрета подпись X-Hub-Signature-256 не проверить (§12.2).
+func (c *Config) checkGitHub() error {
+	if !c.GitHubEnabled() {
+		return nil
+	}
+	if _, err := strconv.ParseInt(c.GitHubAppID, 10, 64); err != nil {
+		return errors.New("GITHUB_APP_ID: ожидается числовой id GitHub App")
+	}
+	if c.GitHubPrivateKeyFile == "" {
+		return errors.New("GITHUB_APP_PRIVATE_KEY_FILE: при заданном GITHUB_APP_ID нужен путь к PEM-ключу App")
+	}
+	if len(c.GitHubWebhookSecret) < 16 || c.GitHubWebhookSecret == "change-me" {
+		return errors.New("GITHUB_WEBHOOK_SECRET: при заданном GITHUB_APP_ID нужен секрет не короче 16 символов (не change-me)")
+	}
+	if (c.GitHubClientID == "") != (c.GitHubClientSecret == "") {
+		return errors.New("GITHUB_CLIENT_ID и GITHUB_CLIENT_SECRET задаются вместе")
+	}
+	return nil
 }
 
 // TelegramEnabled — бот включён: задан токен.
