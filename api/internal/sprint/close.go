@@ -44,7 +44,7 @@ func (s *Service) Close(ctx context.Context, u *user.User, id uuid.UUID, moveTo 
 		}
 		sum.Done, sum.Total, sum.EstimateMinutes, sum.SpentMinutes = totals.Done, totals.Total, totals.EstimateMinutes, totals.SpentMinutes
 		// Снимок закрытия (§3.8) — до переноса: незакрытые на момент закрытия попадают в берндаун.
-		if err := snapshotOnClose(tx, sp, s.now()); err != nil {
+		if err := snapshotOnClose(tx, sp, p.Timezone, s.now()); err != nil {
 			return err
 		}
 		// Удалённые незакрытые — тоже: иначе восстановление вернуло бы их в закрытый спринт (§5.4).

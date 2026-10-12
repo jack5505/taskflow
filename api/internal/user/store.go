@@ -172,3 +172,17 @@ func ActiveTimezones(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	}
 	return out, nil
 }
+
+// NamesOrdered — имена пользователей ids по display_name, затем по id (сортировка базы, как в
+// ORDER BY отчётов); кого нет — того нет в ответе.
+func NamesOrdered(db *gorm.DB, ids []uuid.UUID) ([]Name, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []Name
+	if err := db.Raw(`SELECT id, display_name, telegram_username FROM users WHERE id IN ? ORDER BY display_name, id`, ids).
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("user: names: %w", err)
+	}
+	return rows, nil
+}
