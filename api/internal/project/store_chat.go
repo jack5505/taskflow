@@ -132,11 +132,15 @@ func Managers(db *gorm.DB, projectIDs []uuid.UUID) ([]Membership, error) {
 // OpenKeysOf — ключи неудалённых и неархивных проектов, где userID участник (администратор —
 // тоже только свои), по ключу.
 func OpenKeysOf(db *gorm.DB, userID uuid.UUID) ([]string, error) {
+	ps, err := ProjectsOf(db, userID)
+	if err != nil {
+		return nil, err
+	}
 	var keys []string
-	if err := db.Raw(`SELECT p.key FROM projects p
-		JOIN project_members m ON m.project_id = p.id AND m.user_id = ?
-		WHERE p.deleted_at IS NULL AND NOT p.is_archived ORDER BY p.key`, userID).Scan(&keys).Error; err != nil {
-		return nil, fmt.Errorf("project: user projects: %w", err)
+	for _, p := range ps {
+		if !p.IsArchived {
+			keys = append(keys, p.Key)
+		}
 	}
 	return keys, nil
 }

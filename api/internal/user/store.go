@@ -68,15 +68,7 @@ func LockRow(tx *gorm.DB, id uuid.UUID) error {
 
 // LockActive — активный пользователь id, строка FOR UPDATE; нет или деактивирован — nil.
 func LockActive(tx *gorm.DB, id uuid.UUID) (*User, error) {
-	var u User
-	res := tx.Raw(`SELECT * FROM users WHERE id = ? AND is_active FOR UPDATE`, id).Scan(&u)
-	if res.Error != nil {
-		return nil, fmt.Errorf("user: lock: %w", res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return nil, nil
-	}
-	return &u, nil
+	return lockUser(tx, id, "AND is_active FOR UPDATE")
 }
 
 // TelegramTaken — Telegram-аккаунт tgID привязан к другому пользователю, не exceptID.
@@ -200,9 +192,10 @@ func LockNoKeyUpdate(tx *gorm.DB, id uuid.UUID) (*User, error) {
 	return lockUser(tx, id, "FOR NO KEY UPDATE")
 }
 
-func lockUser(tx *gorm.DB, id uuid.UUID, lock string) (*User, error) {
+// lockUser — строка пользователя id с условием и блокировкой tail; нет — nil.
+func lockUser(tx *gorm.DB, id uuid.UUID, tail string) (*User, error) {
 	var u User
-	res := tx.Raw(`SELECT * FROM users WHERE id = ? `+lock, id).Scan(&u)
+	res := tx.Raw(`SELECT * FROM users WHERE id = ? `+tail, id).Scan(&u)
 	if res.Error != nil {
 		return nil, fmt.Errorf("user: lock: %w", res.Error)
 	}
@@ -223,13 +216,20 @@ func LockActiveAdmins(tx *gorm.DB) ([]uuid.UUID, error) {
 	return ids, nil
 }
 
-// Update записывает поля updates пользователю u (поля u обновляются) и перечитывает строку.
+// Update записывает поля updates пользователю u (поля u обновляются). Строку вызывающий уже
+// заблокировал (LockForUpdate, LockNoKeyUpdate); UPDATE других строк не трогает.
 func Update(tx *gorm.DB, u *User, updates map[string]any) error {
-	if len(updates) > 0 {
-		if err := tx.Model(u).Updates(updates).Error; err != nil {
-			return fmt.Errorf("user: update: %w", err)
-		}
+	if len(updates) == 0 {
+		return nil
 	}
+	if err := tx.Model(u).Updates(updates).Error; err != nil {
+		return fmt.Errorf("user: update: %w", err)
+	}
+	return nil
+}
+
+// Reload перечитывает строку пользователя u. Блокировок не берёт.
+func Reload(tx *gorm.DB, u *User) error {
 	if err := tx.First(u, "id = ?", u.ID).Error; err != nil {
 		return fmt.Errorf("user: reload: %w", err)
 	}
@@ -237,6 +237,7 @@ func Update(tx *gorm.DB, u *User, updates map[string]any) error {
 }
 
 // CreateNew создаёт пользователя u; email уже занят — created = false, ничего не пишется.
+// Блокирует только новую строку (и запись уникального индекса email до конца транзакции).
 func CreateNew(tx *gorm.DB, u *User) (created bool, err error) {
 	res := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "email"}}, DoNothing: true}).Create(u)
 	if res.Error != nil {
@@ -261,16 +262,6 @@ func ActiveBriefs(db *gorm.DB) ([]Brief, error) {
 		return nil, fmt.Errorf("user: list: %w", err)
 	}
 	return list, nil
-}
-
-// Deactivate снимает активность и привязку Telegram пользователя u (§3.1; поля u обновляются).
-func Deactivate(tx *gorm.DB, u *User) error {
-	if err := tx.Model(u).Updates(map[string]any{
-		"is_active": false, "telegram_user_id": nil, "telegram_username": nil,
-	}).Error; err != nil {
-		return fmt.Errorf("user: deactivate: %w", err)
-	}
-	return nil
 }
 
 // ActiveAmong — кто из ids активен. Блокировок не берёт.

@@ -4,6 +4,7 @@ package me
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -68,7 +69,7 @@ func (s *Service) WithTelegramBot(enabled bool) *Service {
 func (s *Service) Profile(ctx context.Context, u *user.User) (*Profile, error) {
 	mine, err := project.ProjectsOf(s.db.WithContext(ctx), u.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("me: %w", err)
 	}
 	projects := make([]MyProject, len(mine))
 	for i, p := range mine {
@@ -123,7 +124,10 @@ func (s *Service) Update(ctx context.Context, u *user.User, in Update) (*user.Us
 		if len(updates) == 0 {
 			return nil
 		}
-		return user.Update(tx, fresh, updates)
+		if err := user.Update(tx, fresh, updates); err != nil {
+			return err
+		}
+		return user.Reload(tx, fresh)
 	})
 	if err != nil {
 		return nil, err
