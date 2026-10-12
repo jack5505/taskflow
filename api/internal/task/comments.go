@@ -45,9 +45,8 @@ func (s *Service) Comments(ctx context.Context, u *user.User, key string) ([]Com
 	}
 	list := []CommentView{}
 	db := s.db.WithContext(ctx)
-	if err := db.Raw(`SELECT *, updated_at > created_at AS edited FROM comments
-		WHERE task_id = ? ORDER BY created_at, id`, t.ID).Scan(&list).Error; err != nil {
-		return nil, fmt.Errorf("task: comments: %w", err)
+	if err := taskComments(db, t.ID, &list); err != nil {
+		return nil, err
 	}
 	if err := fillCommentNames(db, list); err != nil {
 		return nil, err
@@ -68,7 +67,7 @@ func (s *Service) AddComment(ctx context.Context, u *user.User, key, body string
 	}
 	var view CommentView
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
@@ -128,9 +127,9 @@ func (s *Service) DeleteComment(ctx context.Context, u *user.User, id uuid.UUID)
 }
 
 func commentView(tx *gorm.DB, id uuid.UUID) (*CommentView, error) {
-	var v []CommentView
-	if err := tx.Raw(`SELECT *, updated_at > created_at AS edited FROM comments WHERE id = ?`, id).Scan(&v).Error; err != nil {
-		return nil, fmt.Errorf("task: comment view: %w", err)
+	v, err := commentsByID(tx, id)
+	if err != nil {
+		return nil, err
 	}
 	if len(v) == 0 {
 		return &CommentView{}, nil // как прежний JOIN без строк: пустое представление
@@ -145,23 +144,22 @@ func commentView(tx *gorm.DB, id uuid.UUID) (*CommentView, error) {
 // с проверкой, что он этой задачи, права автора/менеджера (403) и только затем архив (409).
 func (s *Service) onComment(ctx context.Context, u *user.User, id uuid.UUID, fn func(*gorm.DB, *Comment) error) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var key string
-		if err := tx.Raw(`SELECT t.key FROM comments c JOIN tasks t ON t.id = c.task_id WHERE c.id = ?`, id).Scan(&key).Error; err != nil {
-			return fmt.Errorf("task: comment: %w", err)
+		key, err := commentTaskKey(tx, id)
+		if err != nil {
+			return err
 		}
 		if key == "" {
 			return ErrCommentNotFound
 		}
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
-		var c Comment
-		res := tx.Raw(`SELECT * FROM comments WHERE id = ? AND task_id = ? FOR UPDATE`, id, o.task.ID).Scan(&c)
-		if res.Error != nil {
-			return fmt.Errorf("task: comment lock: %w", res.Error)
+		c, err := lockComment(tx, id, o.task.ID)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if c == nil {
 			return ErrCommentNotFound
 		}
 		if c.AuthorID != u.ID && !o.actor.manager {
@@ -170,7 +168,7 @@ func (s *Service) onComment(ctx context.Context, u *user.User, id uuid.UUID, fn 
 		if err := project.EnsureWritable(&o.project); err != nil {
 			return err
 		}
-		return fn(tx, &c)
+		return fn(tx, c)
 	})
 	if errors.Is(err, ErrNotFound) {
 		return ErrCommentNotFound

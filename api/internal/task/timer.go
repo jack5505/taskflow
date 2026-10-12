@@ -81,7 +81,7 @@ func (s *Service) StartTimer(ctx context.Context, u *user.User, key string) (*Ti
 		if err != nil {
 			return err
 		}
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
@@ -145,14 +145,9 @@ func (s *Service) StopTimer(ctx context.Context, u *user.User) (*TimerStop, erro
 
 // CurrentTimer — запущенный таймер пользователя для GET /me; нет — nil.
 func CurrentTimer(ctx context.Context, db *gorm.DB, userID uuid.UUID, now time.Time) (*TimerView, error) {
-	var rows []struct {
-		ActiveTimer
-		Key   string
-		Title string
-	}
-	if err := db.WithContext(ctx).Raw(`SELECT a.*, t.key, t.title FROM active_timers a JOIN tasks t ON t.id = a.task_id
-		WHERE a.user_id = ?`, userID).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("task: current timer: %w", err)
+	rows, err := timerWithTask(db.WithContext(ctx), userID)
+	if err != nil {
+		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -205,18 +200,6 @@ type timerRow struct {
 	Status     string
 	AssigneeID *uuid.UUID
 	ProjectID  uuid.UUID
-}
-
-// timerRows — запущенные таймеры с их задачами (projectID — только задач этого проекта), по
-// пользователю. Таймер у пользователя один, таблица маленькая.
-func timerRows(db *gorm.DB, projectID *uuid.UUID) ([]timerRow, error) {
-	var rows []timerRow
-	if err := db.Raw(`SELECT a.user_id, a.started_at, t.deleted_at IS NOT NULL AS deleted, t.status, t.assignee_id, t.project_id
-		FROM active_timers a JOIN tasks t ON t.id = a.task_id
-		WHERE (CAST(? AS uuid) IS NULL OR t.project_id = ?) ORDER BY a.user_id`, projectID, projectID).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("task: timers: %w", err)
-	}
-	return rows, nil
 }
 
 // StopProjectTimers — таймеры проекта при его архивации и удалении (§3.2): воркер по событию
@@ -303,10 +286,9 @@ func stopStaleTaskTimers(tx *gorm.DB, t *Task, at time.Time) error {
 	if t.Status == StatusInProgress && t.DeletedAt == nil && t.AssigneeID != nil {
 		keep = *t.AssigneeID
 	}
-	var timers []ActiveTimer
-	if err := tx.Raw(`SELECT * FROM active_timers WHERE task_id = ? AND user_id <> ? ORDER BY user_id FOR UPDATE`,
-		t.ID, keep).Scan(&timers).Error; err != nil {
-		return fmt.Errorf("task: task timers: %w", err)
+	timers, err := lockTaskTimersExcept(tx, t.ID, keep)
+	if err != nil {
+		return err
 	}
 	for i := range timers {
 		if _, err := stopTimer(tx, &timers[i], t, at); err != nil {
@@ -327,10 +309,7 @@ func lockTimerOwner(tx *gorm.DB, userID uuid.UUID) error {
 	if me == nil || !me.IsActive {
 		return errUserBlocked
 	}
-	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('timer:' || ?))`, userID.String()).Error; err != nil {
-		return fmt.Errorf("task: timer lock: %w", err)
-	}
-	return nil
+	return lockTimerKey(tx, userID)
 }
 
 // lockUserTimer — таймер пользователя под блокировкой вместе с его задачей. Порядок «задача →
@@ -339,26 +318,26 @@ func lockTimerOwner(tx *gorm.DB, userID uuid.UUID) error {
 // на другой задаче — повтор. Нет таймера — nil.
 func lockUserTimer(tx *gorm.DB, userID uuid.UUID) (*ActiveTimer, *Task, error) {
 	for range 3 {
-		var ids []uuid.UUID
-		if err := tx.Raw(`SELECT task_id FROM active_timers WHERE user_id = ?`, userID).Scan(&ids).Error; err != nil {
-			return nil, nil, fmt.Errorf("task: timer: %w", err)
+		ids, err := timerTaskIDs(tx, userID)
+		if err != nil {
+			return nil, nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil, nil
 		}
-		var t Task
-		if err := tx.Raw(`SELECT * FROM tasks WHERE id = ? FOR UPDATE`, ids[0]).Scan(&t).Error; err != nil {
-			return nil, nil, fmt.Errorf("task: timer task: %w", err)
+		t, err := lockTaskRow(tx, ids[0])
+		if err != nil {
+			return nil, nil, err
 		}
-		var timers []ActiveTimer
-		if err := tx.Raw(`SELECT * FROM active_timers WHERE user_id = ? FOR UPDATE`, userID).Scan(&timers).Error; err != nil {
-			return nil, nil, fmt.Errorf("task: timer lock: %w", err)
+		timers, err := lockUserTimers(tx, userID)
+		if err != nil {
+			return nil, nil, err
 		}
 		if len(timers) == 0 {
 			return nil, nil, nil
 		}
-		if timers[0].TaskID == t.ID {
-			return &timers[0], &t, nil
+		if t != nil && timers[0].TaskID == t.ID {
+			return &timers[0], t, nil
 		}
 	}
 	return nil, nil, errors.New("task: timer: таймер всё время перезапускается")
@@ -372,8 +351,8 @@ func lockUserTimer(tx *gorm.DB, userID uuid.UUID) (*ActiveTimer, *Task, error) {
 // время уже отработано, а таймер в таком состоянии остаться не может — его останавливают раньше.
 // Задача t — под FOR UPDATE, строка таймера — тоже.
 func stopTimer(tx *gorm.DB, timer *ActiveTimer, t *Task, at time.Time) (*TimerStop, error) {
-	if err := tx.Exec(`DELETE FROM active_timers WHERE user_id = ?`, timer.UserID).Error; err != nil {
-		return nil, fmt.Errorf("task: timer delete: %w", err)
+	if err := deleteUserTimer(tx, timer.UserID); err != nil {
+		return nil, err
 	}
 	res := &TimerStop{TaskKey: t.Key, Worklogs: []WorklogView{}}
 	end := at
@@ -435,6 +414,9 @@ func splitByDay(from, to time.Time, loc *time.Location) []dayPart {
 // timerWorklog — запись части таймера с обрезкой по дневному лимиту; nil — остатка лимита нет.
 // Обрезка публикует timer.trimmed (уведомление пользователю, §6.4, §7.7).
 func timerWorklog(tx *gorm.DB, t *Task, userID uuid.UUID, p dayPart, now time.Time) (*WorklogView, error) {
+	if err := lockWorklogDay(tx, userID); err != nil {
+		return nil, err
+	}
 	used, err := dayUsed(tx, userID, p.date, uuid.Nil)
 	if err != nil {
 		return nil, err

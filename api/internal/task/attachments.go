@@ -111,9 +111,8 @@ func (s *Service) Attachments(ctx context.Context, u *user.User, key string) ([]
 	}
 	list := []AttachmentView{}
 	db := s.db.WithContext(ctx)
-	if err := db.Raw(`SELECT * FROM attachments WHERE task_id = ? ORDER BY created_at DESC, id`, t.ID).
-		Scan(&list).Error; err != nil {
-		return nil, fmt.Errorf("task: attachments: %w", err)
+	if err := taskAttachments(db, t.ID, &list); err != nil {
+		return nil, err
 	}
 	if err := fillNames(db, list, func(v *AttachmentView) *uuid.UUID { return &v.AuthorID },
 		func(v *AttachmentView, name string) { v.AuthorName = name }); err != nil {
@@ -154,7 +153,7 @@ func (s *Service) AddAttachment(ctx context.Context, u *user.User, key string, i
 	path := filepath.Join(s.files.dir, id.String())
 	var view AttachmentView
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
@@ -273,10 +272,9 @@ func cleanFileName(name string) string {
 // AttachmentLink — подписанная ссылка на 10 минут после проверки прав (§3.9): участник проекта,
 // вложение удалённой задачи — только администратор.
 func (s *Service) AttachmentLink(ctx context.Context, u *user.User, id uuid.UUID) (*DownloadLink, error) {
-	var key string
-	if err := s.db.WithContext(ctx).Raw(`SELECT t.key FROM attachments a JOIN tasks t ON t.id = a.task_id WHERE a.id = ?`, id).
-		Scan(&key).Error; err != nil {
-		return nil, fmt.Errorf("task: attachment: %w", err)
+	key, err := attachmentTaskKey(s.db.WithContext(ctx), id)
+	if err != nil {
+		return nil, err
 	}
 	if key == "" {
 		return nil, ErrAttachmentNotFound
@@ -298,12 +296,11 @@ func (s *Service) OpenAttachment(ctx context.Context, id uuid.UUID, exp, sig str
 	if err != nil || !hmac.Equal([]byte(sig), []byte(s.files.sign(id, e))) || s.now().Unix() > e {
 		return nil, nil, errBadDownloadLink
 	}
-	var a Attachment
-	res := s.db.WithContext(ctx).Raw(`SELECT * FROM attachments WHERE id = ?`, id).Scan(&a)
-	if res.Error != nil {
-		return nil, nil, fmt.Errorf("task: attachment: %w", res.Error)
+	a, err := attachmentByID(s.db.WithContext(ctx), id)
+	if err != nil {
+		return nil, nil, err
 	}
-	if res.RowsAffected == 0 {
+	if a == nil {
 		return nil, nil, ErrAttachmentNotFound
 	}
 	f, err := os.Open(filepath.Join(s.files.dir, filepath.Base(a.StoragePath)))
@@ -313,7 +310,7 @@ func (s *Service) OpenAttachment(ctx context.Context, id uuid.UUID, exp, sig str
 	if err != nil {
 		return nil, nil, fmt.Errorf("task: attachment open: %w", err)
 	}
-	return &a, f, nil
+	return a, f, nil
 }
 
 // DeleteAttachment — удаление автором или менеджером (§2: чужие — только менеджер). Порядок как
@@ -322,23 +319,22 @@ func (s *Service) OpenAttachment(ctx context.Context, id uuid.UUID, exp, sig str
 func (s *Service) DeleteAttachment(ctx context.Context, u *user.User, id uuid.UUID) error {
 	var path string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var key string
-		if err := tx.Raw(`SELECT t.key FROM attachments a JOIN tasks t ON t.id = a.task_id WHERE a.id = ?`, id).Scan(&key).Error; err != nil {
-			return fmt.Errorf("task: attachment: %w", err)
+		key, err := attachmentTaskKey(tx, id)
+		if err != nil {
+			return err
 		}
 		if key == "" {
 			return ErrAttachmentNotFound
 		}
-		o, err := openTask(tx, u, key, preLock{}, "FOR SHARE")
+		o, err := openTask(tx, u, key, preLock{}, forShare)
 		if err != nil {
 			return err
 		}
-		var a Attachment
-		res := tx.Raw(`SELECT * FROM attachments WHERE id = ? AND task_id = ? FOR UPDATE`, id, o.task.ID).Scan(&a)
-		if res.Error != nil {
-			return fmt.Errorf("task: attachment lock: %w", res.Error)
+		a, err := lockAttachment(tx, id, o.task.ID)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if a == nil {
 			return ErrAttachmentNotFound
 		}
 		if a.AuthorID != u.ID && !o.actor.manager {
