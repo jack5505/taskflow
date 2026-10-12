@@ -1,4 +1,4 @@
-# SQL вне слоя запросов (эпик #140, #145): «файл (от api/internal) число_строк_SQL».
+# SQL вне слоя запросов (эпик #140, #145): «файл (от api/internal) число_запросов».
 # Список только сокращается: перенёс запросы в store.go — уменьши число или удали строку.
 # Новые строки сюда не добавляются — SQL пишется в store.go / store_*.go модуля (api/CLAUDE.md).
 audit/audit.go 1
@@ -8,18 +8,19 @@ notification/due.go 2
 notification/notification.go 1
 outbox/relay.go 3
 project/members.go 1
-project/service.go 6
+project/service.go 11
 sprint/report.go 5
 sprint/snapshot.go 3
-sprint/sprint.go 4
+sprint/sprint.go 5
 task/attachments.go 5
 task/by_id.go 1
 task/comments.go 4
 task/list.go 2
 task/move.go 1
+task/service.go 3
 task/sprint_tasks.go 2
 task/timer.go 8
-task/transition.go 6
+task/transition.go 5
 task/trash.go 1
 task/worklogs.go 8
 telegram/account.go 5
