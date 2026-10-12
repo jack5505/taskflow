@@ -42,6 +42,7 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	c.PATCH("/:id", h.updateComment)
 	c.DELETE("/:id", h.deleteComment)
 	t.GET("/:task_key/history", h.history)
+	t.GET("/:task_key/github", h.githubLinks)
 	t.POST("/:task_key/transition", h.transition)
 	t.POST("/:task_key/take", h.take)
 	h.registerAttachments(api)
@@ -116,6 +117,27 @@ func (h *Handlers) get(c *gin.Context) {
 		return
 	}
 	respond(c, http.StatusOK, t)
+}
+
+// githubLinks — ветки и pull request'ы задачи (§12.3).
+//
+// @Summary      Ветки и PR задачи
+// @Description  Ветки и pull request'ы GitHub, связанные с задачей по ключу (§12.3): ветки, затем PR, по времени появления; состояние PR — open, draft, merged, closed. Видит участник проекта; удалённую задачу — администратор.
+// @Tags         tasks
+// @Produce      json
+// @Security     BearerAuth
+// @Param        task_key  path      string  true  "ключ задачи"
+// @Success      200       {array}   task.Link
+// @Failure      401       {object}  apierr.Response
+// @Failure      404       {object}  apierr.Response  "NOT_FOUND"
+// @Router       /api/v1/tasks/{task_key}/github [get]
+func (h *Handlers) githubLinks(c *gin.Context) {
+	list, err := h.svc.GitHubLinks(c.Request.Context(), auth.CurrentUser(c), c.Param("task_key"))
+	if err != nil {
+		httpserver.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, list)
 }
 
 // history — история изменений задачи (§3.7).

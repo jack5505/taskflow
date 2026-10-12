@@ -50,7 +50,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
 	notification.Register(d, g)
-	github.Register(d, github.NewProcessor()) // доставки вебхуков GitHub (§12.2)
+	github.Register(d, github.NewProcessor(g)) // доставки вебхуков GitHub (§12.2)
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects)
 	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }

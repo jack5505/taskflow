@@ -799,6 +799,41 @@ definitions:
       user_id:
         type: string
     type: object
+  task.Link:
+    properties:
+      author_login:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      kind:
+        enum:
+        - branch
+        - pr
+        type: string
+      name:
+        example: 'TM-42: вход по паролю'
+        type: string
+      number:
+        example: 7
+        type: integer
+      repo:
+        example: acme/backend
+        type: string
+      state:
+        enum:
+        - open
+        - draft
+        - merged
+        - closed
+        type: string
+      updated_at:
+        type: string
+      url:
+        example: https://github.com/acme/backend/pull/7
+        type: string
+    type: object
   task.ListItem:
     properties:
       assignee_id:
@@ -3599,6 +3634,39 @@ paths:
       summary: Добавить комментарий
       tags:
       - comments
+  /api/v1/tasks/{task_key}/github:
+    get:
+      description: 'Ветки и pull request''ы GitHub, связанные с задачей по ключу (§12.3):
+        ветки, затем PR, по времени появления; состояние PR — open, draft, merged,
+        closed. Видит участник проекта; удалённую задачу — администратор.'
+      parameters:
+      - description: ключ задачи
+        in: path
+        name: task_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/task.Link'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Ветки и PR задачи
+      tags:
+      - tasks
   /api/v1/tasks/{task_key}/history:
     get:
       parameters:

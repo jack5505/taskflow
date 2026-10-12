@@ -3273,6 +3273,55 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tasks/{task_key}/github": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ветки и pull request'ы GitHub, связанные с задачей по ключу (§12.3): ветки, затем PR, по времени появления; состояние PR — open, draft, merged, closed. Видит участник проекта; удалённую задачу — администратор.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "summary": "Ветки и PR задачи",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ задачи",
+                        "name": "task_key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/task.Link"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tasks/{task_key}/history": {
             "get": {
                 "security": [
@@ -5310,6 +5359,55 @@ const docTemplate = `{
                 },
                 "user_id": {
                     "type": "string"
+                }
+            }
+        },
+        "task.Link": {
+            "type": "object",
+            "properties": {
+                "author_login": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "branch",
+                        "pr"
+                    ]
+                },
+                "name": {
+                    "type": "string",
+                    "example": "TM-42: вход по паролю"
+                },
+                "number": {
+                    "type": "integer",
+                    "example": 7
+                },
+                "repo": {
+                    "type": "string",
+                    "example": "acme/backend"
+                },
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "open",
+                        "draft",
+                        "merged",
+                        "closed"
+                    ]
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://github.com/acme/backend/pull/7"
                 }
             }
         },

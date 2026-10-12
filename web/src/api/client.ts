@@ -471,6 +471,23 @@ export interface TaskHistoryView {
   user_id?: string;
 }
 
+export interface TaskLink {
+  author_login?: string;
+  created_at?: string;
+  id?: string;
+  kind?: "branch" | "pr";
+  /** @example "TM-42: вход по паролю" */
+  name?: string;
+  /** @example 7 */
+  number?: number;
+  /** @example "acme/backend" */
+  repo?: string;
+  state?: "open" | "draft" | "merged" | "closed";
+  updated_at?: string;
+  /** @example "https://github.com/acme/backend/pull/7" */
+  url?: string;
+}
+
 export interface TaskListItem {
   assignee_id?: string;
   completed_at?: string;
@@ -2318,6 +2335,24 @@ export class Api<
         body: body,
         secure: true,
         type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Ветки и pull request'ы GitHub, связанные с задачей по ключу (§12.3): ветки, затем PR, по времени появления; состояние PR — open, draft, merged, closed. Видит участник проекта; удалённую задачу — администратор.
+     *
+     * @tags tasks
+     * @name V1TasksGithubList
+     * @summary Ветки и PR задачи
+     * @request GET:/api/v1/tasks/{task_key}/github
+     * @secure
+     */
+    v1TasksGithubList: (taskKey: string, params: RequestParams = {}) =>
+      this.request<TaskLink[], ApierrResponse>({
+        path: `/api/v1/tasks/${taskKey}/github`,
+        method: "GET",
+        secure: true,
         format: "json",
         ...params,
       }),

@@ -103,6 +103,34 @@ function Description({
   );
 }
 
+const PR_STATES: Record<string, string> = { open: "открыт", draft: "черновик", merged: "влит", closed: "закрыт" };
+
+/** Ветки и PR GitHub задачи (§12.3); связей нет — блока нет. */
+function GitHubLinks({ taskKey }: { taskKey: string }) {
+  const links = useQuery({
+    queryKey: ["task", taskKey, "github"],
+    queryFn: async ({ signal }) => (await api.api.v1TasksGithubList(taskKey, { signal })).data ?? [],
+  });
+  if (!links.data || links.data.length === 0) return null;
+  return (
+    <section className="panel github-links">
+      <h3>GitHub</h3>
+      <ul>
+        {links.data.map((l) => (
+          <li key={l.id}>
+            {l.kind === "pr" ? `PR #${l.number}` : "Ветка"}{" "}
+            <a href={l.url} target="_blank" rel="noreferrer">
+              {l.name}
+            </a>{" "}
+            <span className="muted">{l.repo}</span>
+            {l.kind === "pr" && l.state && <span className="badge">{PR_STATES[l.state] ?? l.state}</span>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function History({ taskKey, ctx }: { taskKey: string; ctx: ValueContext }) {
   const history = useQuery({
     queryKey: historyQueryKey(taskKey),
@@ -414,6 +442,8 @@ export function TaskPage() {
               onSave={(d, base) => saveEdits({ description: d }, base)}
             />
           </section>
+
+          <GitHubLinks taskKey={key} />
 
           <nav className="tabs" role="tablist" aria-label="Разделы задачи">
             {tabs.map((x) => (

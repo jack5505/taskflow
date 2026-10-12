@@ -36,6 +36,9 @@ const (
 
 	// GitHubDelivery — служебное: принятая доставка вебхука GitHub App, обработку делает воркер (§12.2).
 	GitHubDelivery = "github.delivery"
+	// GitHubLinked — у задачи появилась ветка или PR (§12.6); GitHubPRChanged — сменилось состояние PR.
+	GitHubLinked    = "github.linked"
+	GitHubPRChanged = "github.pr_changed"
 )
 
 var known = map[string]struct{}{
@@ -46,7 +49,7 @@ var known = map[string]struct{}{
 	TimerAutoStopped: {}, TimerTrimmed: {},
 	MemberAdded: {}, MemberRemoved: {}, MemberRoleChanged: {}, UserDeactivated: {},
 	ProjectArchived: {}, ProjectDeleted: {},
-	GitHubDelivery: {},
+	GitHubDelivery: {}, GitHubLinked: {}, GitHubPRChanged: {},
 }
 
 // Known сообщает, описан ли тип события в ТЗ §9.4. Publish отклоняет неизвестные типы:

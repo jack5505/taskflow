@@ -326,3 +326,23 @@ func SetGitHubRepo(tx *gorm.DB, id uuid.UUID, repo *string, installationID *int6
 	}
 	return nil
 }
+
+// GitHubTarget — проект, к которому привязан репозиторий: ключ для поиска задач по ключу.
+type GitHubTarget struct {
+	ID  uuid.UUID
+	Key string
+}
+
+// ByGitHubRepo — неудалённый неархивный проект с репозиторием fullName (регистр не важен); нет —
+// nil: события удалённого и архивного проекта не обрабатываются (§12.3).
+func ByGitHubRepo(db *gorm.DB, fullName string) (*GitHubTarget, error) {
+	var rows []GitHubTarget
+	if err := db.Raw(`SELECT id, key FROM projects WHERE lower(github_repo) = lower(?) AND deleted_at IS NULL AND NOT is_archived`,
+		fullName).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("project: by github repo: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
