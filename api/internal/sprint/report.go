@@ -3,7 +3,6 @@ package sprint
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"math"
 	"slices"
 	"time"
@@ -81,19 +80,16 @@ func (s *Service) Report(ctx context.Context, u *user.User, id uuid.UUID) (*Repo
 	db := s.db.WithContext(ctx)
 	r := Report{Sprint: *v, Added: []Change{}, Removed: []Change{}, Spent: []Spent{}}
 
-	if err := db.Raw(`SELECT count(*) AS tasks, COALESCE(SUM(estimate_minutes), 0) AS estimate_minutes,
-			count(*) FILTER (WHERE estimate_minutes = 0) AS without_estimate
-		FROM sprint_start_scope WHERE sprint_id = ?`, id).Scan(&r.Start).Error; err != nil {
-		return nil, fmt.Errorf("sprint: report start: %w", err)
+	if r.Start, err = startScopeTotals(db, id); err != nil {
+		return nil, err
 	}
 	// Задачи спринта сейчас; у завершённого к ним прибавляются незакрытые из снимка закрытия —
 	// при закрытии они ушли в бэклог или следующий спринт (§5.4).
 	r.Current = Totals{Tasks: v.TasksCount, EstimateMinutes: v.EstimateMinutes}
 	if v.State == StateClosed {
-		var sn []Totals
-		if err := db.Raw(`SELECT open_tasks AS tasks, open_estimate_minutes AS estimate_minutes FROM sprint_daily_snapshots
-			WHERE sprint_id = ? ORDER BY date DESC LIMIT 1`, id).Scan(&sn).Error; err != nil {
-			return nil, fmt.Errorf("sprint: report current: %w", err)
+		sn, err := lastSnapshotOpen(db, id)
+		if err != nil {
+			return nil, err
 		}
 		if len(sn) > 0 {
 			r.Current.Tasks += sn[0].Tasks
@@ -101,10 +97,9 @@ func (s *Service) Report(ctx context.Context, u *user.User, id uuid.UUID) (*Repo
 		}
 	}
 
-	var changes []Change
-	if err := db.Raw(`SELECT task_id, user_id AS "by", created_at AS "at", action
-		FROM sprint_log WHERE sprint_id = ? ORDER BY created_at, id`, id).Scan(&changes).Error; err != nil {
-		return nil, fmt.Errorf("sprint: report log: %w", err)
+	changes, err := sprintLog(db, id)
+	if err != nil {
+		return nil, err
 	}
 	ids := make([]uuid.UUID, len(changes))
 	for i, c := range changes {
@@ -164,10 +159,9 @@ func (s *Service) spent(ctx context.Context, r *Report) error {
 		return err
 	}
 	// Задачи, бывшие в спринте после старта: на старте и в журнале (уникальность — UNION).
-	var logged []uuid.UUID
-	if err := db.Raw(`SELECT task_id FROM sprint_start_scope WHERE sprint_id = @s
-		UNION SELECT task_id FROM sprint_log WHERE sprint_id = @s`, map[string]any{"s": sp.ID}).Scan(&logged).Error; err != nil {
-		return fmt.Errorf("sprint: report spent: %w", err)
+	logged, err := scopeAndLogTasks(db, sp.ID)
+	if err != nil {
+		return err
 	}
 	byUser, err := task.SpentByUser(db, append(ids, logged...), sp.StartDate.Time, until)
 	if err != nil {
@@ -201,16 +195,9 @@ func (s *Service) burndown(ctx context.Context, r *Report) error {
 	if r.Sprint.StartDate == nil || r.Sprint.EndDate == nil {
 		return nil
 	}
-	var snaps []struct {
-		Date                time.Time
-		OpenTasks           int
-		OpenEstimateMinutes int
-		DoneTasks           int
-	}
-	if err := s.db.WithContext(ctx).Raw(`SELECT date, open_tasks, open_estimate_minutes, done_tasks
-		FROM sprint_daily_snapshots WHERE sprint_id = ? AND date BETWEEN ? AND ?`,
-		r.Sprint.ID, *r.Sprint.StartDate, *r.Sprint.EndDate).Scan(&snaps).Error; err != nil {
-		return fmt.Errorf("sprint: report snapshots: %w", err)
+	snaps, err := snapshotsBetween(s.db.WithContext(ctx), r.Sprint.ID, *r.Sprint.StartDate, *r.Sprint.EndDate)
+	if err != nil {
+		return err
 	}
 	byDate := make(map[string]int, len(snaps))
 	for i, sn := range snaps {

@@ -104,11 +104,9 @@ func (r *Relay) cleanupLogged() {
 func (r *Relay) RunOnce(ctx context.Context) (int, error) {
 	sent := 0
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var batch []events.OutboxEvent
-		if err := tx.Raw(`SELECT id, type, payload, created_at, sent_at FROM outbox_events
-			WHERE sent_at IS NULL ORDER BY created_at, id LIMIT ? FOR UPDATE SKIP LOCKED`, batchSize).
-			Scan(&batch).Error; err != nil {
-			return fmt.Errorf("select: %w", err)
+		batch, err := lockUnsent(tx, batchSize)
+		if err != nil {
+			return err
 		}
 		if len(batch) == 0 {
 			return nil
@@ -120,8 +118,8 @@ func (r *Relay) RunOnce(ctx context.Context) (int, error) {
 			}
 			ids = append(ids, ev.ID)
 		}
-		if err := tx.Exec(`UPDATE outbox_events SET sent_at = now() WHERE id IN ?`, ids).Error; err != nil {
-			return fmt.Errorf("mark sent: %w", err)
+		if err := markSent(tx, ids); err != nil {
+			return err
 		}
 		sent = len(ids)
 		return nil
@@ -154,6 +152,5 @@ func (r *Relay) enqueue(ctx context.Context, ev events.OutboxEvent) error {
 // Cleanup удаляет отправленные события старше 7 дней. Возраст считает база — тот же источник
 // времени, что ставил sent_at.
 func (r *Relay) Cleanup(ctx context.Context) (int64, error) {
-	res := r.db.WithContext(ctx).Exec(`DELETE FROM outbox_events WHERE sent_at IS NOT NULL AND sent_at < now() - ?::interval`, retention)
-	return res.RowsAffected, res.Error
+	return deleteSentBefore(r.db.WithContext(ctx), retention)
 }

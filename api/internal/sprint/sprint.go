@@ -147,26 +147,23 @@ func dateIn(t time.Time, tz string) (time.Time, error) {
 // List — спринты проекта: активный, запланированные по дате начала, затем закрытые (новые первыми).
 func (s *Service) List(ctx context.Context, a *project.Access) ([]View, error) {
 	db := s.db.WithContext(ctx)
-	var rows []Sprint
-	if err := db.Raw(`SELECT * FROM sprints WHERE project_id = ?
-		ORDER BY CASE state WHEN 'active' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END,
-			CASE WHEN state = 'closed' THEN NULL ELSE start_date END NULLS LAST,
-			closed_at DESC NULLS LAST, created_at`, a.Project.ID).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("sprint: list: %w", err)
+	rows, err := projectSprints(db, a.Project.ID)
+	if err != nil {
+		return nil, err
 	}
 	return s.views(db, rows)
 }
 
 // Get — спринт с доступом к его проекту (не участник — 404).
 func (s *Service) Get(ctx context.Context, u *user.User, id uuid.UUID) (*View, *project.Access, error) {
-	var projectIDs []uuid.UUID
-	if err := s.db.WithContext(ctx).Raw(`SELECT project_id FROM sprints WHERE id = ?`, id).Scan(&projectIDs).Error; err != nil {
-		return nil, nil, fmt.Errorf("sprint: find: %w", err)
+	projectID, err := sprintProject(s.db.WithContext(ctx), id)
+	if err != nil {
+		return nil, nil, err
 	}
-	if len(projectIDs) == 0 {
+	if projectID == nil {
 		return nil, nil, ErrNotFound
 	}
-	key, err := project.KeyWithDeleted(s.db.WithContext(ctx), projectIDs[0])
+	key, err := project.KeyWithDeleted(s.db.WithContext(ctx), *projectID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -188,9 +185,9 @@ func (s *Service) Get(ctx context.Context, u *user.User, id uuid.UUID) (*View, *
 }
 
 func (s *Service) view(tx *gorm.DB, id uuid.UUID) (*View, error) {
-	var rows []Sprint
-	if err := tx.Raw(`SELECT * FROM sprints WHERE id = ?`, id).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("sprint: view: %w", err)
+	rows, err := sprintRows(tx, id)
+	if err != nil {
+		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, ErrNotFound
@@ -374,9 +371,9 @@ func (s *Service) lockedWith(ctx context.Context, u *user.User, id uuid.UUID, ot
 		if otherID != nil && *otherID != id {
 			ids = append(ids, *otherID)
 		}
-		var rows []Sprint
-		if err := tx.Raw(`SELECT * FROM sprints WHERE id IN ? ORDER BY id FOR UPDATE`, ids).Scan(&rows).Error; err != nil {
-			return fmt.Errorf("sprint: lock: %w", err)
+		rows, err := lockSprints(tx, ids)
+		if err != nil {
+			return err
 		}
 		var sp, other *Sprint
 		for i := range rows {
@@ -424,9 +421,9 @@ func (s *Service) lockedWith(ctx context.Context, u *user.User, id uuid.UUID, ot
 // defaultName — «Спринт N» (§3.4): N — порядковый номер в проекте; после удаления спринта имя не
 // повторяет существующее.
 func defaultName(tx *gorm.DB, projectID uuid.UUID) (string, error) {
-	var names []string
-	if err := tx.Model(&Sprint{}).Where("project_id = ?", projectID).Pluck("name", &names).Error; err != nil {
-		return "", fmt.Errorf("sprint: names: %w", err)
+	names, err := sprintNames(tx, projectID)
+	if err != nil {
+		return "", err
 	}
 	taken := make(map[string]bool, len(names))
 	for _, n := range names {
