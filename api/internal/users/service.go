@@ -249,13 +249,13 @@ func lastManagerOf(tx *gorm.DB, userID uuid.UUID, managed []project.Brief) ([]st
 			others = append(others, m.UserID)
 		}
 	}
-	active, err := user.ActiveTimezones(tx, others)
+	active, err := user.ActiveAmong(tx, others)
 	if err != nil {
 		return nil, err
 	}
 	covered := map[uuid.UUID]bool{}
 	for _, m := range managers {
-		if _, ok := active[m.UserID]; ok && m.UserID != userID {
+		if active[m.UserID] && m.UserID != userID {
 			covered[m.ProjectID] = true
 		}
 	}

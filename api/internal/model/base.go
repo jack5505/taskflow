@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,6 +75,23 @@ func (t *TimeOfDay) parse(s string) error {
 		}
 	}
 	return fmt.Errorf("TimeOfDay: не разобрать %q", s)
+}
+
+// locations — загруженные пояса: time.LoadLocation каждый раз читает tzdata, а воркер считает
+// даты по поясам пользователей и проектов раз в минуту.
+var locations sync.Map
+
+// Location — пояс IANA tz из кэша.
+func Location(tz string) (*time.Location, error) {
+	if loc, ok := locations.Load(tz); ok {
+		return loc.(*time.Location), nil
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, fmt.Errorf("timezone %q: %w", tz, err)
+	}
+	stored, _ := locations.LoadOrStore(tz, loc)
+	return stored.(*time.Location), nil
 }
 
 // ValidTimezone — пояс IANA, который можно загрузить (tzdata в образе). "Local" и пустой — нет.

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
@@ -58,46 +60,48 @@ type Due struct {
 func dueCandidates(tx *gorm.DB, now time.Time) ([]Due, error) {
 	// Грубая граница по дате UTC: пояса расходятся меньше чем на двое суток, а индекс
 	// tasks_open_due_idx отсекает остальные задачи.
-	y, m, d := now.UTC().Date()
-	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	today := dateOf(now.UTC())
 	tasks, err := task.OpenDueBetween(tx, today.AddDate(0, 0, -2), today.AddDate(0, 0, 2))
 	if err != nil || len(tasks) == 0 {
 		return nil, err
 	}
-	var projectIDs, userIDs []uuid.UUID
-	for _, t := range tasks {
-		if !slices.Contains(projectIDs, t.ProjectID) {
-			projectIDs = append(projectIDs, t.ProjectID)
-		}
-		if !slices.Contains(userIDs, t.AssigneeID) {
-			userIDs = append(userIDs, t.AssigneeID)
-		}
-	}
-	projects, err := project.LiveBriefs(tx, projectIDs, true)
+	zones, err := user.ActiveTimezones(tx, uniq(tasks, func(t task.DueTask) uuid.UUID { return t.AssigneeID }))
 	if err != nil {
 		return nil, err
 	}
-	zones, err := user.ActiveTimezones(tx, userIDs)
-	if err != nil {
-		return nil, err
-	}
-	members, err := project.Memberships(tx, projectIDs, userIDs)
-	if err != nil {
-		return nil, err
-	}
+	// Сначала окно 09:00–22:00 по поясу исполнителя: почти на каждом проходе дальше идти некуда.
 	from, quiet := clockOf(DueHour), clockOf(DueQuietFrom)
-	var cand []Due
+	userNow := map[uuid.UUID]time.Time{}
+	inWindow := tasks[:0]
 	for _, t := range tasks {
-		p, ok := projects[t.ProjectID]
 		tz, active := zones[t.AssigneeID]
-		if !ok || !active || !members[project.Membership{ProjectID: t.ProjectID, UserID: t.AssigneeID}] {
+		if !active {
 			continue
 		}
 		local, err := inZone(now, tz)
 		if err != nil {
 			return nil, err
 		}
-		if c := sinceMidnight(local); c < from || c >= quiet {
+		if c := sinceMidnight(local); c >= from && c < quiet {
+			inWindow, userNow[t.AssigneeID] = append(inWindow, t), local
+		}
+	}
+	if len(inWindow) == 0 {
+		return nil, nil
+	}
+	projectIDs := uniq(inWindow, func(t task.DueTask) uuid.UUID { return t.ProjectID })
+	projects, err := project.LiveBriefs(tx, projectIDs, true)
+	if err != nil {
+		return nil, err
+	}
+	members, err := project.Memberships(tx, projectIDs, uniq(inWindow, func(t task.DueTask) uuid.UUID { return t.AssigneeID }))
+	if err != nil {
+		return nil, err
+	}
+	var cand []Due
+	for _, t := range inWindow {
+		p, ok := projects[t.ProjectID]
+		if !ok || !members[project.Membership{ProjectID: t.ProjectID, UserID: t.AssigneeID}] {
 			continue
 		}
 		projectNow, err := inZone(now, p.Timezone)
@@ -106,7 +110,7 @@ func dueCandidates(tx *gorm.DB, now time.Time) ([]Due, error) {
 		}
 		r := Due{UserID: t.AssigneeID, TaskID: t.ID, Key: t.Key, Title: t.Title, ProjectID: t.ProjectID,
 			ProjectKey: p.Key, DueDate: t.DueDate}
-		if t.DueDate.Equal(dateOf(local).AddDate(0, 0, 1)) {
+		if t.DueDate.Equal(dateOf(userNow[t.AssigneeID]).AddDate(0, 0, 1)) {
 			r.Kind = DueTomorrow
 			cand = append(cand, r)
 		}
@@ -115,14 +119,40 @@ func dueCandidates(tx *gorm.DB, now time.Time) ([]Due, error) {
 			cand = append(cand, r)
 		}
 	}
+	return recordDue(tx, cand)
+}
+
+// recordDue записывает напоминания cand в due_reminders одним запросом и возвращает только
+// записанные (уже отправленные раньше отсеиваются ON CONFLICT) по ключу задачи и виду.
+func recordDue(tx *gorm.DB, cand []Due) ([]Due, error) {
+	if len(cand) == 0 {
+		return nil, nil
+	}
+	values := make([]string, len(cand))
+	args := make([]any, 0, 4*len(cand))
+	for i, r := range cand {
+		values[i] = "(?, ?, ?, ?)"
+		args = append(args, r.TaskID, r.Kind, r.DueDate.Format(time.DateOnly), r.UserID)
+	}
+	var inserted []struct {
+		TaskID uuid.UUID
+		Kind   string
+	}
+	if err := tx.Raw(`INSERT INTO due_reminders (task_id, kind, due_date, user_id) VALUES `+strings.Join(values, ", ")+`
+		ON CONFLICT DO NOTHING RETURNING task_id, kind`, args...).Scan(&inserted).Error; err != nil {
+		return nil, fmt.Errorf("notification: due reminders: %w", err)
+	}
+	type key struct {
+		task uuid.UUID
+		kind string
+	}
+	fresh := make(map[key]bool, len(inserted))
+	for _, r := range inserted {
+		fresh[key{r.TaskID, r.Kind}] = true
+	}
 	rows := cand[:0]
 	for _, r := range cand {
-		res := tx.Exec(`INSERT INTO due_reminders (task_id, kind, due_date, user_id) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-			r.TaskID, r.Kind, r.DueDate.Format(time.DateOnly), r.UserID)
-		if res.Error != nil {
-			return nil, fmt.Errorf("notification: due reminders: %w", res.Error)
-		}
-		if res.RowsAffected == 1 {
+		if fresh[key{r.TaskID, r.Kind}] {
 			rows = append(rows, r)
 		}
 	}
@@ -130,11 +160,24 @@ func dueCandidates(tx *gorm.DB, now time.Time) ([]Due, error) {
 	return rows, nil
 }
 
+// uniq — значения key элементов items без повторов, в порядке первого появления.
+func uniq[T any](items []T, key func(T) uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]bool, len(items))
+	var out []uuid.UUID
+	for _, it := range items {
+		if k := key(it); !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // inZone — момент t по поясу tz.
 func inZone(t time.Time, tz string) (time.Time, error) {
-	loc, err := time.LoadLocation(tz)
+	loc, err := model.Location(tz)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("notification: timezone %q: %w", tz, err)
+		return time.Time{}, fmt.Errorf("notification: %w", err)
 	}
 	return t.In(loc), nil
 }

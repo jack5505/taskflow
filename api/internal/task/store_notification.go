@@ -21,6 +21,7 @@ type DueTask struct {
 }
 
 // OpenDueBetween — неудалённые незакрытые задачи с исполнителем и сроком в from..to включительно.
+// Блокировок не берёт (вызывается в транзакции напоминаний).
 func OpenDueBetween(db *gorm.DB, from, to time.Time) ([]DueTask, error) {
 	var rows []DueTask
 	if err := db.Raw(`SELECT id, assignee_id, key, title, project_id, due_date FROM tasks
