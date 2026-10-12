@@ -69,19 +69,14 @@ func (g *Groups) IssueBindCode(ctx context.Context, a *project.Access) (*BindCod
 		if _, err := lockManaged(tx, a.Project.ID, a.UserID()); err != nil {
 			return err
 		}
-		if err := tx.Exec(`DELETE FROM one_time_codes WHERE kind = ? AND project_id = ? AND used_at IS NULL`,
-			CodeGroupBind, a.Project.ID).Error; err != nil {
-			return fmt.Errorf("telegram: drop old bind codes: %w", err)
+		if err := dropOpenCodes(tx, CodeGroupBind, "project_id", a.Project.ID); err != nil {
+			return err
 		}
 		for range 3 {
 			c.Code = newCode()
-			res := tx.Exec(`INSERT INTO one_time_codes (id, kind, code, project_id, expires_at) VALUES (?, ?, ?, ?, ?)
-				ON CONFLICT (code) DO NOTHING`, c.ID, c.Kind, c.Code, a.Project.ID, c.ExpiresAt)
-			if res.Error != nil {
-				return fmt.Errorf("telegram: insert bind code: %w", res.Error)
-			}
-			if res.RowsAffected == 1 {
-				return nil
+			inserted, err := insertCode(tx, &c)
+			if err != nil || inserted {
+				return err
 			}
 		}
 		return errors.New("telegram: не удалось выдать уникальный код")
@@ -101,35 +96,31 @@ func (g *Groups) Bind(ctx context.Context, code string, chatID int64, title stri
 	err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Порядок блокировок как в IssueBindCode — сначала проект, потом его коды: иначе
 		// одновременные «Обновить» в вебе и /bind в группе ждали бы друг друга (deadlock).
-		var projectID []string
-		if err := tx.Raw(`SELECT project_id FROM one_time_codes WHERE code = ? AND kind = ?`,
-			NormalizeCode(code), CodeGroupBind).Scan(&projectID).Error; err != nil {
-			return fmt.Errorf("telegram: find bind code: %w", err)
+		projectID, err := codeProject(tx, NormalizeCode(code), CodeGroupBind)
+		if err != nil {
+			return err
 		}
-		if len(projectID) == 0 {
+		if projectID == nil {
 			return ErrCodeInvalid
 		}
-		var err error
-		if p, err = lockManaged(tx, uuid.MustParse(projectID[0]), userID); err != nil {
+		if p, err = lockManaged(tx, *projectID, userID); err != nil {
 			if errors.Is(err, project.ErrNotFound) && !errors.Is(err, errNotMember) {
 				return ErrCodeInvalid // проект удалён после выдачи кода
 			}
 			return err
 		}
-		var c OneTimeCode
-		res := tx.Raw(`SELECT * FROM one_time_codes WHERE code = ? AND kind = ? FOR UPDATE`,
-			NormalizeCode(code), CodeGroupBind).Scan(&c)
-		if res.Error != nil {
-			return fmt.Errorf("telegram: find bind code: %w", res.Error)
+		c, err := lockCode(tx, NormalizeCode(code), CodeGroupBind)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 || c.UsedAt != nil || !g.now().Before(c.ExpiresAt) {
+		if c == nil || c.UsedAt != nil || !g.now().Before(c.ExpiresAt) {
 			return ErrCodeInvalid
 		}
 		if p.TelegramChatID != nil && *p.TelegramChatID != chatID {
 			return ErrProjectHasGroup
 		}
-		if err := tx.Exec(`UPDATE one_time_codes SET used_at = ?, updated_at = now() WHERE id = ?`, g.now(), c.ID).Error; err != nil {
-			return fmt.Errorf("telegram: use bind code: %w", err)
+		if err := useCode(tx, c.ID, g.now()); err != nil {
+			return err
 		}
 		if p.TelegramChatID != nil {
 			return nil // та же группа: ничего не меняется

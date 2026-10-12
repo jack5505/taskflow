@@ -98,20 +98,15 @@ func (a *Accounts) IssueLinkCode(ctx context.Context, userID uuid.UUID) (*LinkCo
 		if err := user.LockRow(tx, userID); err != nil {
 			return err
 		}
-		if err := tx.Exec(`DELETE FROM one_time_codes WHERE kind = ? AND user_id = ? AND used_at IS NULL`,
-			CodeUserLink, userID).Error; err != nil {
-			return fmt.Errorf("telegram: drop old codes: %w", err)
+		if err := dropOpenCodes(tx, CodeUserLink, "user_id", userID); err != nil {
+			return err
 		}
 		// Совпадение с чужим кодом (1 из 2^40) — просто берём другой.
 		for range 3 {
 			c.Code = newCode()
-			res := tx.Exec(`INSERT INTO one_time_codes (id, kind, code, user_id, expires_at) VALUES (?, ?, ?, ?, ?)
-				ON CONFLICT (code) DO NOTHING`, c.ID, c.Kind, c.Code, userID, c.ExpiresAt)
-			if res.Error != nil {
-				return fmt.Errorf("telegram: insert code: %w", res.Error)
-			}
-			if res.RowsAffected == 1 {
-				return nil
+			inserted, err := insertCode(tx, &c)
+			if err != nil || inserted {
+				return err
 			}
 		}
 		return errors.New("telegram: не удалось выдать уникальный код")
@@ -133,16 +128,13 @@ func (a *Accounts) IssueLinkCode(ctx context.Context, userID uuid.UUID) (*LinkCo
 func (a *Accounts) Link(ctx context.Context, code string, tgID int64, username string) (*user.User, error) {
 	var u *user.User
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var c OneTimeCode
-		res := tx.Raw(`SELECT * FROM one_time_codes WHERE code = ? AND kind = ? FOR UPDATE`,
-			NormalizeCode(code), CodeUserLink).Scan(&c)
-		if res.Error != nil {
-			return fmt.Errorf("telegram: find code: %w", res.Error)
+		c, err := lockCode(tx, NormalizeCode(code), CodeUserLink)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 || c.UsedAt != nil || !a.now().Before(c.ExpiresAt) || c.UserID == nil {
+		if c == nil || c.UsedAt != nil || !a.now().Before(c.ExpiresAt) || c.UserID == nil {
 			return ErrCodeInvalid
 		}
-		var err error
 		if u, err = user.LockActive(tx, *c.UserID); err != nil {
 			return err
 		}
@@ -163,7 +155,7 @@ func (a *Accounts) Link(ctx context.Context, code string, tgID int64, username s
 		if err != nil {
 			return fmt.Errorf("telegram: link: %w", err)
 		}
-		return tx.Exec(`UPDATE one_time_codes SET used_at = ?, updated_at = now() WHERE id = ?`, a.now(), c.ID).Error
+		return useCode(tx, c.ID, a.now())
 	})
 	if err != nil {
 		return nil, err
@@ -193,11 +185,7 @@ func (a *Accounts) ByTelegram(ctx context.Context, tgID int64, username string) 
 
 // CleanupCodes удаляет коды, истёкшие больше суток назад (воркер, раз в сутки).
 func (a *Accounts) CleanupCodes(ctx context.Context) (int64, error) {
-	res := a.db.WithContext(ctx).Exec(`DELETE FROM one_time_codes WHERE expires_at < ?`, a.now().Add(-24*time.Hour))
-	if res.Error != nil {
-		return 0, fmt.Errorf("telegram: cleanup codes: %w", res.Error)
-	}
-	return res.RowsAffected, nil
+	return deleteCodesExpiredBefore(a.db.WithContext(ctx), a.now().Add(-24*time.Hour))
 }
 
 func nullable(s string) *string {
