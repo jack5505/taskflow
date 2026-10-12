@@ -31,6 +31,7 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects).WithAttachments(cfg.AttachmentsDir, cfg.AttachmentMaxBytes, cfg.JWTSecret)
 	srv := httpserver.New(cfg, g, rdb)
+	githubReady := false // вкладка «GitHub» в вебе — только если её маршруты есть
 	if cfg.GitHubEnabled() {
 		srv.Mount(github.NewWebhook(cfg.GitHubWebhookSecret, github.NewIntake(g)).Register)
 		// Ключ App проверен при загрузке настроек; не прочитался сейчас — без вкладки «GitHub», API работает.
@@ -38,6 +39,7 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 			slog.Error("github: app client", "err", err)
 		} else {
 			srv.Mount(github.NewHandlers(github.NewService(g, client), projects, requireAuth).Register)
+			githubReady = true
 		}
 	}
 	if cfg.TelegramWebhook() {
@@ -51,5 +53,5 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 		Mount(task.NewHandlers(tasks, projects, requireAuth).Register).
 		Mount(sprint.NewHandlers(sprint.NewService(g, projects), projects, requireAuth).Register).
 		Mount(report.NewHandlers(report.NewService(g, projects), requireAuth).Register).
-		Mount(me.NewHandlers(me.NewService(g).WithTelegramBot(cfg.TelegramEnabled()).WithGitHub(cfg.GitHubEnabled()), telegram.NewAccounts(g, cfg.TelegramBotUsername), requireAuth).Register)
+		Mount(me.NewHandlers(me.NewService(g).WithTelegramBot(cfg.TelegramEnabled()).WithGitHub(githubReady), telegram.NewAccounts(g, cfg.TelegramBotUsername), requireAuth).Register)
 }

@@ -32,8 +32,9 @@ import (
 // fakeGitHub — REST API GitHub для App 42: две установки, у второй 101 репозиторий (две страницы).
 type fakeGitHub struct {
 	*httptest.Server
-	key        *rsa.PrivateKey
-	tokenCalls atomic.Int32
+	key          *rsa.PrivateKey
+	tokenCalls   atomic.Int32
+	installation atomic.Int64 // установка App в acme/backend
 }
 
 func newFakeGitHub(t *testing.T) (*fakeGitHub, string) {
@@ -43,6 +44,7 @@ func newFakeGitHub(t *testing.T) (*fakeGitHub, string) {
 	keyFile := filepath.Join(t.TempDir(), "app.pem")
 	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}), 0o600))
 	f := &fakeGitHub{key: k}
+	f.installation.Store(7)
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Close)
 	return f, keyFile
@@ -69,13 +71,18 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		return out
 	}
 	page := r.URL.Query().Get("page")
+	path := strings.ToLower(r.URL.Path) // GitHub не различает регистр owner/name
 	switch {
-	case r.URL.Path == "/repos/acme/backend/installation" && f.appAuth(r):
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": 7})
-	case strings.HasPrefix(r.URL.Path, "/repos/") && f.appAuth(r):
+	case path == "/repos/acme/backend/installation" && f.appAuth(r):
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": f.installation.Load()})
+	case strings.HasPrefix(path, "/repos/") && f.appAuth(r):
 		http.NotFound(w, r)
+	case path == "/repos/acme/backend" && strings.HasPrefix(r.Header.Get("Authorization"), "token tok-"):
+		_ = json.NewEncoder(w).Encode(map[string]any{"full_name": "acme/backend", "private": true, "html_url": "https://github.com/acme/backend"})
 	case r.URL.Path == "/app/installations" && f.appAuth(r):
-		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 7}, {"id": 8}})
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 7}, {"id": 8}, {"id": 9}})
+	case r.Method == "POST" && r.URL.Path == "/app/installations/9/access_tokens":
+		http.Error(w, `{"message":"This installation has been suspended"}`, http.StatusForbidden)
 	case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/app/installations/") && f.appAuth(r):
 		f.tokenCalls.Add(1)
 		id := strings.Split(r.URL.Path, "/")[3]
@@ -161,10 +168,19 @@ func TestBindRepository(t *testing.T) {
 	_, err = e.svc.Bind(ctx, e.access(t, m, other), "ACME/Backend")
 	require.Equal(t, apierr.CodeValidation, code(err), "репозиторий другого проекта (регистр не важен)")
 
+	// Переустановка App: та же привязка с новой установкой записывается.
+	e.gh.installation.Store(70)
+	got, err = e.svc.Bind(ctx, e.access(t, m, p), "ACME/backend")
+	require.NoError(t, err)
+	require.Equal(t, "acme/backend", *got.GitHubRepo, "имя — как в GitHub")
+	require.EqualValues(t, 70, *got.GitHubInstallationID)
+
 	_, err = e.svc.Bind(ctx, e.access(t, m, other), "acme/missing")
 	require.Equal(t, apierr.CodeValidation, code(err), "App не установлен")
-	_, err = e.svc.Bind(ctx, e.access(t, m, other), "not a repo")
-	require.Equal(t, apierr.CodeValidation, code(err))
+	for _, bad := range []string{"not a repo", "acme/..", "acme/."} {
+		_, err = e.svc.Bind(ctx, e.access(t, m, other), bad)
+		require.Equal(t, apierr.CodeValidation, code(err), bad)
+	}
 
 	_, err = e.svc.Unbind(ctx, e.access(t, m, p))
 	require.NoError(t, err)
@@ -176,7 +192,12 @@ func TestBindRepository(t *testing.T) {
 
 	var actions []string
 	require.NoError(t, e.db.Raw(`SELECT action FROM audit_logs WHERE project_id = ? ORDER BY created_at`, p.ID).Scan(&actions).Error)
-	require.Equal(t, []string{github.AuditRepoBound, github.AuditRepoUnbound}, actions)
+	require.Equal(t, []string{github.AuditRepoBound, github.AuditRepoBound, github.AuditRepoUnbound}, actions)
+
+	// Удалённый проект репозиторий не держит.
+	require.NoError(t, project.NewService(e.db).Delete(ctx, other.Key))
+	_, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/backend")
+	require.NoError(t, err, "после удаления проекта репозиторий свободен")
 }
 
 // §12.6: привязывает менеджер; участник — 403; архив — 409.
@@ -192,7 +213,8 @@ func TestBindRights(t *testing.T) {
 	require.Equal(t, apierr.CodeProjectArchived, code(err))
 }
 
-// Список репозиториев: все установки, все страницы; токены установок кэшируются; не менеджер — 403.
+// Список репозиториев: все установки, все страницы; приостановленная установка пропускается;
+// список и токены кэшируются; не менеджер — 403.
 func TestRepositories(t *testing.T) {
 	e := newBindEnv(t)
 	ctx := context.Background()
