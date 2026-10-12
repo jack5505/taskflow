@@ -15,15 +15,19 @@ import (
 	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
+	"github.com/jack5505/taskflow/api/internal/user"
 )
 
 // Processor обрабатывает доставки вебхука в воркере: связывает ветки и PR с задачами по ключу
-// (§12.3). Смена статуса по PR (§12.4) — следующий шаг.
+// (§12.3) и меняет статус задач по PR (§12.4).
 type Processor struct {
-	db *gorm.DB
+	db    *gorm.DB
+	tasks *task.Service
 }
 
-func NewProcessor(db *gorm.DB) *Processor { return &Processor{db: db} }
+func NewProcessor(db *gorm.DB, tasks *task.Service) *Processor {
+	return &Processor{db: db, tasks: tasks}
+}
 
 // Register подключает обработчик события github.delivery. Подключается всегда, а не только при
 // заданном GITHUB_APP_ID: событие могло прийти от API с другими настройками и иначе потерялось бы.
@@ -114,10 +118,11 @@ func (p *Processor) handle(ctx context.Context, env events.Envelope) error {
 		if d.Event == "delete" {
 			state = task.PRClosed // ветка удалена — в карточке она закрыта
 		}
-		return p.link(ctx, e.Repository.FullName, []string{e.Ref}, task.Link{
+		_, err := p.link(ctx, e.Repository.FullName, []string{e.Ref}, task.Link{
 			Kind: task.LinkBranch, Repo: e.Repository.FullName, Name: e.Ref,
 			URL: e.Repository.HTMLURL + "/tree/" + escapeRef(e.Ref), State: state, AuthorLogin: nonEmpty(e.Sender.Login),
 		})
+		return err
 	default:
 		slog.DebugContext(ctx, "github: event ignored", "event", d.Event, "delivery", d.Delivery)
 		return nil
@@ -139,33 +144,77 @@ func prState(e *pullRequestEvent) string {
 
 func (p *Processor) pullRequest(ctx context.Context, e *pullRequestEvent) error {
 	number := e.Number
-	return p.link(ctx, e.Repository.FullName, []string{e.PullRequest.Title, e.PullRequest.Head.Ref}, task.Link{
+	keys, err := p.link(ctx, e.Repository.FullName, []string{e.PullRequest.Title, e.PullRequest.Head.Ref}, task.Link{
 		Kind: task.LinkPR, Repo: e.Repository.FullName, Number: &number, Name: e.PullRequest.Title,
 		URL: e.PullRequest.HTMLURL, State: prState(e), AuthorLogin: nonEmpty(e.PullRequest.User.Login),
 		SourceUpdatedAt: e.PullRequest.UpdatedAt,
 	})
+	if err != nil || len(keys) == 0 {
+		return err
+	}
+	event := prEvent(e)
+	if event == "" {
+		return nil
+	}
+	author, err := user.ActiveIDByGitHubLogin(p.db.WithContext(ctx), e.PullRequest.User.Login)
+	if err != nil {
+		return err
+	}
+	// Каждая задача — своя транзакция: повтор события после сбоя на второй задаче не меняет первую
+	// (её статус уже другой, prSteps для него ничего не делает).
+	for _, key := range keys {
+		if _, err := p.tasks.ApplyPR(ctx, task.PRChange{Key: key, Event: event, Repo: e.Repository.FullName,
+			Number: number, AuthorID: author, Login: e.PullRequest.User.Login}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// link связывает ветку или PR l со всеми задачами проекта репозитория, чьи ключи есть в texts.
-// Новая связь — событие github.linked, сменившееся состояние PR — github.pr_changed (§12.6).
-func (p *Processor) link(ctx context.Context, repo string, texts []string, l task.Link) error {
+// prEvent — событие PR, которое двигает статус (§12.4); черновик и правки статус не меняют.
+func prEvent(e *pullRequestEvent) string {
+	switch e.Action {
+	case "opened", "reopened", "ready_for_review":
+		if !e.PullRequest.Draft && e.PullRequest.State == "open" {
+			return task.PROpened
+		}
+	case "closed":
+		if e.PullRequest.Merged {
+			return task.PRMergedEvent
+		}
+		return task.PRClosedEvent
+	}
+	return ""
+}
+
+// link связывает ветку или PR l со всеми задачами проекта репозитория, чьи ключи есть в texts,
+// и возвращает ключи задач, у которых связь обновилась (запоздавшая доставка статус не двигает). Новая связь — событие github.linked, сменившееся состояние PR —
+// github.pr_changed (§12.6).
+func (p *Processor) link(ctx context.Context, repo string, texts []string, l task.Link) ([]string, error) {
 	db := p.db.WithContext(ctx)
 	target, err := project.ByGitHubRepo(db, repo)
 	if err != nil || target == nil {
-		return err // репозиторий не привязан, проект удалён или в архиве — событие не нужно
+		return nil, err // репозиторий не привязан, проект удалён или в архиве — событие не нужно
 	}
 	tasks, err := task.LiveByKeys(db, target.ID, keysIn(target.Key, texts...))
 	if err != nil || len(tasks) == 0 {
-		return err
+		return nil, err
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
+	var keys []string
+	err = db.Transaction(func(tx *gorm.DB) error {
+		keys = keys[:0]
 		for _, t := range tasks {
-			if err := task.LinkGitHub(tx, t, target.ID, l); err != nil {
+			fresh, err := task.LinkGitHub(tx, t, target.ID, l)
+			if err != nil {
 				return err
+			}
+			if fresh {
+				keys = append(keys, t.Key)
 			}
 		}
 		return nil
 	})
+	return keys, err
 }
 
 // escapeRef — имя ветки для адреса: каждый сегмент экранируется, «/» остаются.

@@ -416,14 +416,20 @@ func applyTransition(tx *gorm.DB, t *Task, a actor, in TransitionInput) error {
 		}
 	}
 
-	if comment != "" && (to == StatusCancelled || (from == StatusReview && to == StatusInProgress)) {
+	// Причина от GitHub без связанного автора (§12.4) — примечание к истории: комментарий без автора невозможен.
+	systemNote := uid == uuid.Nil && comment != ""
+	if comment != "" && !systemNote && (to == StatusCancelled || (from == StatusReview && to == StatusInProgress)) {
 		c := Comment{TaskID: t.ID, AuthorID: uid, Body: comment, Source: commentSource(a.source)}
 		if err := tx.Create(&c).Error; err != nil {
 			return fmt.Errorf("task: reason comment: %w", err)
 		}
 	}
 	t.Status = to
-	if err := writeHistory(tx, t.ID, "status", from, to); err != nil {
+	note := ""
+	if systemNote {
+		note = comment
+	}
+	if err := writeHistoryNote(tx, t.ID, "status", from, to, note); err != nil {
 		return err
 	}
 	payload := map[string]any{

@@ -59,7 +59,7 @@ func newProcEnv(t *testing.T) *procEnv {
 		require.NoError(t, db.Create(tk).Error)
 		return tk
 	}
-	return &procEnv{db: db, p: NewProcessor(db), prj: p, t1: mk(1), t2: mk(2)}
+	return &procEnv{db: db, p: NewProcessor(db, task.NewService(db, project.NewService(db))), prj: p, t1: mk(1), t2: mk(2)}
 }
 
 func (e *procEnv) deliver(t *testing.T, event string, payload any) {
@@ -172,9 +172,63 @@ func TestProcessorDeleteOrderRace(t *testing.T) {
 	require.EqualValues(t, 3, e.events(t, events.GitHubLinked, e.t1), "ветка, PR 5 и PR 6 — по одному событию")
 }
 
+// §12.4: открытый PR — задача в «На ревью» (без исполнителя берёт связанный автор), влитый —
+// «Готово», закрытый без слияния — назад в работу с системной причиной, если других открытых PR
+// нет. Черновик статус не меняет; несвязанный автор не берёт задачу без исполнителя.
+func TestProcessorStatus(t *testing.T) {
+	e := newProcEnv(t)
+	author := user.New(testutil.UniqueEmail(t), "x", "Автор PR")
+	require.NoError(t, e.db.Create(author).Error)
+	login := "dev-" + e.prj.Key
+	require.NoError(t, user.SetGitHubLogin(e.db, author.ID, &login))
+	require.NoError(t, e.db.Create(&project.Member{ProjectID: e.prj.ID, UserID: author.ID, Role: "member"}).Error)
+	k1, k2 := e.t1.Key, e.t2.Key
+	pr := func(action string, n int, title, state string, merged, draft bool, who string) map[string]any {
+		m := e.pr(action, n, title, "x", state, merged, draft)
+		m["pull_request"].(map[string]any)["user"] = map[string]any{"login": who}
+		return m
+	}
+	get := func(tk *task.Task) task.Task {
+		var got task.Task
+		require.NoError(t, e.db.First(&got, "id = ?", tk.ID).Error)
+		return got
+	}
+
+	e.deliver(t, "pull_request", pr("opened", 1, k1+": черновик", "open", false, true, login))
+	require.Equal(t, task.StatusTodo, get(e.t1).Status, "черновик статус не меняет")
+
+	e.deliver(t, "pull_request", pr("opened", 2, k2+": чужой автор", "open", false, false, "stranger"))
+	require.Equal(t, task.StatusTodo, get(e.t2).Status, "автор не связан — задачу без исполнителя некому взять")
+
+	e.deliver(t, "pull_request", pr("ready_for_review", 1, k1+": черновик", "open", false, false, login))
+	g := get(e.t1)
+	require.Equal(t, task.StatusReview, g.Status, "todo → in_progress → review")
+	require.Equal(t, author.ID, *g.AssigneeID, "задачу взял автор PR")
+	var src []string
+	require.NoError(t, e.db.Raw(`SELECT DISTINCT source FROM task_history WHERE task_id = ? AND field = 'status'`, e.t1.ID).Scan(&src).Error)
+	require.Equal(t, []string{"github"}, src)
+
+	e.deliver(t, "pull_request", pr("opened", 3, k1+": второй", "open", false, false, login))
+	e.deliver(t, "pull_request", pr("closed", 1, k1+": черновик", "closed", false, false, login))
+	require.Equal(t, task.StatusReview, get(e.t1).Status, "есть другой открытый PR — возврата нет")
+
+	e.deliver(t, "pull_request", pr("closed", 3, k1+": второй", "closed", false, false, login))
+	require.Equal(t, task.StatusInProgress, get(e.t1).Status, "закрыт без слияния — назад в работу")
+	var notes int64
+	require.NoError(t, e.db.Raw(`SELECT count(*) FROM task_history WHERE task_id = ? AND note = 'PR #3 закрыт без слияния' AND user_id IS NULL`,
+		e.t1.ID).Scan(&notes).Error)
+	require.EqualValues(t, 1, notes, "системная причина")
+
+	e.deliver(t, "pull_request", pr("reopened", 3, k1+": второй", "open", false, false, "stranger"))
+	require.Equal(t, task.StatusReview, get(e.t1).Status, "у задачи есть исполнитель — переводит система")
+	e.deliver(t, "pull_request", pr("closed", 3, k1+": второй", "closed", true, false, login))
+	require.Equal(t, task.StatusDone, get(e.t1).Status)
+}
+
 // Битый payload — ошибка (событие повторится); неизвестное событие — без ошибки.
 func TestProcessorBadPayload(t *testing.T) {
-	p := NewProcessor(testutil.SharedDB(t))
+	db := testutil.SharedDB(t)
+	p := NewProcessor(db, task.NewService(db, project.NewService(db)))
 	require.Error(t, p.handle(context.Background(), events.Envelope{Type: events.GitHubDelivery, Payload: []byte("{")}))
 	d, _ := json.Marshal(Delivery{Event: "pull_request", Payload: json.RawMessage(`"x"`)})
 	require.Error(t, p.handle(context.Background(), events.Envelope{Payload: d}))
