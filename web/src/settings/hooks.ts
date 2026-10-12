@@ -59,3 +59,29 @@ export function useDisconnectGroup(key: string) {
     },
   });
 }
+
+export const githubReposQueryKey = ["github", "repositories"] as const;
+
+/** Репозитории GitHub App (GET /github/repositories) — для выбора во вкладке «GitHub» (§12.1). */
+export function useGitHubRepos(enabled: boolean) {
+  return useQuery({
+    queryKey: githubReposQueryKey,
+    queryFn: async ({ signal }) => (await api.api.v1GithubRepositoriesList({ signal })).data ?? [],
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+/** Привязать (repo) или отвязать (null) репозиторий проекта; затем проект перечитывается. */
+export function useSetGitHubRepo(key: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (repo: string | null) => {
+      if (repo === null) await api.api.v1ProjectsGithubDelete(key);
+      else await api.api.v1ProjectsGithubUpdate(key, { repo });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectQueryKey(key) });
+    },
+  });
+}

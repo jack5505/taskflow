@@ -30,7 +30,10 @@ type Project struct {
 	TaskCounter    int     `gorm:"not null" json:"-"`
 	TelegramChatID *int64  `json:"telegram_chat_id,omitempty"`
 	// TelegramChatTitle — название подключённой группы на момент подключения или переименования (§7.9).
-	TelegramChatTitle    *string         `json:"telegram_chat_title,omitempty"`
+	TelegramChatTitle *string `json:"telegram_chat_title,omitempty"`
+	// GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле.
+	GitHubRepo           *string         `gorm:"column:github_repo" json:"github_repo,omitempty"`
+	GitHubInstallationID *int64          `gorm:"column:github_installation_id" json:"-"`
 	IsArchived           bool            `gorm:"not null" json:"is_archived"`
 	Timezone             string          `gorm:"not null" json:"timezone"`
 	NotificationSettings events.JSON     `gorm:"type:jsonb;not null" json:"notification_settings" swaggertype:"object"`

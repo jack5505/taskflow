@@ -112,6 +112,33 @@ definitions:
     - password
     - token
     type: object
+  github.Repo:
+    properties:
+      full_name:
+        example: acme/backend
+        type: string
+      private:
+        type: boolean
+      url:
+        example: https://github.com/acme/backend
+        type: string
+    type: object
+  github.RepoBinding:
+    properties:
+      repo:
+        example: acme/backend
+        type: string
+        x-nullable: true
+    type: object
+  github.bindRequest:
+    properties:
+      repo:
+        example: acme/backend
+        maxLength: 140
+        type: string
+    required:
+    - repo
+    type: object
   me.MyProject:
     properties:
       id:
@@ -136,6 +163,10 @@ definitions:
         type: string
       email:
         type: string
+      github_enabled:
+        description: GitHubEnabled — интеграция с GitHub подключена (задан GITHUB_APP_ID,
+          §12.1).
+        type: boolean
       id:
         type: string
       is_active:
@@ -245,6 +276,10 @@ definitions:
         type: string
       description:
         type: string
+      github_repo:
+        description: GitHubRepo — привязанный репозиторий owner/name (§12.1); установка
+          App — служебное поле.
+        type: string
       id:
         type: string
       is_archived:
@@ -300,6 +335,10 @@ definitions:
         format: date-time
         type: string
       description:
+        type: string
+      github_repo:
+        description: GitHubRepo — привязанный репозиторий owner/name (§12.1); установка
+          App — служебное поле.
         type: string
       id:
         type: string
@@ -1697,6 +1736,33 @@ paths:
       summary: Изменить комментарий
       tags:
       - comments
+  /api/v1/github/repositories:
+    get:
+      description: Репозитории всех установок GitHub App — для выбора во вкладке «GitHub»
+        настроек проекта (§12.1). Менеджер хотя бы одного проекта или администратор,
+        иначе 403. Маршрут есть, только если задан GITHUB_APP_ID.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github.Repo'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Репозитории GitHub App
+      tags:
+      - github
   /api/v1/github/webhook:
     post:
       consumes:
@@ -2234,6 +2300,120 @@ paths:
       summary: Журнал проекта
       tags:
       - projects
+  /api/v1/projects/{key}/github:
+    delete:
+      description: Менеджер проекта отвязывает репозиторий (§12.1); не привязан —
+        тоже 204. Архивный проект — 409.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отвязать репозиторий GitHub
+      tags:
+      - github
+    get:
+      description: Привязанный репозиторий owner/name (§12.1); null — не привязан.
+        Любой участник проекта.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github.RepoBinding'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Репозиторий GitHub проекта
+      tags:
+      - github
+    put:
+      consumes:
+      - application/json
+      description: 'Менеджер проекта привязывает репозиторий owner/name, в который
+        установлен GitHub App (§12.1). Один репозиторий на проект и один проект на
+        репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект
+        — 409.'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: репозиторий
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github.bindRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github.RepoBinding'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Привязать репозиторий GitHub
+      tags:
+      - github
   /api/v1/projects/{key}/members:
     get:
       parameters:

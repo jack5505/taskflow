@@ -78,6 +78,27 @@ export interface AuthPasswordSetRequest {
   token: string;
 }
 
+export interface GithubRepo {
+  /** @example "acme/backend" */
+  full_name?: string;
+  private?: boolean;
+  /** @example "https://github.com/acme/backend" */
+  url?: string;
+}
+
+export interface GithubRepoBinding {
+  /** @example "acme/backend" */
+  repo?: string | null;
+}
+
+export interface GithubBindRequest {
+  /**
+   * @maxLength 140
+   * @example "acme/backend"
+   */
+  repo: string;
+}
+
 export interface MeMyProject {
   id?: string;
   is_archived?: boolean;
@@ -90,6 +111,8 @@ export interface MeProfile {
   created_at?: string;
   display_name?: string;
   email?: string;
+  /** GitHubEnabled — интеграция с GitHub подключена (задан GITHUB_APP_ID, §12.1). */
+  github_enabled?: boolean;
   id?: string;
   is_active?: boolean;
   is_system_admin?: boolean;
@@ -154,6 +177,8 @@ export interface ProjectListItem {
   /** @format date-time */
   deleted_at?: string;
   description?: string;
+  /** GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле. */
+  github_repo?: string;
   id?: string;
   is_archived?: boolean;
   key?: string;
@@ -183,6 +208,8 @@ export interface ProjectView {
   /** @format date-time */
   deleted_at?: string;
   description?: string;
+  /** GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле. */
+  github_repo?: string;
   id?: string;
   is_archived?: boolean;
   key?: string;
@@ -1251,6 +1278,24 @@ export class Api<
       }),
 
     /**
+     * @description Репозитории всех установок GitHub App — для выбора во вкладке «GitHub» настроек проекта (§12.1). Менеджер хотя бы одного проекта или администратор, иначе 403. Маршрут есть, только если задан GITHUB_APP_ID.
+     *
+     * @tags github
+     * @name V1GithubRepositoriesList
+     * @summary Репозитории GitHub App
+     * @request GET:/api/v1/github/repositories
+     * @secure
+     */
+    v1GithubRepositoriesList: (params: RequestParams = {}) =>
+      this.request<GithubRepo[], ApierrResponse>({
+        path: `/api/v1/github/repositories`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
      * @description Приём событий GitHub App (§12.2). Подпись X-Hub-Signature-256 (HMAC-SHA256 тела секретом App) проверяется на каждом запросе, неверная — 401. Тело — JSON до 2 МБ. Ответ 202 отдаётся сразу, доставка пишется в базу вместе с событием outbox, обработка — в воркере; повторная доставка с тем же X-GitHub-Delivery (7 дней) не обрабатывается. Маршрут есть, только если задан GITHUB_APP_ID.
      *
      * @tags github
@@ -1587,6 +1632,65 @@ export class Api<
         query: query,
         secure: true,
         format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Привязанный репозиторий owner/name (§12.1); null — не привязан. Любой участник проекта.
+     *
+     * @tags github
+     * @name V1ProjectsGithubList
+     * @summary Репозиторий GitHub проекта
+     * @request GET:/api/v1/projects/{key}/github
+     * @secure
+     */
+    v1ProjectsGithubList: (key: string, params: RequestParams = {}) =>
+      this.request<GithubRepoBinding, ApierrResponse>({
+        path: `/api/v1/projects/${key}/github`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.
+     *
+     * @tags github
+     * @name V1ProjectsGithubUpdate
+     * @summary Привязать репозиторий GitHub
+     * @request PUT:/api/v1/projects/{key}/github
+     * @secure
+     */
+    v1ProjectsGithubUpdate: (
+      key: string,
+      body: GithubBindRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<GithubRepoBinding, ApierrResponse>({
+        path: `/api/v1/projects/${key}/github`,
+        method: "PUT",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Менеджер проекта отвязывает репозиторий (§12.1); не привязан — тоже 204. Архивный проект — 409.
+     *
+     * @tags github
+     * @name V1ProjectsGithubDelete
+     * @summary Отвязать репозиторий GitHub
+     * @request DELETE:/api/v1/projects/{key}/github
+     * @secure
+     */
+    v1ProjectsGithubDelete: (key: string, params: RequestParams = {}) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/projects/${key}/github`,
+        method: "DELETE",
+        secure: true,
         ...params,
       }),
 

@@ -554,6 +554,46 @@
                 }
             }
         },
+        "/api/v1/github/repositories": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Репозитории всех установок GitHub App — для выбора во вкладке «GitHub» настроек проекта (§12.1). Менеджер хотя бы одного проекта или администратор, иначе 403. Маршрут есть, только если задан GITHUB_APP_ID.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "github"
+                ],
+                "summary": "Репозитории GitHub App",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github.Repo"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/github/webhook": {
             "post": {
                 "description": "Приём событий GitHub App (§12.2). Подпись X-Hub-Signature-256 (HMAC-SHA256 тела секретом App) проверяется на каждом запросе, неверная — 401. Тело — JSON до 2 МБ. Ответ 202 отдаётся сразу, доставка пишется в базу вместе с событием outbox, обработка — в воркере; повторная доставка с тем же X-GitHub-Delivery (7 дней) не обрабатывается. Маршрут есть, только если задан GITHUB_APP_ID.",
@@ -1337,6 +1377,176 @@
                     },
                     "404": {
                         "description": "NOT_FOUND: нет проекта или пользователь в нём не участвует",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/projects/{key}/github": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Привязанный репозиторий owner/name (§12.1); null — не привязан. Любой участник проекта.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "github"
+                ],
+                "summary": "Репозиторий GitHub проекта",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github.RepoBinding"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "github"
+                ],
+                "summary": "Привязать репозиторий GitHub",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "репозиторий",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github.bindRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github.RepoBinding"
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_FAILED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "PROJECT_ARCHIVED",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Менеджер проекта отвязывает репозиторий (§12.1); не привязан — тоже 204. Архивный проект — 409.",
+                "tags": [
+                    "github"
+                ],
+                "summary": "Отвязать репозиторий GitHub",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ключ проекта",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: не менеджер",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "PROJECT_ARCHIVED",
                         "schema": {
                             "$ref": "#/definitions/apierr.Response"
                         }
@@ -4017,6 +4227,45 @@
                 }
             }
         },
+        "github.Repo": {
+            "type": "object",
+            "properties": {
+                "full_name": {
+                    "type": "string",
+                    "example": "acme/backend"
+                },
+                "private": {
+                    "type": "boolean"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://github.com/acme/backend"
+                }
+            }
+        },
+        "github.RepoBinding": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "x-nullable": true,
+                    "example": "acme/backend"
+                }
+            }
+        },
+        "github.bindRequest": {
+            "type": "object",
+            "required": [
+                "repo"
+            ],
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "maxLength": 140,
+                    "example": "acme/backend"
+                }
+            }
+        },
         "me.MyProject": {
             "type": "object",
             "properties": {
@@ -4052,6 +4301,10 @@
                 },
                 "email": {
                     "type": "string"
+                },
+                "github_enabled": {
+                    "description": "GitHubEnabled — интеграция с GitHub подключена (задан GITHUB_APP_ID, §12.1).",
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "string"
@@ -4217,6 +4470,10 @@
                 "description": {
                     "type": "string"
                 },
+                "github_repo": {
+                    "description": "GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле.",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -4297,6 +4554,10 @@
                     "format": "date-time"
                 },
                 "description": {
+                    "type": "string"
+                },
+                "github_repo": {
+                    "description": "GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле.",
                     "type": "string"
                 },
                 "id": {
