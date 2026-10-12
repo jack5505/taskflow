@@ -156,13 +156,11 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, userAgent string) (
 	var session *Session
 	var reusedBy uuid.UUID
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var rt RefreshToken
-		res := tx.Raw(`SELECT id, user_id, token_hash, expires_at, revoked_at, rotated, user_agent, created_at
-			FROM refresh_tokens WHERE token_hash = ? FOR UPDATE`, hashToken(refreshToken)).Scan(&rt)
-		if res.Error != nil {
-			return fmt.Errorf("auth: find refresh: %w", res.Error)
+		rt, err := lockRefreshToken(tx, hashToken(refreshToken))
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if rt == nil {
 			return ErrBadRefresh
 		}
 		now := s.now()

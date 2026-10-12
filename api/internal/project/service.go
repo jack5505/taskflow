@@ -3,7 +3,6 @@ package project
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -88,24 +87,22 @@ func NewService(db *gorm.DB) *Service { return &Service{db: db, now: time.Now} }
 // Access находит неудалённый проект по ключу и роль пользователя в нём. Не участник и не
 // администратор получает ErrNotFound, а не 403: существование чужого проекта не раскрывается.
 func (s *Service) Access(ctx context.Context, u *user.User, key string) (*Access, error) {
-	var p Project
-	if err := s.db.WithContext(ctx).First(&p, "key = ?", key).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("project: find: %w", err)
+	db := s.db.WithContext(ctx)
+	p, err := projectByKey(db, key, false)
+	if err != nil {
+		return nil, err
 	}
-	var m Member
-	err := s.db.WithContext(ctx).First(&m, "project_id = ? AND user_id = ?", p.ID, u.ID).Error
-	switch {
-	case errors.Is(err, gorm.ErrRecordNotFound):
-		if !u.IsSystemAdmin {
-			return nil, ErrNotFound
-		}
-	case err != nil:
-		return nil, fmt.Errorf("project: membership: %w", err)
+	if p == nil {
+		return nil, ErrNotFound
 	}
-	return &Access{Project: &p, Role: m.Role, Admin: u.IsSystemAdmin, userID: u.ID}, nil
+	role, err := memberRole(db, p.ID, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	if role == "" && !u.IsSystemAdmin {
+		return nil, ErrNotFound
+	}
+	return &Access{Project: p, Role: role, Admin: u.IsSystemAdmin, userID: u.ID}, nil
 }
 
 // View — проект из Access для ответа.
@@ -113,15 +110,14 @@ func (a *Access) View() View { return newView(a.Project, a.Role) }
 
 // FindWithDeleted — проект по ключу, в том числе удалённый (журнал и корзина администратора).
 func (s *Service) FindWithDeleted(ctx context.Context, key string) (*Project, error) {
-	var p Project
-	err := s.db.WithContext(ctx).Unscoped().First(&p, "key = ?", key).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	p, err := projectByKey(s.db.WithContext(ctx), key, true)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
 		return nil, ErrNotFound
 	}
-	if err != nil {
-		return nil, fmt.Errorf("project: find: %w", err)
-	}
-	return &p, nil
+	return p, nil
 }
 
 // ListFilter — фильтры списка (§7.2): обычные, «Архив», «Удалённые» (только администратор).
@@ -152,26 +148,15 @@ func (s *Service) List(ctx context.Context, u *user.User, f ListFilter) ([]ListI
 	if f.Deleted && !u.IsSystemAdmin {
 		return nil, errAdminOnly
 	}
-	where := "p.deleted_at IS NULL AND p.is_archived = @archived"
-	if f.Deleted {
-		where = "p.deleted_at IS NOT NULL"
-	}
-	if !u.IsSystemAdmin {
-		where += " AND m.user_id IS NOT NULL"
-	}
-	var rows []struct {
-		Project `gorm:"embedded"`
-		MyRole  *string
-	}
+	var rows []listRow
 	var sprints map[uuid.UUID]sprintdb.Active
 	var counts map[uuid.UUID]taskdb.OpenCounts
 	// Проекты, спринты и счётчики — из одного снимка базы (read-only REPEATABLE READ), как раньше
 	// одним запросом.
 	err := s.db.WithContext(ctx).Transaction(func(db *gorm.DB) error {
-		if err := db.Raw(`SELECT p.*, m.role AS my_role FROM projects p
-		LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = @user
-		WHERE `+where+` ORDER BY p.key`, sql.Named("user", u.ID), sql.Named("archived", f.Archived)).Scan(&rows).Error; err != nil {
-			return fmt.Errorf("project: list: %w", err)
+		var err error
+		if rows, err = listRows(db, u.ID, !u.IsSystemAdmin, f); err != nil {
+			return err
 		}
 		ids := make([]uuid.UUID, len(rows))
 		for i := range rows {
@@ -180,7 +165,6 @@ func (s *Service) List(ctx context.Context, u *user.User, f ListFilter) ([]ListI
 		// Активный спринт (§5: один) и открытые задачи — как в «Моих задачах» (task.Mine): не done и
 		// не cancelled; «на мне» — только пока пользователь участник, иначе счётчик разошёлся бы
 		// с блоком «Мои задачи».
-		var err error
 		if sprints, err = sprintdb.ActiveOfProjects(db, ids); err != nil {
 			return err
 		}
@@ -331,7 +315,7 @@ func (s *Service) Update(ctx context.Context, a *Access, in UpdateInput) (*Proje
 		if err := tx.Model(&p).Updates(updates).Error; err != nil {
 			return fmt.Errorf("project: update: %w", err)
 		}
-		return tx.First(&p, "id = ?", p.ID).Error
+		return reloadProject(tx, &p)
 	})
 	if err != nil {
 		return nil, err
@@ -403,11 +387,11 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 func (s *Service) Restore(ctx context.Context, key string) (*Project, error) {
 	var p Project
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.Raw(`SELECT * FROM projects WHERE key = ? FOR UPDATE`, key).Scan(&p)
-		if res.Error != nil {
-			return fmt.Errorf("project: find: %w", res.Error)
+		found, err := lockAnyByKey(tx, key, &p)
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
+		if !found {
 			return ErrNotFound
 		}
 		if !p.DeletedAt.Valid {
@@ -419,7 +403,7 @@ func (s *Service) Restore(ctx context.Context, key string) (*Project, error) {
 		if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.ProjectRestored, EntityType: "project", EntityID: p.ID.String()}); err != nil {
 			return err
 		}
-		return tx.First(&p, "id = ?", p.ID).Error
+		return reloadProject(tx, &p)
 	})
 	if err != nil {
 		return nil, err
@@ -432,19 +416,15 @@ func (s *Service) Restore(ctx context.Context, key string) (*Project, error) {
 // создания задачи — при откате номер не тратится. updated_at проекта не трогает: это время
 // изменения настроек, а не появления задач. Архивный и удалённый проект номеров не выдают.
 func NextTaskNumber(tx *gorm.DB, projectID uuid.UUID) (int, error) {
-	var n []int
-	if err := tx.Raw(`UPDATE projects SET task_counter = task_counter + 1
-		WHERE id = ? AND deleted_at IS NULL AND NOT is_archived RETURNING task_counter`, projectID).Scan(&n).Error; err != nil {
-		return 0, fmt.Errorf("project: next task number: %w", err)
+	n, ok, err := incrementTaskCounter(tx, projectID)
+	if err != nil || ok {
+		return n, err
 	}
-	if len(n) == 1 {
-		return n[0], nil
+	archived, live, err := liveArchived(tx, projectID)
+	if err != nil {
+		return 0, err
 	}
-	var archived []bool
-	if err := tx.Raw(`SELECT is_archived FROM projects WHERE id = ? AND deleted_at IS NULL`, projectID).Scan(&archived).Error; err != nil {
-		return 0, fmt.Errorf("project: next task number: %w", err)
-	}
-	if len(archived) == 1 && archived[0] {
+	if live && archived {
 		return 0, ErrArchived
 	}
 	return 0, ErrNotFound
@@ -472,18 +452,6 @@ func settingsDiff(p *Project, updates map[string]any) (old, nw map[string]any) {
 		}
 	}
 	return old, nw
-}
-
-// lockProject — строка неудалённого проекта FOR UPDATE по условию where ("id = ?" или "key = ?").
-func lockProject(tx *gorm.DB, where string, arg any, p *Project) error {
-	res := tx.Raw(`SELECT * FROM projects WHERE `+where+` AND deleted_at IS NULL FOR UPDATE`, arg).Scan(p)
-	if res.Error != nil {
-		return fmt.Errorf("project: lock: %w", res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 // LockForUpdate — строка неудалённого проекта FOR UPDATE (для операций других доменов, которым
@@ -520,19 +488,6 @@ func ManagerIn(tx *gorm.DB, projectID, userID uuid.UUID) (bool, error) {
 // (для перепроверки прав под блокировкой в других доменах).
 func RoleIn(tx *gorm.DB, projectID, userID uuid.UUID) (string, error) {
 	return memberRole(tx, projectID, userID)
-}
-
-// memberRole — роль пользователя в проекте, "" — не участник.
-func memberRole(tx *gorm.DB, projectID, userID uuid.UUID) (string, error) {
-	var roles []string
-	if err := tx.Raw(`SELECT role FROM project_members WHERE project_id = ? AND user_id = ?`, projectID, userID).
-		Scan(&roles).Error; err != nil {
-		return "", fmt.Errorf("project: membership: %w", err)
-	}
-	if len(roles) == 0 {
-		return "", nil
-	}
-	return roles[0], nil
 }
 
 func projectName(name string) (string, error) {

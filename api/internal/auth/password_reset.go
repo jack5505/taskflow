@@ -140,14 +140,12 @@ func (s *Service) SetPassword(ctx context.Context, token, password string) error
 
 	var email, userID string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var pt PasswordToken
-		res := tx.Raw(`SELECT id, user_id, token_hash, expires_at, used_at, created_at
-			FROM password_tokens WHERE token_hash = ? FOR UPDATE`, hashToken(token)).Scan(&pt)
-		if res.Error != nil {
-			return fmt.Errorf("auth: find password link: %w", res.Error)
+		pt, err := lockPasswordToken(tx, hashToken(token))
+		if err != nil {
+			return err
 		}
 		now := s.now()
-		if res.RowsAffected == 0 || pt.UsedAt != nil || !pt.ExpiresAt.After(now) {
+		if pt == nil || pt.UsedAt != nil || !pt.ExpiresAt.After(now) {
 			return ErrBadPasswordToken
 		}
 		u, err := user.ByID(tx, pt.UserID)

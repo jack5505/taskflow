@@ -102,23 +102,17 @@ func List(ctx context.Context, db *gorm.DB, userID uuid.UUID, unreadOnly bool, l
 	if limit < 1 || limit > MaxLimit {
 		return nil, ErrBadLimit
 	}
-	since := now.Add(-Retention)
-	where := []string{"user_id = ?", "created_at >= ?"}
-	args := []any{userID, since}
-	if unreadOnly {
-		where = append(where, "read_at IS NULL")
-	}
+	var after *pageCursor
 	if cursor != "" {
 		at, id, err := decodeCursor(cursor)
 		if err != nil {
 			return nil, err
 		}
-		where, args = append(where, "(created_at, id) < (?, ?)"), append(args, at, id)
+		after = &pageCursor{at, id}
 	}
-	items := []Notification{}
-	if err := db.WithContext(ctx).Raw(`SELECT * FROM notifications WHERE `+strings.Join(where, " AND ")+
-		` ORDER BY created_at DESC, id DESC LIMIT ?`, append(args, limit+1)...).Scan(&items).Error; err != nil {
-		return nil, fmt.Errorf("notification: list: %w", err)
+	items, err := userNotifications(db.WithContext(ctx), userID, now.Add(-Retention), unreadOnly, after, limit+1)
+	if err != nil {
+		return nil, err
 	}
 	page := &Page{Items: items}
 	if len(items) > limit {
@@ -127,11 +121,9 @@ func List(ctx context.Context, db *gorm.DB, userID uuid.UUID, unreadOnly bool, l
 		page.NextCursor = base64.RawURLEncoding.EncodeToString([]byte(last.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + last.ID.String()))
 	}
 	if cursor == "" {
-		var unread int64
-		if err := db.WithContext(ctx).Model(&Notification{}).
-			Where("user_id = ? AND read_at IS NULL AND created_at >= ?", userID, since).
-			Count(&unread).Error; err != nil {
-			return nil, fmt.Errorf("notification: unread: %w", err)
+		unread, err := unreadSince(db.WithContext(ctx), userID, now.Add(-Retention))
+		if err != nil {
+			return nil, err
 		}
 		page.UnreadCount = &unread
 	}
