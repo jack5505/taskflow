@@ -143,39 +143,38 @@ func tasksCommand(db *gorm.DB, groups *Groups) HandlerFunc {
 		if err != nil || ps == nil {
 			return err
 		}
-		db := db.WithContext(ctx)
+		qdb := db.WithContext(ctx)
 		ids := make([]uuid.UUID, len(ps))
 		archived := map[uuid.UUID]bool{}
 		for i, p := range ps {
 			ids[i], archived[p.ID] = p.ID, p.IsArchived
 		}
-		// Проекты с активным спринтом и число свободных задач в каждом.
-		active, err := sprint.ActiveIn(db, ids)
+		// Проекты с активным спринтом и число свободных задач в каждом; брать можно только задачи
+		// неархивных проектов (§3.2).
+		active, err := sprint.ActiveIn(qdb, ids)
 		if err != nil {
 			return err
-		}
-		sprintIDs := make([]uuid.UUID, len(active))
-		var openSprints []uuid.UUID // спринты неархивных проектов: только их задачи можно взять
-		for i, sp := range active {
-			sprintIDs[i] = sp.ID
-			if !archived[sp.ProjectID] {
-				openSprints = append(openSprints, sp.ID)
-			}
 		}
 		freeCount := map[uuid.UUID]int{}
 		var free []task.FreeTask
 		if len(active) > 0 {
-			bySprint, err := task.FreeCounts(db, sprintIDs)
+			var all, open []uuid.UUID
+			for _, sp := range active {
+				if all = append(all, sp.ID); !archived[sp.ProjectID] {
+					open = append(open, sp.ID)
+				}
+			}
+			bySprint, err := task.FreeCounts(qdb, all)
 			if err != nil {
 				return err
 			}
 			for _, sp := range active {
 				freeCount[sp.ProjectID] += bySprint[sp.ID]
 			}
-		}
-		if len(openSprints) > 0 {
-			if free, err = task.FreeInSprints(db, openSprints, MaxFreeTasks); err != nil {
-				return err
+			if len(open) > 0 {
+				if free, err = task.FreeInSprints(qdb, open, MaxFreeTasks); err != nil {
+					return err
+				}
 			}
 		}
 
