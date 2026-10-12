@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type Config struct {
@@ -112,11 +114,19 @@ func (c *Config) checkGitHub() error {
 	if !c.GitHubEnabled() {
 		return nil
 	}
-	if _, err := strconv.ParseInt(c.GitHubAppID, 10, 64); err != nil {
+	if id, err := strconv.ParseInt(c.GitHubAppID, 10, 64); err != nil || id <= 0 {
 		return errors.New("GITHUB_APP_ID: ожидается числовой id GitHub App")
 	}
 	if c.GitHubPrivateKeyFile == "" {
 		return errors.New("GITHUB_APP_PRIVATE_KEY_FILE: при заданном GITHUB_APP_ID нужен путь к PEM-ключу App")
+	}
+	// Ключ читается при старте: неверный путь или не тот файл видны сразу, а не на первом вызове API.
+	pem, err := os.ReadFile(c.GitHubPrivateKeyFile)
+	if err != nil {
+		return fmt.Errorf("GITHUB_APP_PRIVATE_KEY_FILE: %w", err)
+	}
+	if _, err := jwt.ParseRSAPrivateKeyFromPEM(pem); err != nil {
+		return fmt.Errorf("GITHUB_APP_PRIVATE_KEY_FILE: не RSA-ключ в PEM: %w", err)
 	}
 	if len(c.GitHubWebhookSecret) < 16 || c.GitHubWebhookSecret == "change-me" {
 		return errors.New("GITHUB_WEBHOOK_SECRET: при заданном GITHUB_APP_ID нужен секрет не короче 16 символов (не change-me)")

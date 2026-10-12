@@ -30,7 +30,7 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 	tasks := task.NewService(g, projects).WithAttachments(cfg.AttachmentsDir, cfg.AttachmentMaxBytes, cfg.JWTSecret)
 	srv := httpserver.New(cfg, g, rdb)
 	if cfg.GitHubEnabled() {
-		srv.Mount(github.NewWebhook(cfg.GitHubWebhookSecret, github.NewIntake(rdb, jobs)).Register)
+		srv.Mount(github.NewWebhook(cfg.GitHubWebhookSecret, github.NewIntake(g)).Register)
 	}
 	if cfg.TelegramWebhook() {
 		srv.Mount(telegram.NewWebhook(cfg.TelegramWebhookSecret, telegram.NewIntake(rdb, jobs)).Register)

@@ -37,6 +37,7 @@ var owners = map[string]string{
 	"daily_summaries":        "telegram",
 	"audit_logs":             "audit",
 	"outbox_events":          "outbox",
+	"github_deliveries":      "github",
 }
 
 // readAnyTable — постоянные исключения: модули, которым разрешено читать и писать любые
