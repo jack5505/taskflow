@@ -76,13 +76,16 @@ func sprintProject(db *gorm.DB, id uuid.UUID) (*uuid.UUID, error) {
 	return &ids[0], nil
 }
 
-// sprintRows — спринт id (пусто — нет).
-func sprintRows(tx *gorm.DB, id uuid.UUID) ([]Sprint, error) {
+// sprintByID — спринт id; нет — nil.
+func sprintByID(tx *gorm.DB, id uuid.UUID) (*Sprint, error) {
 	var rows []Sprint
 	if err := tx.Raw(`SELECT * FROM sprints WHERE id = ?`, id).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("sprint: view: %w", err)
 	}
-	return rows, nil
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
 }
 
 // lockSprints — спринты ids, строки FOR UPDATE в порядке id.
@@ -114,14 +117,17 @@ func startScopeTotals(db *gorm.DB, id uuid.UUID) (Scope, error) {
 	return sc, nil
 }
 
-// lastSnapshotOpen — незакрытые задачи и их оценка из последнего снимка спринта (пусто — снимков нет).
-func lastSnapshotOpen(db *gorm.DB, id uuid.UUID) ([]Totals, error) {
+// lastSnapshotOpen — незакрытые задачи и их оценка из последнего снимка спринта; снимков нет — nil.
+func lastSnapshotOpen(db *gorm.DB, id uuid.UUID) (*Totals, error) {
 	var sn []Totals
 	if err := db.Raw(`SELECT open_tasks AS tasks, open_estimate_minutes AS estimate_minutes FROM sprint_daily_snapshots
 		WHERE sprint_id = ? ORDER BY date DESC LIMIT 1`, id).Scan(&sn).Error; err != nil {
 		return nil, fmt.Errorf("sprint: report current: %w", err)
 	}
-	return sn, nil
+	if len(sn) == 0 {
+		return nil, nil
+	}
+	return &sn[0], nil
 }
 
 // sprintLog — журнал спринта по времени (§5.3); Key и Title не заполнены.
@@ -179,16 +185,10 @@ func activeForSnapshot(db *gorm.DB, only *uuid.UUID) ([]snapshotSprint, error) {
 	return rows, nil
 }
 
-// takenSnapshot — уже записанный снимок.
-type takenSnapshot struct {
-	SprintID uuid.UUID
-	Date     time.Time
-}
-
-// takenSnapshots — снимки спринтов ids за даты days (ГГГГ-ММ-ДД).
-func takenSnapshots(db *gorm.DB, ids []uuid.UUID, days []string) ([]takenSnapshot, error) {
-	var rows []takenSnapshot
-	if err := db.Raw(`SELECT sprint_id, date FROM sprint_daily_snapshots WHERE sprint_id IN ? AND date IN ?`, ids, days).
+// takenSnapshots — уже записанные снимки спринтов ids за даты days (ГГГГ-ММ-ДД), без статистики.
+func takenSnapshots(db *gorm.DB, ids []uuid.UUID, days []string) ([]snapshotRow, error) {
+	var rows []snapshotRow
+	if err := db.Raw(`SELECT sprint_id, date::text AS date FROM sprint_daily_snapshots WHERE sprint_id IN ? AND date IN ?`, ids, days).
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("sprint: snapshot: %w", err)
 	}
@@ -198,6 +198,9 @@ func takenSnapshots(db *gorm.DB, ids []uuid.UUID, days []string) ([]takenSnapsho
 // writeSnapshots пишет снимки rows одним запросом; replace — заменить снимок той же даты, иначе
 // существующий не трогается. Возвращает число записанных.
 func writeSnapshots(db *gorm.DB, rows []snapshotRow, replace bool) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
 	conflict := `DO NOTHING`
 	if replace {
 		conflict = `DO UPDATE SET open_tasks = EXCLUDED.open_tasks,

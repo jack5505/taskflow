@@ -10,14 +10,18 @@ import (
 
 // Запросы одноразовых кодов (§8.1, §8.2): one_time_codes.
 
-// dropOpenCodes удаляет неиспользованные коды вида kind владельца ownerID; owner — колонка
-// владельца: user_id (привязка аккаунта) или project_id (подключение группы).
-func dropOpenCodes(tx *gorm.DB, kind, owner string, ownerID uuid.UUID) error {
-	if owner != "user_id" && owner != "project_id" {
-		return fmt.Errorf("telegram: unknown code owner %q", owner)
+// dropUserCodes удаляет неиспользованные коды вида kind пользователя userID.
+func dropUserCodes(tx *gorm.DB, kind string, userID uuid.UUID) error {
+	if err := tx.Exec(`DELETE FROM one_time_codes WHERE kind = ? AND user_id = ? AND used_at IS NULL`, kind, userID).Error; err != nil {
+		return fmt.Errorf("telegram: drop old %s codes: %w", kind, err)
 	}
-	if err := tx.Exec(`DELETE FROM one_time_codes WHERE kind = ? AND `+owner+` = ? AND used_at IS NULL`, kind, ownerID).Error; err != nil {
-		return fmt.Errorf("telegram: drop old codes: %w", err)
+	return nil
+}
+
+// dropProjectCodes удаляет неиспользованные коды вида kind проекта projectID.
+func dropProjectCodes(tx *gorm.DB, kind string, projectID uuid.UUID) error {
+	if err := tx.Exec(`DELETE FROM one_time_codes WHERE kind = ? AND project_id = ? AND used_at IS NULL`, kind, projectID).Error; err != nil {
+		return fmt.Errorf("telegram: drop old %s codes: %w", kind, err)
 	}
 	return nil
 }
@@ -27,7 +31,7 @@ func insertCode(tx *gorm.DB, c *OneTimeCode) (inserted bool, err error) {
 	res := tx.Exec(`INSERT INTO one_time_codes (id, kind, code, user_id, project_id, expires_at) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (code) DO NOTHING`, c.ID, c.Kind, c.Code, c.UserID, c.ProjectID, c.ExpiresAt)
 	if res.Error != nil {
-		return false, fmt.Errorf("telegram: insert code: %w", res.Error)
+		return false, fmt.Errorf("telegram: insert %s code: %w", c.Kind, res.Error)
 	}
 	return res.RowsAffected == 1, nil
 }
@@ -36,7 +40,7 @@ func insertCode(tx *gorm.DB, c *OneTimeCode) (inserted bool, err error) {
 func codeProject(tx *gorm.DB, code, kind string) (*uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := tx.Raw(`SELECT project_id FROM one_time_codes WHERE code = ? AND kind = ?`, code, kind).Scan(&ids).Error; err != nil {
-		return nil, fmt.Errorf("telegram: find bind code: %w", err)
+		return nil, fmt.Errorf("telegram: find %s code: %w", kind, err)
 	}
 	if len(ids) == 0 {
 		return nil, nil
@@ -49,7 +53,7 @@ func lockCode(tx *gorm.DB, code, kind string) (*OneTimeCode, error) {
 	var c OneTimeCode
 	res := tx.Raw(`SELECT * FROM one_time_codes WHERE code = ? AND kind = ? FOR UPDATE`, code, kind).Scan(&c)
 	if res.Error != nil {
-		return nil, fmt.Errorf("telegram: find code: %w", res.Error)
+		return nil, fmt.Errorf("telegram: find %s code: %w", kind, res.Error)
 	}
 	if res.RowsAffected == 0 {
 		return nil, nil

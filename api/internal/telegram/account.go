@@ -98,18 +98,10 @@ func (a *Accounts) IssueLinkCode(ctx context.Context, userID uuid.UUID) (*LinkCo
 		if err := user.LockRow(tx, userID); err != nil {
 			return err
 		}
-		if err := dropOpenCodes(tx, CodeUserLink, "user_id", userID); err != nil {
+		if err := dropUserCodes(tx, CodeUserLink, userID); err != nil {
 			return err
 		}
-		// Совпадение с чужим кодом (1 из 2^40) — просто берём другой.
-		for range 3 {
-			c.Code = newCode()
-			inserted, err := insertCode(tx, &c)
-			if err != nil || inserted {
-				return err
-			}
-		}
-		return errors.New("telegram: не удалось выдать уникальный код")
+		return issueCode(tx, &c)
 	})
 	if err != nil {
 		return nil, err
@@ -119,6 +111,19 @@ func (a *Accounts) IssueLinkCode(ctx context.Context, userID uuid.UUID) (*LinkCo
 		out.URL = "https://t.me/" + a.botUsername + "?start=" + c.Code
 	}
 	return out, nil
+}
+
+// issueCode записывает код c с новым случайным значением. Совпадение с чужим кодом (1 из 2^40) —
+// берётся другое, до трёх попыток.
+func issueCode(tx *gorm.DB, c *OneTimeCode) error {
+	for range 3 {
+		c.Code = newCode()
+		inserted, err := insertCode(tx, c)
+		if err != nil || inserted {
+			return err
+		}
+	}
+	return errors.New("telegram: не удалось выдать уникальный код")
 }
 
 // Link привязывает Telegram-аккаунт tgID по коду (§8.1, шаг 3): записывает telegram_user_id и
