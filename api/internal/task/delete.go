@@ -70,11 +70,13 @@ func releaseStaleAssignee(tx *gorm.DB, t *Task) error {
 	if err != nil {
 		return err
 	}
-	role, err := project.RoleIn(tx, t.ProjectID, *t.AssigneeID)
-	if err != nil {
-		return err
+	role := ""
+	if active {
+		if role, err = project.RoleIn(tx, t.ProjectID, *t.AssigneeID); err != nil {
+			return err
+		}
 	}
-	if active && role != "" {
+	if role != "" {
 		return nil
 	}
 	const note = "снят при восстановлении: исполнитель деактивирован или исключён из проекта"

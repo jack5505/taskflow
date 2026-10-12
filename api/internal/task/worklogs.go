@@ -95,8 +95,7 @@ func (s *Service) Worklogs(ctx context.Context, u *user.User, key string) ([]Wor
 		Scan(&list).Error; err != nil {
 		return nil, fmt.Errorf("task: worklogs: %w", err)
 	}
-	if err := fillNames(db, list, func(v *WorklogView) *uuid.UUID { return &v.UserID },
-		func(v *WorklogView, name string) { v.UserName = name }); err != nil {
+	if err := fillWorklogNames(db, list); err != nil {
 		return nil, err
 	}
 	for i := range list {
@@ -459,8 +458,7 @@ func worklogView(tx *gorm.DB, id uuid.UUID) (*WorklogView, error) {
 	if len(v) == 0 {
 		return &WorklogView{}, nil // как прежний JOIN без строк: пустое представление
 	}
-	if err := fillNames(tx, v, func(v *WorklogView) *uuid.UUID { return &v.UserID },
-		func(v *WorklogView, name string) { v.UserName = name }); err != nil {
+	if err := fillWorklogNames(tx, v); err != nil {
 		return nil, err
 	}
 	v[0].fill()

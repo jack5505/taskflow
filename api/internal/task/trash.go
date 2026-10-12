@@ -90,7 +90,7 @@ func (s *Service) Trash(ctx context.Context, u *user.User, key string, limit int
 	if err != nil {
 		return nil, fmt.Errorf("task: trash: %w", err)
 	}
-	if err := fillNames(db, rows, func(r *trashRow) *uuid.UUID { return r.DeletedByID },
+	if err := fillNames(db, rows[:min(len(rows), limit)], func(r *trashRow) *uuid.UUID { return r.DeletedByID },
 		func(r *trashRow, name string) { r.DeletedByName = &name }); err != nil {
 		return nil, err
 	}
