@@ -46,20 +46,13 @@ func DisplayName(db *gorm.DB, id uuid.UUID) (name string, ok bool, err error) {
 
 // ActiveTelegramIDs — Telegram-аккаунты активных пользователей из ids, у кого он привязан, по id.
 func ActiveTelegramIDs(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]int64, error) {
-	out := make(map[uuid.UUID]int64, len(ids))
-	if len(ids) == 0 {
-		return out, nil
+	rows, err := TelegramRecipients(db, ids)
+	if err != nil {
+		return nil, err
 	}
-	var rows []struct {
-		ID             uuid.UUID
-		TelegramUserID int64
-	}
-	if err := db.Raw(`SELECT id, telegram_user_id FROM users WHERE id IN ? AND is_active AND telegram_user_id IS NOT NULL`,
-		ids).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("user: telegram ids: %w", err)
-	}
+	out := make(map[uuid.UUID]int64, len(rows))
 	for _, r := range rows {
-		out[r.ID] = r.TelegramUserID
+		out[r.ID] = r.ChatID
 	}
 	return out, nil
 }

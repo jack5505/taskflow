@@ -153,15 +153,6 @@ func ForgetMessages(tx *gorm.DB, projectIDs ...uuid.UUID) error {
 	return nil
 }
 
-// StatusOf — статус неудалённой задачи id; нет или удалена — "".
-func StatusOf(db *gorm.DB, id uuid.UUID) (string, error) {
-	var status string
-	if err := db.Raw(`SELECT status FROM tasks WHERE id = ? AND deleted_at IS NULL`, id).Scan(&status).Error; err != nil {
-		return "", fmt.Errorf("task: status: %w", err)
-	}
-	return status, nil
-}
-
 // Overdue — просроченная задача проекта (§3.3).
 type Overdue struct {
 	Key, Title string

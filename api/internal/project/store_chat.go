@@ -192,17 +192,13 @@ func NameWithDeleted(db *gorm.DB, id uuid.UUID) (string, error) {
 // LiveRole — роль userID в неудалённом проекте projectID: live = false — проекта нет или он
 // удалён; role "" — не участник.
 func LiveRole(db *gorm.DB, projectID, userID uuid.UUID) (live bool, role string, err error) {
-	var rows []struct{ Role *string }
-	if err := db.Raw(`SELECT m.role FROM projects p
-		LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = ?
-		WHERE p.id = ? AND p.deleted_at IS NULL`, userID, projectID).Scan(&rows).Error; err != nil {
-		return false, "", fmt.Errorf("project: role: %w", err)
+	var n int64
+	if err := db.Raw(`SELECT count(*) FROM projects WHERE id = ? AND deleted_at IS NULL`, projectID).Scan(&n).Error; err != nil {
+		return false, "", fmt.Errorf("project: live: %w", err)
 	}
-	if len(rows) == 0 {
+	if n == 0 {
 		return false, "", nil
 	}
-	if rows[0].Role == nil {
-		return true, "", nil
-	}
-	return true, *rows[0].Role, nil
+	role, err = memberRole(db, projectID, userID)
+	return err == nil, role, err
 }

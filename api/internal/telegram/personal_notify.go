@@ -69,7 +69,7 @@ type personalEvent struct {
 
 // recipients — получатели из ids без by: активные, с привязанным Telegram, с включённым
 // уведомлением setting; если projectID задан — ещё и участники проекта (иначе уведомление
-// раскрыло бы чужой проект). Порядок и дубли ids сохраняются как есть, кроме повторов.
+// раскрыло бы чужой проект). Повторы ids убираются, порядок получателей не задан.
 func (p *Personal) recipients(ctx context.Context, ids []uuid.UUID, by uuid.UUID, setting string, projectID *uuid.UUID) ([]user.Recipient, error) {
 	var want []uuid.UUID
 	for _, id := range ids {
@@ -87,7 +87,11 @@ func (p *Personal) recipients(ctx context.Context, ids []uuid.UUID, by uuid.UUID
 	}
 	var members map[uuid.UUID]bool
 	if projectID != nil && len(rows) > 0 {
-		if members, err = project.MembersAmong(db, *projectID, want); err != nil {
+		found := make([]uuid.UUID, len(rows))
+		for i, r := range rows {
+			found[i] = r.ID
+		}
+		if members, err = project.MembersAmong(db, *projectID, found); err != nil {
 			return nil, err
 		}
 	}
@@ -169,13 +173,14 @@ func (p *Personal) taskAssigned(ctx context.Context, env events.Envelope) error 
 	if err != nil {
 		return err
 	}
-	status, err := task.StatusOf(p.db.WithContext(ctx), e.TaskID)
+	t, err := task.SnapshotWithDeleted(p.db.WithContext(ctx), e.TaskID)
 	if err != nil {
 		return err
 	}
-	if status == "" {
+	if t == nil || t.Deleted {
 		return nil // задачу уже удалили — назначение неактуально, а «Открыть» вело бы на 404
 	}
+	status := t.Status
 	var row []models.InlineKeyboardButton
 	if status == task.StatusTodo {
 		// Та же кнопка, что под карточкой задачи в группе (§8.4, §8.8: take:<task_id>).

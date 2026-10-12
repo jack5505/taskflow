@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/project"
@@ -58,17 +59,21 @@ func (p *Personal) findTask(ctx context.Context, u *user.User, data string) (*re
 	if err != nil {
 		return nil, nil
 	}
-	db := p.db.WithContext(ctx)
-	t, err := task.SnapshotWithDeleted(db, id)
-	if err != nil || t == nil || t.Deleted {
-		return nil, err
-	}
-	live, role, err := project.LiveRole(db, t.ProjectID, u.ID)
-	if err != nil || !live || (role == "" && !u.IsSystemAdmin) {
-		return nil, err
-	}
-	return &reviewTask{Key: t.Key, Status: t.Status,
-		CanReturn: t.ReporterID == u.ID || role == project.RoleManager || u.IsSystemAdmin}, nil
+	var out *reviewTask
+	err = readSnapshot(p.db.WithContext(ctx), func(tx *gorm.DB) error {
+		t, err := task.SnapshotWithDeleted(tx, id)
+		if err != nil || t == nil || t.Deleted {
+			return err
+		}
+		live, role, err := project.LiveRole(tx, t.ProjectID, u.ID)
+		if err != nil || !live || (role == "" && !u.IsSystemAdmin) {
+			return err
+		}
+		out = &reviewTask{Key: t.Key, Status: t.Status,
+			CanReturn: t.ReporterID == u.ID || role == project.RoleManager || u.IsSystemAdmin}
+		return nil
+	})
+	return out, err
 }
 
 // acceptButton — «Принять»: переход review → done от имени нажавшего по правилам §4 (права

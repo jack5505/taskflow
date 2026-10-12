@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -89,15 +90,20 @@ func (d *Digest) summarized(ctx context.Context, ps []project.SummaryCandidate) 
 	}
 	today := make(map[uuid.UUID]string, len(ps))
 	ids := make([]uuid.UUID, len(ps))
+	var dates []string // у проектов в разных поясах «сегодня» может различаться
 	for i, p := range ps {
-		ids[i], today[p.ID] = p.ID, p.Today.Format(time.DateOnly)
+		day := p.Today.Format(time.DateOnly)
+		ids[i], today[p.ID] = p.ID, day
+		if !slices.Contains(dates, day) {
+			dates = append(dates, day)
+		}
 	}
 	var rows []struct {
 		ProjectID uuid.UUID
 		Date      time.Time
 	}
-	if err := d.db.WithContext(ctx).Raw(`SELECT project_id, date FROM daily_summaries WHERE project_id IN ?`, ids).
-		Scan(&rows).Error; err != nil {
+	if err := d.db.WithContext(ctx).Raw(`SELECT project_id, date FROM daily_summaries WHERE project_id IN ? AND date IN ?`,
+		ids, dates).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("telegram: sent summaries: %w", err)
 	}
 	done := map[uuid.UUID]bool{}
