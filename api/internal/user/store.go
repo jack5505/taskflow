@@ -5,6 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/jack5505/taskflow/api/internal/events"
 )
 
 // Name — имя пользователя для текстов бота и писем.
@@ -44,20 +46,13 @@ func DisplayName(db *gorm.DB, id uuid.UUID) (name string, ok bool, err error) {
 
 // ActiveTelegramIDs — Telegram-аккаунты активных пользователей из ids, у кого он привязан, по id.
 func ActiveTelegramIDs(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]int64, error) {
-	out := make(map[uuid.UUID]int64, len(ids))
-	if len(ids) == 0 {
-		return out, nil
+	rows, err := TelegramRecipients(db, ids)
+	if err != nil {
+		return nil, err
 	}
-	var rows []struct {
-		ID             uuid.UUID
-		TelegramUserID int64
-	}
-	if err := db.Raw(`SELECT id, telegram_user_id FROM users WHERE id IN ? AND is_active AND telegram_user_id IS NOT NULL`,
-		ids).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("user: telegram ids: %w", err)
-	}
+	out := make(map[uuid.UUID]int64, len(rows))
 	for _, r := range rows {
-		out[r.ID] = r.TelegramUserID
+		out[r.ID] = r.ChatID
 	}
 	return out, nil
 }
@@ -137,4 +132,24 @@ func AdminTelegramIDs(db *gorm.DB) ([]int64, error) {
 		return nil, fmt.Errorf("user: admin telegram ids: %w", err)
 	}
 	return ids, nil
+}
+
+// Recipient — активный пользователь с привязанным Telegram: личный чат и настройки уведомлений §8.7.
+type Recipient struct {
+	ID       uuid.UUID
+	ChatID   int64 // личный чат = telegram_user_id
+	Settings events.JSON
+}
+
+// TelegramRecipients — активные пользователи из ids с привязанным Telegram (порядок не задан).
+func TelegramRecipients(db *gorm.DB, ids []uuid.UUID) ([]Recipient, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []Recipient
+	if err := db.Raw(`SELECT id, telegram_user_id AS chat_id, notification_settings AS settings FROM users
+		WHERE id IN ? AND is_active AND telegram_user_id IS NOT NULL`, ids).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("user: telegram recipients: %w", err)
+	}
+	return rows, nil
 }

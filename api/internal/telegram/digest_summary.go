@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,9 +13,9 @@ import (
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 
-	"github.com/jack5505/taskflow/api/internal/events"
 	"github.com/jack5505/taskflow/api/internal/notification"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -39,35 +40,20 @@ const SummaryWindow = time.Hour
 // MaxOverdue — сколько просроченных задач перечислять в сводке; остальные — числом.
 const MaxOverdue = 20
 
-// summaryCandidates — проекты с группой, у которых по их поясу наступило время сводки, а сводки
-// за сегодня ещё нет. Настройка daily_summary проверяется в Go (умолчания §8.6).
-const summaryCandidates = `SELECT p.id, p.key, p.name, p.telegram_chat_id, p.notification_settings::text AS settings,
-		(CAST(@now AS timestamptz) AT TIME ZONE p.timezone)::date AS today
-	FROM projects p
-	WHERE p.telegram_chat_id IS NOT NULL AND p.deleted_at IS NULL AND NOT p.is_archived
-		AND (CAST(@now AS timestamptz) AT TIME ZONE p.timezone) - ((CAST(@now AS timestamptz) AT TIME ZONE p.timezone)::date + p.daily_summary_time)
-			BETWEEN interval '0' AND CAST(@window AS interval)
-		AND NOT EXISTS (SELECT 1 FROM daily_summaries s WHERE s.project_id = p.id
-			AND s.date = (CAST(@now AS timestamptz) AT TIME ZONE p.timezone)::date)`
-
 // Summaries — проход планировщика сводок: каждому подходящему проекту одна сводка за дату.
 // Возвращает число отправленных.
 func (d *Digest) Summaries(ctx context.Context, now time.Time) (int64, error) {
-	var rows []struct {
-		ID             uuid.UUID
-		Key, Name      string
-		TelegramChatID int64
-		Settings       string
-		Today          time.Time
+	rows, err := project.SummaryCandidates(d.db.WithContext(ctx), now, SummaryWindow)
+	if err != nil {
+		return 0, err
 	}
-	if err := d.db.WithContext(ctx).Raw(summaryCandidates, map[string]any{
-		"now": now, "window": fmt.Sprintf("%d seconds", int(SummaryWindow.Seconds())),
-	}).Scan(&rows).Error; err != nil {
-		return 0, fmt.Errorf("telegram: summary candidates: %w", err)
+	done, err := d.summarized(ctx, rows)
+	if err != nil {
+		return 0, err
 	}
 	var sent int64
 	for _, p := range rows {
-		if !project.EffectiveNotifications(events.JSON(p.Settings))[project.NotifyDailySummary] {
+		if done[p.ID] || !project.EffectiveNotifications(p.Settings)[project.NotifyDailySummary] {
 			continue
 		}
 		text, err := d.summary(ctx, p.ID, p.Key, p.Name, p.Today)
@@ -97,6 +83,38 @@ func (d *Digest) Summaries(ctx context.Context, now time.Time) (int64, error) {
 	return sent, nil
 }
 
+// summarized — проекты из ps, которым сводка за их сегодняшнюю дату уже отправлена.
+func (d *Digest) summarized(ctx context.Context, ps []project.SummaryCandidate) (map[uuid.UUID]bool, error) {
+	if len(ps) == 0 {
+		return nil, nil
+	}
+	today := make(map[uuid.UUID]string, len(ps))
+	ids := make([]uuid.UUID, len(ps))
+	var dates []string // у проектов в разных поясах «сегодня» может различаться
+	for i, p := range ps {
+		day := p.Today.Format(time.DateOnly)
+		ids[i], today[p.ID] = p.ID, day
+		if !slices.Contains(dates, day) {
+			dates = append(dates, day)
+		}
+	}
+	var rows []struct {
+		ProjectID uuid.UUID
+		Date      time.Time
+	}
+	if err := d.db.WithContext(ctx).Raw(`SELECT project_id, date FROM daily_summaries WHERE project_id IN ? AND date IN ?`,
+		ids, dates).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("telegram: sent summaries: %w", err)
+	}
+	done := map[uuid.UUID]bool{}
+	for _, r := range rows {
+		if r.Date.Format(time.DateOnly) == today[r.ProjectID] {
+			done[r.ProjectID] = true
+		}
+	}
+	return done, nil
+}
+
 // summaryData — данные шаблона сводки.
 type summaryData struct {
 	Key, Name, Date string
@@ -121,30 +139,33 @@ func (d *Digest) summary(ctx context.Context, projectID uuid.UUID, key, name str
 	}
 	data.Sprint = sprint
 
-	var overdue []struct {
-		Key, Title string
-		Assignee   *string
-		DueDate    time.Time
-	}
-	if err := db.Raw(`SELECT t.key, t.title, u.display_name AS assignee, t.due_date FROM tasks t
-		LEFT JOIN users u ON u.id = t.assignee_id
-		WHERE t.project_id = ? AND t.deleted_at IS NULL AND t.status NOT IN ('done', 'cancelled') AND t.due_date < ?
-		ORDER BY t.due_date, t.number LIMIT ?`, projectID, today.Format(time.DateOnly), MaxOverdue+1).Scan(&overdue).Error; err != nil {
-		return "", fmt.Errorf("telegram: summary overdue: %w", err)
+	overdue, err := task.OverdueIn(db, projectID, today, MaxOverdue+1)
+	if err != nil {
+		return "", err
 	}
 	if len(overdue) > MaxOverdue {
-		var total int
-		if err := db.Raw(`SELECT count(*) FROM tasks WHERE project_id = ? AND deleted_at IS NULL
-			AND status NOT IN ('done', 'cancelled') AND due_date < ?`, projectID, today.Format(time.DateOnly)).
-			Scan(&total).Error; err != nil {
-			return "", fmt.Errorf("telegram: summary overdue count: %w", err)
+		total, err := task.OverdueCount(db, projectID, today)
+		if err != nil {
+			return "", err
 		}
 		overdue, data.More = overdue[:MaxOverdue], total-MaxOverdue
 	}
+	var assignees []uuid.UUID
+	for _, o := range overdue {
+		if o.AssigneeID != nil {
+			assignees = append(assignees, *o.AssigneeID)
+		}
+	}
+	names, err := user.Names(db, assignees...)
+	if err != nil {
+		return "", err
+	}
 	for _, o := range overdue {
 		a := "—"
-		if o.Assignee != nil {
-			a = *o.Assignee
+		if o.AssigneeID != nil {
+			if n, ok := names[*o.AssigneeID]; ok {
+				a = n.DisplayName
+			}
 		}
 		data.Overdue = append(data.Overdue, overdueTask{Key: o.Key, Title: clip(o.Title, maxTitle), Assignee: a, Due: o.DueDate.Format("02.01.2006")})
 	}
@@ -170,15 +191,11 @@ func clip(s string, n int) string {
 // SendDue — личное напоминание о сроке (§8.7) исполнителю, если он привязал Telegram и не
 // отключил напоминания (настройка due). Колокольчик (§7.7) создаёт notification.DueReminders.
 func (d *Digest) SendDue(ctx context.Context, r notification.Due) error {
-	var u []struct {
-		TelegramUserID int64
-		Settings       string
+	u, err := user.TelegramRecipients(d.db.WithContext(ctx), []uuid.UUID{r.UserID})
+	if err != nil {
+		return err
 	}
-	if err := d.db.WithContext(ctx).Raw(`SELECT telegram_user_id, notification_settings::text AS settings FROM users
-		WHERE id = ? AND is_active AND telegram_user_id IS NOT NULL`, r.UserID).Scan(&u).Error; err != nil {
-		return fmt.Errorf("telegram: due recipient: %w", err)
-	}
-	if len(u) == 0 || !user.EffectiveNotifications(events.JSON(u[0].Settings))[user.NotifyDue] {
+	if len(u) == 0 || !user.EffectiveNotifications(u[0].Settings)[user.NotifyDue] {
 		return nil
 	}
 	tmpl := "p_due_tomorrow"
@@ -187,7 +204,7 @@ func (d *Digest) SendDue(ctx context.Context, r notification.Due) error {
 	}
 	text := Text(tmpl, map[string]string{"Key": r.Key, "Title": r.Title, "Date": r.DueDate.Format("02.01.2006")})
 	open := models.InlineKeyboardButton{Text: Text("btn_open", nil), URL: d.baseURL + "/tasks/" + r.Key}
-	return d.out.Send(ctx, Message{Op: OpSend, ChatID: u[0].TelegramUserID, Text: text, Keyboard: keyboard(open)}, 0)
+	return d.out.Send(ctx, Message{Op: OpSend, ChatID: u[0].ChatID, Text: text, Keyboard: keyboard(open)}, 0)
 }
 
 // CleanupSummaries удаляет отметки о сводках старше недели (воркер, раз в сутки).

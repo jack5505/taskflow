@@ -13,8 +13,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
@@ -57,19 +59,21 @@ func (p *Personal) findTask(ctx context.Context, u *user.User, data string) (*re
 	if err != nil {
 		return nil, nil
 	}
-	var rows []reviewTask
-	if err := p.db.WithContext(ctx).Raw(`SELECT t.key, t.status,
-			(t.reporter_id = @user OR m.role = 'manager' OR @admin) AS can_return
-		FROM tasks t JOIN projects pr ON pr.id = t.project_id AND pr.deleted_at IS NULL
-		LEFT JOIN project_members m ON m.project_id = t.project_id AND m.user_id = @user
-		WHERE t.id = @id AND t.deleted_at IS NULL AND (m.user_id IS NOT NULL OR @admin)`,
-		map[string]any{"id": id, "user": u.ID, "admin": u.IsSystemAdmin}).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("telegram: task by id: %w", err)
-	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	return &rows[0], nil
+	var out *reviewTask
+	err = readSnapshot(p.db.WithContext(ctx), func(tx *gorm.DB) error {
+		t, err := task.SnapshotWithDeleted(tx, id)
+		if err != nil || t == nil || t.Deleted {
+			return err
+		}
+		live, role, err := project.LiveRole(tx, t.ProjectID, u.ID)
+		if err != nil || !live || (role == "" && !u.IsSystemAdmin) {
+			return err
+		}
+		out = &reviewTask{Key: t.Key, Status: t.Status,
+			CanReturn: t.ReporterID == u.ID || role == project.RoleManager || u.IsSystemAdmin}
+		return nil
+	})
+	return out, err
 }
 
 // acceptButton — «Принять»: переход review → done от имени нажавшего по правилам §4 (права
