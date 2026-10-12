@@ -32,29 +32,55 @@ type Link struct {
 	URL         string    `json:"url" example:"https://github.com/acme/backend/pull/7"`
 	State       string    `json:"state" enums:"open,draft,merged,closed"`
 	AuthorLogin *string   `json:"author_login,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// SourceUpdatedAt — updated_at PR в GitHub: доставка старше сохранённой состояние не меняет.
+	SourceUpdatedAt *time.Time `json:"-"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 func (Link) TableName() string { return "github_links" }
 
-// UpsertLink записывает связь l (ветка — по имени, PR — по номеру в репозитории); существующая
-// обновляет название, адрес, состояние и автора. created — связи раньше не было.
-func UpsertLink(db *gorm.DB, l Link) (created bool, err error) {
+// lockLink — связь с тем же ключом, что l (ветка — по имени, PR — по номеру в репозитории),
+// строка FOR UPDATE; нет — nil.
+func lockLink(tx *gorm.DB, l Link) (*Link, error) {
+	q := `SELECT * FROM github_links WHERE task_id = ? AND kind = 'pr' AND lower(repo) = lower(?) AND number = ? FOR UPDATE`
+	args := []any{l.TaskID, l.Repo, l.Number}
+	if l.Kind == LinkBranch {
+		q = `SELECT * FROM github_links WHERE task_id = ? AND kind = 'branch' AND lower(repo) = lower(?) AND name = ? FOR UPDATE`
+		args = []any{l.TaskID, l.Repo, l.Name}
+	}
+	var rows []Link
+	if err := tx.Raw(q, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("task: github link: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
+// insertLink вставляет связь l; такая уже есть (вставили одновременно) — inserted = false.
+func insertLink(tx *gorm.DB, l Link) (inserted bool, err error) {
 	target := `(task_id, lower(repo), number) WHERE kind = 'pr'`
 	if l.Kind == LinkBranch {
 		target = `(task_id, lower(repo), name) WHERE kind = 'branch'`
 	}
-	var rows []struct{ Created bool }
-	if err := db.Raw(`INSERT INTO github_links (id, task_id, kind, repo, number, name, url, state, author_login)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT `+target+` DO UPDATE SET name = EXCLUDED.name, url = EXCLUDED.url, state = EXCLUDED.state,
-			author_login = EXCLUDED.author_login, updated_at = now()
-		RETURNING (xmax = 0) AS created`,
-		uuid.New(), l.TaskID, l.Kind, l.Repo, l.Number, l.Name, l.URL, l.State, l.AuthorLogin).Scan(&rows).Error; err != nil {
-		return false, fmt.Errorf("task: github link: %w", err)
+	res := tx.Exec(`INSERT INTO github_links (id, task_id, kind, repo, number, name, url, state, author_login, source_updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT `+target+` DO NOTHING`,
+		uuid.New(), l.TaskID, l.Kind, l.Repo, l.Number, l.Name, l.URL, l.State, l.AuthorLogin, l.SourceUpdatedAt)
+	if res.Error != nil {
+		return false, fmt.Errorf("task: github link: %w", res.Error)
 	}
-	return len(rows) == 1 && rows[0].Created, nil
+	return res.RowsAffected == 1, nil
+}
+
+// updateLink переписывает название, адрес, состояние, автора и время источника связи id.
+func updateLink(tx *gorm.DB, id uuid.UUID, l Link) error {
+	if err := tx.Exec(`UPDATE github_links SET name = ?, url = ?, state = ?, author_login = ?, source_updated_at = ?,
+		updated_at = now() WHERE id = ?`, l.Name, l.URL, l.State, l.AuthorLogin, l.SourceUpdatedAt, id).Error; err != nil {
+		return fmt.Errorf("task: github link: %w", err)
+	}
+	return nil
 }
 
 // LinksOf — связи задачи: ветки, затем PR, по времени появления.
@@ -87,23 +113,4 @@ func LiveByKeys(db *gorm.DB, projectID uuid.UUID, keys []string) ([]Titled, erro
 		return nil, fmt.Errorf("task: by keys: %w", err)
 	}
 	return rows, nil
-}
-
-// LinkState — текущее состояние связи l (той же задачи, вида, репозитория и номера или имени);
-// связи нет — "".
-func LinkState(db *gorm.DB, l Link) (string, error) {
-	var states []string
-	q := `SELECT state FROM github_links WHERE task_id = ? AND kind = 'pr' AND lower(repo) = lower(?) AND number = ?`
-	args := []any{l.TaskID, l.Repo, l.Number}
-	if l.Kind == LinkBranch {
-		q = `SELECT state FROM github_links WHERE task_id = ? AND kind = 'branch' AND lower(repo) = lower(?) AND name = ?`
-		args = []any{l.TaskID, l.Repo, l.Name}
-	}
-	if err := db.Raw(q, args...).Scan(&states).Error; err != nil {
-		return "", fmt.Errorf("task: github link state: %w", err)
-	}
-	if len(states) == 0 {
-		return "", nil
-	}
-	return states[0], nil
 }

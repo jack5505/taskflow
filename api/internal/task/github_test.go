@@ -25,15 +25,14 @@ func TestGitHubLinksEndpoint(t *testing.T) {
 
 	seven := 7
 	login := "octo"
+	tt := task.Titled{ID: id, Key: key}
+	pid := uuid.New()
 	for _, state := range []string{task.PROpen, task.PRMerged} {
-		_, err := task.UpsertLink(f.db, task.Link{TaskID: id, Kind: task.LinkPR, Repo: "acme/x", Number: &seven,
-			Name: key + ": вход", URL: "https://github.com/acme/x/pull/7", State: state, AuthorLogin: &login})
-		require.NoError(t, err)
+		require.NoError(t, task.LinkGitHub(f.db, tt, pid, task.Link{Kind: task.LinkPR, Repo: "acme/x", Number: &seven,
+			Name: key + ": вход", URL: "https://github.com/acme/x/pull/7", State: state, AuthorLogin: &login}))
 	}
-	created2, err := task.UpsertLink(f.db, task.Link{TaskID: id, Kind: task.LinkBranch, Repo: "ACME/x", Name: "feat/x",
-		URL: "https://github.com/acme/x/tree/feat/x", State: task.PROpen})
-	require.NoError(t, err)
-	require.True(t, created2)
+	require.NoError(t, task.LinkGitHub(f.db, tt, pid, task.Link{Kind: task.LinkBranch, Repo: "ACME/x", Name: "feat/x",
+		URL: "https://github.com/acme/x/tree/feat/x", State: task.PROpen}))
 
 	rec, _ = f.do(t, "GET", "/api/v1/tasks/"+key+"/github", f.member, "")
 	require.Equal(t, http.StatusOK, rec.Code)

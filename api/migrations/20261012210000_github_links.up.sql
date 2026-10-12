@@ -10,6 +10,7 @@ CREATE TABLE github_links (
     url          text        NOT NULL,
     state        text        NOT NULL CHECK (state IN ('open', 'draft', 'merged', 'closed')),
     author_login text,
+    source_updated_at timestamptz,                -- updated_at PR в GitHub: старая доставка не перетирает новое состояние
     created_at   timestamptz NOT NULL DEFAULT now(),
     updated_at   timestamptz NOT NULL DEFAULT now(),
     CHECK ((kind = 'pr') = (number IS NOT NULL))

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -22,6 +24,12 @@ func TestKeysIn(t *testing.T) {
 	require.Equal(t, []string{"TM-42", "TM-7"}, keysIn("TM", "feat/tm-42-login", "TM-42: вход, TM-7 и AB-1", "xtm-9"))
 	require.Empty(t, keysIn("TM", "main", "no keys here"))
 	require.Equal(t, []string{"TM-1"}, keysIn("TM", "TM-1"))
+	require.Equal(t, []string{"TM-42"}, keysIn("TM", "feat/tm-042", "TM-42"), "ведущие нули — тот же ключ")
+	require.Empty(t, keysIn("TM", "TM-0", "TM-1234567890"))
+}
+
+func TestEscapeRef(t *testing.T) {
+	require.Equal(t, "feat/a%23b/c%3Fd", escapeRef("feat/a#b/c?d"))
 }
 
 type procEnv struct {
@@ -30,6 +38,8 @@ type procEnv struct {
 	prj *project.Project
 	t1  *task.Task
 	t2  *task.Task
+	// clock — секунды updated_at следующего PR: каждая доставка новее предыдущей.
+	clock int
 }
 
 func newProcEnv(t *testing.T) *procEnv {
@@ -62,8 +72,9 @@ func (e *procEnv) deliver(t *testing.T, event string, payload any) {
 }
 
 func (e *procEnv) pr(action string, number int, title, head, state string, merged, draft bool) map[string]any {
+	e.clock++
 	return map[string]any{"action": action, "number": number,
-		"pull_request": map[string]any{"title": title, "html_url": fmt.Sprintf("https://github.com/%s/pull/%d", *e.prj.GitHubRepo, number),
+		"pull_request": map[string]any{"updated_at": time.Date(2026, 10, 1, 0, 0, e.clock, 0, time.UTC), "title": title, "html_url": fmt.Sprintf("https://github.com/%s/pull/%d", *e.prj.GitHubRepo, number),
 			"state": state, "merged": merged, "draft": draft, "user": map[string]any{"login": "octo"}, "head": map[string]any{"ref": head}},
 		"repository": map[string]any{"full_name": *e.prj.GitHubRepo}}
 }
@@ -118,6 +129,47 @@ func TestProcessorLinks(t *testing.T) {
 	require.NoError(t, e.db.Model(&project.Project{}).Where("id = ?", e.prj.ID).Update("is_archived", true).Error)
 	e.deliver(t, "pull_request", e.pr("opened", 10, k1+": архив", "x", "open", false, false))
 	require.Len(t, e.links(t, e.t1), 2, "архивный проект связей не получает")
+}
+
+// Удалённая ветка закрывается; запоздавшая доставка PR не перетирает более новое состояние;
+// одновременные доставки дают одну связь и одно событие.
+func TestProcessorDeleteOrderRace(t *testing.T) {
+	e := newProcEnv(t)
+	k := e.t1.Key
+	branch := map[string]any{"ref": "feat/" + k + "-x#1", "ref_type": "branch", "sender": map[string]any{"login": "octo"},
+		"repository": map[string]any{"full_name": *e.prj.GitHubRepo, "html_url": "https://github.com/" + *e.prj.GitHubRepo}}
+	e.deliver(t, "create", branch)
+	e.deliver(t, "delete", branch)
+	l := e.links(t, e.t1)
+	require.Len(t, l, 1)
+	require.Equal(t, task.PRClosed, l[0].State, "удалённая ветка закрыта")
+	require.Contains(t, l[0].URL, "/tree/feat/"+k+"-x%231")
+
+	old := e.pr("opened", 5, k+": x", "y", "open", false, false)
+	merged := e.pr("closed", 5, k+": x", "y", "closed", true, false)
+	e.deliver(t, "pull_request", merged)
+	e.deliver(t, "pull_request", old)
+	l = e.links(t, e.t1)
+	require.Equal(t, task.PRMerged, l[1].State, "старая доставка пришла после новой")
+
+	pr := e.pr("opened", 6, k+": гонка", "z", "open", false, false)
+	raw, _ := json.Marshal(pr)
+	d, _ := json.Marshal(Delivery{Event: "pull_request", Payload: raw})
+	errs := make([]error, 4)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = e.p.handle(context.Background(), events.Envelope{Type: events.GitHubDelivery, Payload: d})
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	require.Len(t, e.links(t, e.t1), 3)
+	require.EqualValues(t, 3, e.events(t, events.GitHubLinked, e.t1), "ветка, PR 5 и PR 6 — по одному событию")
 }
 
 // Битый payload — ошибка (событие повторится); неизвестное событие — без ошибки.

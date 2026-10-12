@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -31,15 +33,20 @@ func Register(d *events.Dispatcher, p *Processor) {
 
 // taskKeyRe — ключ задачи в имени ветки или заголовке PR без учёта регистра: «feat/tm-42-login»,
 // «TM-42: вход». Слева — не буква и не цифра, чтобы «xtm-42» не считался ключом TM-42.
-var taskKeyRe = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])([a-z][a-z0-9]{1,9}-[0-9]+)`)
+var taskKeyRe = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])([a-z][a-z0-9]{1,9})-([0-9]+)`)
 
-// keysIn — ключи задач проекта projectKey в текстах, без повторов, в верхнем регистре.
+// keysIn — ключи задач проекта projectKey в текстах, без повторов, в верхнем регистре; номер
+// без ведущих нулей (TM-042 — это TM-42).
 func keysIn(projectKey string, texts ...string) []string {
 	seen := map[string]bool{}
 	var keys []string
 	for _, s := range texts {
 		for _, m := range taskKeyRe.FindAllStringSubmatch(s, -1) {
-			k := strings.ToUpper(m[1])
+			num := strings.TrimLeft(m[2], "0")
+			if num == "" || len(num) > 9 { // номер задачи — int, 0 и слишком длинные — не ключи
+				continue
+			}
+			k := strings.ToUpper(m[1]) + "-" + num
 			if strings.HasPrefix(k, projectKey+"-") && !seen[k] {
 				seen[k] = true
 				keys = append(keys, k)
@@ -69,6 +76,7 @@ type pullRequestEvent struct {
 		Head struct {
 			Ref string `json:"ref"`
 		} `json:"head"`
+		UpdatedAt *time.Time `json:"updated_at"`
 	} `json:"pull_request"`
 	Repository repoRef `json:"repository"`
 }
@@ -94,18 +102,21 @@ func (p *Processor) handle(ctx context.Context, env events.Envelope) error {
 			return fmt.Errorf("github: pull_request: %w", err)
 		}
 		return p.pullRequest(ctx, &e)
-	case "create":
+	case "create", "delete":
 		var e createEvent
 		if err := json.Unmarshal(d.Payload, &e); err != nil {
-			return fmt.Errorf("github: create: %w", err)
+			return fmt.Errorf("github: %s: %w", d.Event, err)
 		}
 		if e.RefType != "branch" {
 			return nil
 		}
-		login := e.Sender.Login
+		state := task.PROpen
+		if d.Event == "delete" {
+			state = task.PRClosed // ветка удалена — в карточке она закрыта
+		}
 		return p.link(ctx, e.Repository.FullName, []string{e.Ref}, task.Link{
 			Kind: task.LinkBranch, Repo: e.Repository.FullName, Name: e.Ref,
-			URL: e.Repository.HTMLURL + "/tree/" + e.Ref, State: task.PROpen, AuthorLogin: nonEmpty(login),
+			URL: e.Repository.HTMLURL + "/tree/" + escapeRef(e.Ref), State: state, AuthorLogin: nonEmpty(e.Sender.Login),
 		})
 	default:
 		slog.DebugContext(ctx, "github: event ignored", "event", d.Event, "delivery", d.Delivery)
@@ -131,6 +142,7 @@ func (p *Processor) pullRequest(ctx context.Context, e *pullRequestEvent) error 
 	return p.link(ctx, e.Repository.FullName, []string{e.PullRequest.Title, e.PullRequest.Head.Ref}, task.Link{
 		Kind: task.LinkPR, Repo: e.Repository.FullName, Number: &number, Name: e.PullRequest.Title,
 		URL: e.PullRequest.HTMLURL, State: prState(e), AuthorLogin: nonEmpty(e.PullRequest.User.Login),
+		SourceUpdatedAt: e.PullRequest.UpdatedAt,
 	})
 }
 
@@ -148,29 +160,21 @@ func (p *Processor) link(ctx context.Context, repo string, texts []string, l tas
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		for _, t := range tasks {
-			l.TaskID = t.ID
-			before, err := task.LinkState(tx, l)
-			if err != nil {
-				return err
-			}
-			if _, err := task.UpsertLink(tx, l); err != nil {
-				return err
-			}
-			payload := map[string]any{"task_id": t.ID, "key": t.Key, "project_id": target.ID, "kind": l.Kind,
-				"repo": l.Repo, "number": l.Number, "name": l.Name, "url": l.URL, "state": l.State}
-			switch {
-			case before == "":
-				err = events.Publish(tx, events.GitHubLinked, payload)
-			case before != l.State:
-				payload["previous_state"] = before
-				err = events.Publish(tx, events.GitHubPRChanged, payload)
-			}
-			if err != nil {
+			if err := task.LinkGitHub(tx, t, target.ID, l); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// escapeRef — имя ветки для адреса: каждый сегмент экранируется, «/» остаются.
+func escapeRef(ref string) string {
+	parts := strings.Split(ref, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
 }
 
 func nonEmpty(s string) *string {
