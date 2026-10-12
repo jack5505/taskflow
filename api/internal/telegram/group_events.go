@@ -301,7 +301,7 @@ func (ge *GroupEvents) onSprintStarted(ctx context.Context, env events.Envelope)
 	if err != nil || !ok {
 		return err
 	}
-	free, err := task.FreeInSprint(ge.db.WithContext(ctx), p.SprintID, maxSprintTasks+1)
+	free, err := task.FreeInSprints(ge.db.WithContext(ctx), []uuid.UUID{p.SprintID}, maxSprintTasks+1)
 	if err != nil {
 		return err
 	}
