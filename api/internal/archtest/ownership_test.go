@@ -1,10 +1,8 @@
 package archtest
 
 import (
-	"bufio"
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -242,16 +240,7 @@ func TestTablesIn(t *testing.T) {
 // чужие таблицы со своими и считает каждое обращение.
 func TestScanFindsViolation(t *testing.T) {
 	root := t.TempDir()
-	write := func(path, src string) {
-		t.Helper()
-		full := filepath.Join(root, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(src), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	write := func(p, src string) { writeFixture(t, root, p, src) }
 	write("telegram/card.go", "package telegram\nconst q = `SELECT t.id\n  FROM tasks t JOIN projects p ON p.id = t.project_id`\n"+
 		"const q2 = \"UPDATE tasks SET x = 1\"\nconst own = \"DELETE FROM one_time_codes\"\nvar _ = db.Table(\"users u\")\n")
 	write("task/store.go", "package task\nconst q = \"UPDATE tasks SET x = 1\"\n// FROM users в комментарии не считается\n")
@@ -273,49 +262,29 @@ func TestScanFindsViolation(t *testing.T) {
 	}
 }
 
-// scan обходит Go-файлы пакетов под root (кроме тестов) и считает обращения к чужим
-// таблицам в строковых литералах и в вызовах .Table("…").
+// scan считает обращения к чужим таблицам в строковых литералах и в вызовах .Table("…") не-тестовых
+// файлов пакетов под root.
 func scan(t *testing.T, root string) map[violation]int {
 	t.Helper()
 	found := map[violation]int{}
-	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		module, _, _ := strings.Cut(rel, "/")
+	for _, f := range goFiles(t, root) {
+		module := f.module
 		if readAnyTable[module] || notModules[module] {
-			return nil
+			continue
 		}
 		if m, ok := moduleOf[module]; ok {
 			module = m
 		}
-		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if err != nil {
-			return err
-		}
 		add := func(table string) {
 			if owner := owners[table]; owner != "" && owner != module {
-				found[violation{rel, table}]++
+				found[violation{f.rel, table}]++
 			}
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
+		ast.Inspect(f.file, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
-				// db.Table("tasks t") — имя таблицы без ключевого слова SQL.
-				if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Table" && len(n.Args) > 0 {
-					if s, ok := stringLit(n.Args[0]); ok {
-						name, _, _ := strings.Cut(strings.TrimSpace(s), " ")
-						add(strings.ToLower(strings.Trim(strings.TrimPrefix(name, "public."), `"`)))
-					}
+				if table, ok := tableCall(n); ok {
+					add(table)
 				}
 			case *ast.BasicLit:
 				if s, ok := stringLit(n); ok {
@@ -326,12 +295,22 @@ func scan(t *testing.T, root string) map[violation]int {
 			}
 			return true
 		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	return found
+}
+
+// tableCall — db.Table("tasks t"): имя таблицы без ключевого слова SQL.
+func tableCall(c *ast.CallExpr) (string, bool) {
+	sel, ok := c.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Table" || len(c.Args) == 0 {
+		return "", false
+	}
+	s, ok := stringLit(c.Args[0])
+	if !ok {
+		return "", false
+	}
+	name, _, _ := strings.Cut(strings.TrimSpace(s), " ")
+	return strings.ToLower(strings.Trim(strings.TrimPrefix(name, "public."), `"`)), true
 }
 
 func stringLit(e ast.Expr) (string, bool) {
@@ -343,38 +322,13 @@ func stringLit(e ast.Expr) (string, bool) {
 	return s, err == nil
 }
 
-// readViolations читает список временных нарушений: строки «файл таблица число_обращений»,
-// пустые строки и комментарии # пропускаются.
+// readViolations читает список временных нарушений: строки «файл таблица число_обращений».
 func readViolations(t *testing.T, path string) map[violation]int {
 	t.Helper()
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
 	out := map[violation]int{}
-	sc := bufio.NewScanner(f)
-	for n := 1; sc.Scan(); n++ {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) != 3 {
-			t.Fatalf("%s:%d: ожидается «файл таблица число», получено %q", path, n, line)
-		}
-		count, err := strconv.Atoi(fields[2])
-		if err != nil || count < 1 {
-			t.Fatalf("%s:%d: число обращений должно быть положительным, получено %q", path, n, fields[2])
-		}
-		v := violation{fields[0], fields[1]}
-		if _, dup := out[v]; dup {
-			t.Fatalf("%s:%d: повтор %q", path, n, line)
-		}
-		out[v] = count
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatal(err)
+	for key, n := range readList(t, path, 3) {
+		file, table, _ := strings.Cut(key, " ")
+		out[violation{file, table}] = n
 	}
 	return out
 }
