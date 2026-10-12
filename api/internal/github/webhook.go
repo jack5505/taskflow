@@ -4,9 +4,11 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -22,8 +24,9 @@ const (
 	EventHeader     = "X-GitHub-Event"
 )
 
-// maxPayloadBytes — предел тела: GitHub не шлёт вебхуки больше 25 МБ.
-const maxPayloadBytes = 25 << 20
+// maxPayloadBytes — предел тела до проверки подписи. App подписан только на pull_request и
+// create (§12.1) — их тела в сотни раз меньше; предел не даёт забить память неподписанными телами.
+const maxPayloadBytes = 2 << 20
 
 // Webhook — приём POST /api/v1/github/webhook.
 type Webhook struct {
@@ -42,7 +45,7 @@ func (h *Webhook) Register(api *gin.RouterGroup) {
 // receive — приём доставки вебхука GitHub App.
 //
 // @Summary      Webhook GitHub App
-// @Description  Приём событий GitHub App (§12.2). Подпись X-Hub-Signature-256 (HMAC-SHA256 тела секретом App) проверяется на каждом запросе, неверная — 401. Ответ 202 отдаётся сразу, обработка — в очереди; повторная доставка с тем же X-GitHub-Delivery (7 дней) не обрабатывается. Маршрут есть, только если задан GITHUB_APP_ID.
+// @Description  Приём событий GitHub App (§12.2). Подпись X-Hub-Signature-256 (HMAC-SHA256 тела секретом App) проверяется на каждом запросе, неверная — 401. Тело — JSON до 2 МБ. Ответ 202 отдаётся сразу, доставка пишется в базу вместе с событием outbox, обработка — в воркере; повторная доставка с тем же X-GitHub-Delivery (7 дней) не обрабатывается. Маршрут есть, только если задан GITHUB_APP_ID.
 // @Tags         github
 // @Accept       json
 // @Produce      json
@@ -51,7 +54,7 @@ func (h *Webhook) Register(api *gin.RouterGroup) {
 // @Param        X-GitHub-Event       header  string  true  "тип события"
 // @Param        body  body      object  true  "payload события GitHub"
 // @Success      202   {object}  map[string]bool  "accepted: true"
-// @Failure      400   {object}  apierr.Response  "VALIDATION_FAILED — нет заголовка доставки или события"
+// @Failure      400   {object}  apierr.Response  "VALIDATION_FAILED — нет заголовка доставки или события; INVALID_JSON — тело не JSON"
 // @Failure      401   {object}  apierr.Response  "неверная подпись"
 // @Failure      413   {object}  apierr.Response  "PAYLOAD_TOO_LARGE"
 // @Router       /api/v1/github/webhook [post]
@@ -60,7 +63,7 @@ func (h *Webhook) receive(c *gin.Context) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			httpserver.Abort(c, apierr.PayloadTooLarge("Тело вебхука больше 25 МБ"))
+			httpserver.Abort(c, apierr.PayloadTooLarge("Тело вебхука больше 2 МБ"))
 			return
 		}
 		httpserver.Abort(c, apierr.BadRequest(apierr.CodeInvalidJSON, "Тело запроса не прочитано"))
@@ -71,9 +74,20 @@ func (h *Webhook) receive(c *gin.Context) {
 		return
 	}
 	delivery, event := c.GetHeader(DeliveryHeader), c.GetHeader(EventHeader)
-	if delivery == "" || event == "" {
-		httpserver.Abort(c, apierr.BadRequest(apierr.CodeValidation, "Нужны заголовки X-GitHub-Delivery и X-GitHub-Event").
-			With("fields", []apierr.FieldError{{Field: DeliveryHeader, Reason: "id доставки и тип события обязательны"}}))
+	var missing []apierr.FieldError
+	for h, v := range map[string]string{DeliveryHeader: delivery, EventHeader: event} {
+		if v == "" {
+			missing = append(missing, apierr.FieldError{Field: h, Reason: "обязательный заголовок"})
+		}
+	}
+	if len(missing) > 0 {
+		slices.SortFunc(missing, func(a, b apierr.FieldError) int { return strings.Compare(a.Field, b.Field) })
+		httpserver.Abort(c, apierr.BadRequest(apierr.CodeValidation, "Нет заголовков доставки GitHub").With("fields", missing))
+		return
+	}
+	if !json.Valid(body) {
+		// Вебхук App настроен с типом application/x-www-form-urlencoded — нужен application/json.
+		httpserver.Abort(c, apierr.BadRequest(apierr.CodeInvalidJSON, "Тело вебхука — не JSON: в настройках App нужен Content type application/json"))
 		return
 	}
 	if _, err := h.intake.Accept(c.Request.Context(), event, delivery, body); err != nil {

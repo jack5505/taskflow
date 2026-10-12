@@ -2,8 +2,5 @@
 // ветками и pull request'ами, привязка репозитория к проекту и связка аккаунтов.
 package github
 
-// TaskEvent — задание воркера: обработать событие вебхука.
-const TaskEvent = "github:event"
-
 // WebhookPath — приём вебхуков GitHub App (§12.2), без JWT: проверяется подпись.
 const WebhookPath = "/github/webhook"

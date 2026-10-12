@@ -1,6 +1,12 @@
 package config_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -149,20 +155,40 @@ func TestLoadGitHub(t *testing.T) {
 	require.False(t, cfg.GitHubEnabled())
 	require.Equal(t, "https://api.github.com", cfg.GitHubAPIURL)
 
-	set("12345", "/run/secrets/gh.pem", "0123456789abcdef", "Iv1.abc", "s3cr3t")
+	key := writeKey(t)
+	set("12345", key, "0123456789abcdef", "Iv1.abc", "s3cr3t")
 	cfg, err = config.Load()
 	require.NoError(t, err)
 	require.True(t, cfg.GitHubEnabled())
 
 	for name, args := range map[string][5]string{
-		"id не число":           {"app", "/k.pem", "0123456789abcdef", "", ""},
+		"id не число":           {"app", key, "0123456789abcdef", "", ""},
+		"id ноль":               {"0", key, "0123456789abcdef", "", ""},
 		"нет ключа":             {"12345", "", "0123456789abcdef", "", ""},
-		"короткий секрет":       {"12345", "/k.pem", "short", "", ""},
-		"секрет по умолчанию":   {"12345", "/k.pem", "change-me", "", ""},
-		"client id без секрета": {"12345", "/k.pem", "0123456789abcdef", "Iv1.abc", ""},
+		"нет файла ключа":       {"12345", key + ".missing", "0123456789abcdef", "", ""},
+		"не PEM":                {"12345", notPEM(t), "0123456789abcdef", "", ""},
+		"короткий секрет":       {"12345", key, "short", "", ""},
+		"секрет по умолчанию":   {"12345", key, "change-me", "", ""},
+		"client id без секрета": {"12345", key, "0123456789abcdef", "Iv1.abc", ""},
 	} {
 		set(args[0], args[1], args[2], args[3], args[4])
 		_, err := config.Load()
 		require.Error(t, err, name)
 	}
+}
+
+func writeKey(t *testing.T) string {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	p := filepath.Join(t.TempDir(), "app.pem")
+	require.NoError(t, os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}), 0o600))
+	return p
+}
+
+func notPEM(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "bad.pem")
+	require.NoError(t, os.WriteFile(p, []byte("not a key"), 0o600))
+	return p
 }

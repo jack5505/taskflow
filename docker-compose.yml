@@ -23,6 +23,7 @@ services:
         aliases: [taskflow-api]
     volumes:
       - attachments:/data/attachments
+      - ./secrets:/run/secrets:ro # ключ GitHub App (GITHUB_APP_PRIVATE_KEY_FILE)
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,6 +37,7 @@ services:
     env_file: .env
     volumes:
       - attachments:/data/attachments
+      - ./secrets:/run/secrets:ro # ключ GitHub App (GITHUB_APP_PRIVATE_KEY_FILE)
     depends_on:
       postgres:
         condition: service_healthy

@@ -50,6 +50,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	d := events.NewDispatcher(rdb)
 	registerHandlers(d)
 	notification.Register(d, g)
+	github.Register(d, github.NewProcessor()) // доставки вебхуков GitHub (§12.2)
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects)
 	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }
@@ -80,9 +81,6 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	mux.Handle(mail.TaskType, mail.Handler(smtp))
 	mux.Handle(auth.TaskPasswordReset, auth.PasswordResetHandler(authSvc))
 	mux.Handle(auth.TaskPasswordInvite, auth.PasswordInviteHandler(authSvc))
-	if cfg.GitHubEnabled() {
-		github.Mount(mux, github.NewProcessor())
-	}
 	accounts := telegram.NewAccounts(g, cfg.TelegramBotUsername)
 	var digest *telegram.Digest // сводки в группы и личные напоминания о сроке (§8.6, §8.7)
 	if cfg.TelegramEnabled() {
@@ -137,6 +135,7 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	}()
 	wg.Go(func() { sprint.RunSnapshots(ctx, g) }) // снимки спринтов в 00:00 по поясу проекта (§3.8)
 	wg.Go(func() { runDaily(ctx, "one-time codes cleanup", accounts.CleanupCodes) })
+	wg.Go(func() { runDaily(ctx, "github deliveries cleanup", github.NewIntake(g).CleanupDeliveries) })
 	go func() {
 		defer wg.Done()
 		runEvery(ctx, "timers stop", time.Minute, stopTimers)
