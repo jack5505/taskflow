@@ -146,17 +146,14 @@ type opened struct {
 // Права — из строк под блокировкой. Ошибки: деактивирован — 401; нет задачи, не участник или
 // удалённая для не-администратора — 404. Архив проверяет вызывающий — в нужном месте порядка ответов.
 func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (*opened, error) {
-	var me []struct {
-		IsSystemAdmin bool
-		IsActive      bool
+	me, err := user.LockActor(tx, u.ID)
+	if err != nil {
+		return nil, err
 	}
-	if err := tx.Raw(`SELECT is_system_admin, is_active FROM users WHERE id = ? FOR SHARE`, u.ID).Scan(&me).Error; err != nil {
-		return nil, fmt.Errorf("task: actor: %w", err)
-	}
-	if len(me) == 0 || !me[0].IsActive {
+	if me == nil || !me.IsActive {
 		return nil, errUserBlocked
 	}
-	if err := lockShare(tx, "users", pre.users); err != nil {
+	if err := user.LockShare(tx, pre.users); err != nil {
 		return nil, err
 	}
 	if err := lockShare(tx, "sprints", pre.sprints); err != nil {
@@ -192,7 +189,7 @@ func openTask(tx *gorm.DB, u *user.User, key string, pre preLock, lock string) (
 	if err != nil {
 		return nil, err
 	}
-	admin := me[0].IsSystemAdmin
+	admin := me.IsSystemAdmin
 	if role == "" && !admin {
 		return nil, ErrNotFound
 	}
@@ -382,9 +379,9 @@ func reopen(tx *gorm.DB, t *Task, newAssignee *uuid.UUID, by uuid.UUID) error {
 			return err
 		}
 	} else if t.AssigneeID != nil {
-		var active bool
-		if err := tx.Raw(`SELECT is_active FROM users WHERE id = ?`, *t.AssigneeID).Scan(&active).Error; err != nil {
-			return fmt.Errorf("task: assignee: %w", err)
+		active, err := user.IsActive(tx, *t.AssigneeID)
+		if err != nil {
+			return err
 		}
 		if !active {
 			return fieldError("assignee_id", "исполнитель деактивирован — выберите активного")
@@ -489,8 +486,9 @@ func sprintChanged(tx *gorm.DB, t *Task, from, to *uuid.UUID, by uuid.UUID) erro
 func alreadyTaken(tx *gorm.DB, t *Task) error {
 	name := ""
 	if t.AssigneeID != nil {
-		if err := tx.Raw(`SELECT display_name FROM users WHERE id = ?`, *t.AssigneeID).Scan(&name).Error; err != nil {
-			return fmt.Errorf("task: assignee name: %w", err)
+		var err error
+		if name, _, err = user.DisplayName(tx, *t.AssigneeID); err != nil {
+			return err
 		}
 	}
 	e := apierr.Conflict(apierr.CodeTaskAlreadyTaken, fmt.Sprintf("Задача %s уже в работе, исполнитель: %s", t.Key, name))

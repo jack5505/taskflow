@@ -2,13 +2,13 @@ package task
 
 import (
 	"context"
-	"fmt"
 
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -66,12 +66,15 @@ func releaseStaleAssignee(tx *gorm.DB, t *Task) error {
 	if t.AssigneeID == nil {
 		return nil
 	}
-	var ok bool
-	if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM users u JOIN project_members m ON m.user_id = u.id
-		WHERE u.id = ? AND u.is_active AND m.project_id = ?)`, *t.AssigneeID, t.ProjectID).Scan(&ok).Error; err != nil {
-		return fmt.Errorf("task: assignee check: %w", err)
+	active, err := user.IsActive(tx, *t.AssigneeID)
+	if err != nil {
+		return err
 	}
-	if ok {
+	role, err := project.RoleIn(tx, t.ProjectID, *t.AssigneeID)
+	if err != nil {
+		return err
+	}
+	if active && role != "" {
 		return nil
 	}
 	const note = "снят при восстановлении: исполнитель деактивирован или исключён из проекта"

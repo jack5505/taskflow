@@ -268,11 +268,11 @@ func stopStaleTaskTimers(tx *gorm.DB, t *Task, at time.Time) error {
 // любых задач) и advisory-блокировка его таймера: два одновременных старта одного пользователя
 // идут по очереди и не создают второй таймер.
 func lockTimerOwner(tx *gorm.DB, userID uuid.UUID) error {
-	var active []bool
-	if err := tx.Raw(`SELECT is_active FROM users WHERE id = ? FOR SHARE`, userID).Scan(&active).Error; err != nil {
-		return fmt.Errorf("task: timer owner: %w", err)
+	me, err := user.LockActor(tx, userID)
+	if err != nil {
+		return err
 	}
-	if len(active) == 0 || !active[0] {
+	if me == nil || !me.IsActive {
 		return errUserBlocked
 	}
 	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('timer:' || ?))`, userID.String()).Error; err != nil {

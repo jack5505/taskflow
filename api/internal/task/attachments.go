@@ -110,10 +110,14 @@ func (s *Service) Attachments(ctx context.Context, u *user.User, key string) ([]
 		return nil, err
 	}
 	list := []AttachmentView{}
-	if err := s.db.WithContext(ctx).Raw(`SELECT a.*, u.display_name AS author_name
-		FROM attachments a JOIN users u ON u.id = a.author_id
-		WHERE a.task_id = ? ORDER BY a.created_at DESC, a.id`, t.ID).Scan(&list).Error; err != nil {
+	db := s.db.WithContext(ctx)
+	if err := db.Raw(`SELECT * FROM attachments WHERE task_id = ? ORDER BY created_at DESC, id`, t.ID).
+		Scan(&list).Error; err != nil {
 		return nil, fmt.Errorf("task: attachments: %w", err)
+	}
+	if err := fillNames(db, list, func(v *AttachmentView) *uuid.UUID { return &v.AuthorID },
+		func(v *AttachmentView, name string) { v.AuthorName = name }); err != nil {
+		return nil, err
 	}
 	return list, nil
 }
