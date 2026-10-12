@@ -154,6 +154,26 @@ func TelegramRecipients(db *gorm.DB, ids []uuid.UUID) ([]Recipient, error) {
 	return rows, nil
 }
 
+// ActiveTimezones — часовые пояса активных пользователей из ids по id; деактивированных нет.
+// Блокировок не берёт.
+func ActiveTimezones(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ID       uuid.UUID
+		Timezone string
+	}
+	if err := db.Raw(`SELECT id, timezone FROM users WHERE id IN ? AND is_active`, ids).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("user: timezones: %w", err)
+	}
+	for _, r := range rows {
+		out[r.ID] = r.Timezone
+	}
+	return out, nil
+}
+
 // NamesOrdered — имена пользователей ids по display_name, затем по id (сортировка базы, как в
 // ORDER BY отчётов); кого нет — того нет в ответе.
 func NamesOrdered(db *gorm.DB, ids []uuid.UUID) ([]Name, error) {
@@ -166,4 +186,20 @@ func NamesOrdered(db *gorm.DB, ids []uuid.UUID) ([]Name, error) {
 		return nil, fmt.Errorf("user: names: %w", err)
 	}
 	return rows, nil
+}
+
+// ActiveAmong — кто из ids активен. Блокировок не берёт.
+func ActiveAmong(db *gorm.DB, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := make(map[uuid.UUID]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []uuid.UUID
+	if err := db.Raw(`SELECT id FROM users WHERE id IN ? AND is_active`, ids).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("user: active: %w", err)
+	}
+	for _, id := range rows {
+		out[id] = true
+	}
+	return out, nil
 }

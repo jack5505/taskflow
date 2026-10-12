@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -16,6 +15,7 @@ import (
 
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/events"
+	"github.com/jack5505/taskflow/api/internal/model"
 	"github.com/jack5505/taskflow/api/internal/project"
 	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
@@ -134,21 +134,13 @@ func (s *Service) views(db *gorm.DB, rows []Sprint) ([]View, error) {
 	return list, nil
 }
 
-// locations — загруженные пояса: time.LoadLocation каждый раз читает tzdata, а снимки
-// спринтов считаются раз в минуту.
-var locations sync.Map
-
 // dateIn — дата момента t по поясу tz (полночь UTC этой даты, как даты из базы).
 func dateIn(t time.Time, tz string) (time.Time, error) {
-	loc, ok := locations.Load(tz)
-	if !ok {
-		l, err := time.LoadLocation(tz)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("sprint: timezone %q: %w", tz, err)
-		}
-		loc, _ = locations.LoadOrStore(tz, l)
+	loc, err := model.Location(tz)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("sprint: %w", err)
 	}
-	y, m, d := t.In(loc.(*time.Location)).Date()
+	y, m, d := t.In(loc).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
 }
 
