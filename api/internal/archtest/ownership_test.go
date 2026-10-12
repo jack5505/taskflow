@@ -38,6 +38,7 @@ var owners = map[string]string{
 	"audit_logs":             "audit",
 	"outbox_events":          "outbox",
 	"github_deliveries":      "github",
+	"github_links":           "task",
 }
 
 // readAnyTable — постоянные исключения: модули, которым разрешено читать и писать любые

@@ -23,11 +23,12 @@ migrations/          SQL golang-migrate: YYYYMMDDHHMMSS_name.{up,down}.sql
 | `user` | `users` |
 | `auth` | `refresh_tokens`, `password_tokens` |
 | `project` | `projects`, `project_members` |
-| `task` | `tasks`, `task_history`, `comments`, `attachments`, `worklogs`, `active_timers` |
+| `task` | `tasks`, `task_history`, `comments`, `attachments`, `worklogs`, `active_timers`, `github_links` |
 | `sprint` | `sprints`, `sprint_log`, `sprint_start_scope`, `sprint_daily_snapshots` |
 | `notification` | `notifications`, `due_reminders` |
 | `telegram` | `one_time_codes`, `daily_summaries` |
 | `audit` | `audit_logs` |
+| `github` | `github_deliveries` |
 | `outbox` | `outbox_events` (запись события в транзакции — общий API `events.Add`, модель `events.OutboxEvent`) |
 
 - **Внутри модуля два слоя.** `store.go` (или `store_*.go`) — только запросы: функции названы по смыслу (`lockTask`, `daySum`, `freeTasksOfSprint`), принимают `*gorm.DB` или транзакцию, бизнес-правил не содержат. Сервис — правила ТЗ, права, транзакции, события и порядок блокировок; порядок блокировок остаётся явным в сервисе, не прячется в универсальный DAO.

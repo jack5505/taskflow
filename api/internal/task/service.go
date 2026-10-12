@@ -338,3 +338,12 @@ func jsonValue(v any) (*events.JSON, error) {
 	j := events.JSON(b)
 	return &j, nil
 }
+
+// GitHubLinks — ветки и PR задачи (§12.3): участник, удалённую — администратор (как карточка).
+func (s *Service) GitHubLinks(ctx context.Context, u *user.User, key string) ([]Link, error) {
+	t, _, err := s.Get(ctx, u, key)
+	if err != nil {
+		return nil, err
+	}
+	return LinksOf(s.db.WithContext(ctx), t.ID)
+}
