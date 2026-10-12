@@ -49,8 +49,7 @@ func (s *Service) Comments(ctx context.Context, u *user.User, key string) ([]Com
 		WHERE task_id = ? ORDER BY created_at, id`, t.ID).Scan(&list).Error; err != nil {
 		return nil, fmt.Errorf("task: comments: %w", err)
 	}
-	if err := fillNames(db, list, func(v *CommentView) *uuid.UUID { return &v.AuthorID },
-		func(v *CommentView, name string) { v.AuthorName = name }); err != nil {
+	if err := fillCommentNames(db, list); err != nil {
 		return nil, err
 	}
 	return list, nil
@@ -136,8 +135,7 @@ func commentView(tx *gorm.DB, id uuid.UUID) (*CommentView, error) {
 	if len(v) == 0 {
 		return &CommentView{}, nil // как прежний JOIN без строк: пустое представление
 	}
-	if err := fillNames(tx, v, func(v *CommentView) *uuid.UUID { return &v.AuthorID },
-		func(v *CommentView, name string) { v.AuthorName = name }); err != nil {
+	if err := fillCommentNames(tx, v); err != nil {
 		return nil, err
 	}
 	return &v[0], nil
