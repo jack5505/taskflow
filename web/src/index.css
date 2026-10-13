@@ -9,6 +9,7 @@
   --accent-hover: #0550ae;
   --danger: #cf222e;
   --notice-bg: #ddf4ff;
+  --column-bg: #eaeef2;
 
   font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
   color: var(--text);
@@ -608,7 +609,7 @@ button.primary:hover:not(:disabled) {
   padding: 8px;
   border: 2px solid transparent;
   border-radius: 8px;
-  background: #eaeef2;
+  background: var(--column-bg);
 }
 
 .board-column h3 {
@@ -689,7 +690,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .task-title {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .type-icon {
@@ -1052,7 +1053,7 @@ button.link.danger {
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
 }
 
 .attachment-list {
@@ -1153,6 +1154,8 @@ button.link.danger {
 
 .settings-text h4 {
   margin: 16px 0 4px;
+}
+
 /* Бэклог и спринты (ТЗ §7.4) */
 .backlog-page .block-head .primary {
   margin-left: auto;
@@ -1163,7 +1166,7 @@ button.link.danger {
   padding: 12px;
   border: 2px solid transparent;
   border-radius: 8px;
-  background: #eaeef2;
+  background: var(--column-bg);
 }
 
 .backlog-section.over {
@@ -1368,7 +1371,7 @@ button.link.danger {
 }
 
 .report-table .weekend {
-  background: #eaeef2;
+  background: var(--column-bg);
 }
 
 .report-table .report-total,
@@ -1388,6 +1391,8 @@ button.link.danger {
 
 .report-deleted {
   margin-left: 8px;
+}
+
 /* Профиль (ТЗ §7.8) */
 .profile-page .panel {
   max-width: 720px;

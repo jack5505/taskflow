@@ -1,0 +1,12 @@
+{
+  "extends": "stylelint-config-recommended",
+  "rules": {
+    "max-nesting-depth": [
+      0,
+      {
+        "message": "Вложенные правила запрещены: скорее всего, пропущена закрывающая скобка"
+      }
+    ],
+    "no-descending-specificity": null
+  }
+}

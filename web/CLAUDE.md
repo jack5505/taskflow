@@ -4,12 +4,12 @@
 
 ## Стек и команды
 
-React 18, TypeScript, Vite, TanStack Query, dnd-kit для перетаскивания. Линтер — oxlint.
+React 18, TypeScript, Vite, TanStack Query, dnd-kit для перетаскивания. Линтеры — oxlint (TS) и stylelint (CSS).
 
 ```
 npm ci            установка
 npm run dev       Vite, /api проксируется на localhost:8100
-npm run lint      oxlint
+npm run lint      oxlint и stylelint (оба, даже если первый упал)
 npm test          Vitest (юнит-тесты, *.test.ts рядом с кодом)
 npm run e2e       Playwright (e2e/*.e2e.ts) против стенда из e2e/stack.sh
 npm run build     tsc -b && vite build → ../api/internal/web/dist (встраивается в бинарник Go)
@@ -29,6 +29,7 @@ npm run build     tsc -b && vite build → ../api/internal/web/dist (встра�
 - При `409 VERSION_CONFLICT` показывать чужие правки и предлагать повторить, не перезаписывать молча (§3.3).
 - Язык интерфейса только русский (§10.3); тексты без зависимости от рода пользователя.
 - Ширина от 1024 px; мобильную вёрстку не делать (§7).
+- CSS — плоский, без вложенных правил: stylelint запрещает вложенность (`max-nesting-depth: 0`), потому что потерянная `}` превращает следующие правила во вложенные и браузер их молча не применяет (#174). Цвета — через переменные в `:root`. `no-descending-specificity` выключен: стили построены на каскаде «общее → частное».
 
 ## Тесты
 
