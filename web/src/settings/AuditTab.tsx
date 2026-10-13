@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import { errorText } from "../api/errors";
 import { useTimeZone } from "../auth/hooks";
 import { formatDateTime } from "../lib/format";
 import { useUsers, userName } from "./hooks";
 import { AUDIT_ACTIONS, auditActionLabel, auditChanges, auditEntity, auditQuery, auditSourceLabel } from "./logic";
 import { INVALID_DATE } from "../lib/date";
 import { DateField } from "../ui/DateField";
+import { LoadError } from "../ui/LoadError";
 
 const emptyFilter = { from: "", to: "", userId: "", action: "" };
 
@@ -63,7 +63,7 @@ export function AuditTab({ projectKey }: { projectKey: string }) {
         )}
       </div>
 
-      {audit.isError && <p role="alert">{errorText(audit.error)}</p>}
+      {audit.isError && <LoadError error={audit.error} onRetry={() => void audit.refetch()} />}
       {audit.isPending && <p className="muted">Загрузка…</p>}
       {audit.isSuccess && rows.length === 0 && <p className="muted">Записей нет.</p>}
       {rows.length > 0 && (

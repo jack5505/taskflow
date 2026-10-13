@@ -10,6 +10,8 @@ import { ProjectAvatarColors } from "../projects/ProjectAvatarColors";
 import { CreateTask } from "../task/CreateTask";
 import { projectKeyFromPath } from "../task/create";
 import { Avatar } from "../ui/Avatar";
+import { ConfirmProvider } from "../ui/Confirm";
+import { ToastProvider } from "../ui/Toast";
 
 /** Текущий проект в шапке: ключ и название, ссылка на доску. */
 function CurrentProject({ projectKey }: { projectKey: string }) {
@@ -60,53 +62,58 @@ export function AppLayout() {
   }, []);
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <Link to="/" className="brand">
-          TaskFlow
-        </Link>
-        <nav className="topbar-nav" aria-label="Разделы">
-          {/* «Проекты» подсвечены и на странице проекта: проект — раздел внутри них. */}
-          <NavLink to="/" className={() => (pathname === "/" ? "active" : projectKey ? "active-parent" : "")}>
-            Проекты
-          </NavLink>
-          {projectKey && <CurrentProject projectKey={projectKey} />}
-          <NavLink to="/reports">Отчёты</NavLink>
-        </nav>
-        <div className="topbar-tools">
-          <HeaderTimer />
-          <NotificationBell />
-          <CreateTask />
-          <details className="user-menu" ref={menu}>
-            <summary aria-label={`Меню пользователя: ${name}`} title={name}>
-              {/* Свой аватар — цветом по id, одинаковым на всех страницах. */}
-              {me.data?.id ? (
-                <Avatar id={me.data.id} name={name} decorative />
-              ) : (
-                <span className="avatar empty" aria-hidden="true" />
-              )}
-            </summary>
-            <div className="user-menu-panel">
-              <div className="user-menu-name">
-                <strong>{name}</strong>
-                {me.data?.display_name && <span className="muted">{me.data.email}</span>}
-              </div>
-              <Link to="/profile" onClick={close}>
-                Профиль
-              </Link>
-              <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>
-                Выйти
-              </button>
+    // Сообщения после действий и окна подтверждения — на всё приложение, включая окно создания задачи в шапке.
+    <ToastProvider>
+      <ConfirmProvider>
+        <div className="app">
+          <header className="topbar">
+            <Link to="/" className="brand">
+              TaskFlow
+            </Link>
+            <nav className="topbar-nav" aria-label="Разделы">
+              {/* «Проекты» подсвечены и на странице проекта: проект — раздел внутри них. */}
+              <NavLink to="/" className={() => (pathname === "/" ? "active" : projectKey ? "active-parent" : "")}>
+                Проекты
+              </NavLink>
+              {projectKey && <CurrentProject projectKey={projectKey} />}
+              <NavLink to="/reports">Отчёты</NavLink>
+            </nav>
+            <div className="topbar-tools">
+              <HeaderTimer />
+              <NotificationBell />
+              <CreateTask />
+              <details className="user-menu" ref={menu}>
+                <summary aria-label={`Меню пользователя: ${name}`} title={name}>
+                  {/* Свой аватар — цветом по id, одинаковым на всех страницах. */}
+                  {me.data?.id ? (
+                    <Avatar id={me.data.id} name={name} decorative />
+                  ) : (
+                    <span className="avatar empty" aria-hidden="true" />
+                  )}
+                </summary>
+                <div className="user-menu-panel">
+                  <div className="user-menu-name">
+                    <strong>{name}</strong>
+                    {me.data?.display_name && <span className="muted">{me.data.email}</span>}
+                  </div>
+                  <Link to="/profile" onClick={close}>
+                    Профиль
+                  </Link>
+                  <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>
+                    Выйти
+                  </button>
+                </div>
+              </details>
             </div>
-          </details>
+          </header>
+          <main className="content">
+            {/* Цвета аватаров участников текущего проекта: разные у разных людей. */}
+            <ProjectAvatarColors projectKey={projectKey}>
+              <Outlet />
+            </ProjectAvatarColors>
+          </main>
         </div>
-      </header>
-      <main className="content">
-        {/* Цвета аватаров участников текущего проекта: разные у разных людей. */}
-        <ProjectAvatarColors projectKey={projectKey}>
-          <Outlet />
-        </ProjectAvatarColors>
-      </main>
-    </div>
+      </ConfirmProvider>
+    </ToastProvider>
   );
 }

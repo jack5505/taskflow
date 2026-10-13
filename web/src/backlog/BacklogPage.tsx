@@ -49,6 +49,9 @@ import {
 } from "./logic";
 import { CloseSprintDialog, CreateSprintDialog, StartSprintDialog, type SprintFields } from "./SprintDialogs";
 import { ProjectHeader } from "../projects/ProjectHeader";
+import { useConfirm } from "../ui/Confirm";
+import { useToast } from "../ui/Toast";
+import { LoadError } from "../ui/LoadError";
 
 const moveKey = ["backlog-move"];
 
@@ -135,6 +138,8 @@ function Totals({ tasks }: { tasks: TaskListItem[] }) {
 
 /** Страница «Бэклог и спринты» (ТЗ §7.4): активный спринт, запланированные, бэклог. */
 export function BacklogPage() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const { key = "" } = useParams();
   const me = useMe();
   const tz = useTimeZone();
@@ -215,7 +220,10 @@ export function BacklogPage() {
         start_date: f.start || undefined,
         end_date: f.end || undefined,
       }),
-    onSuccess: () => setDialog(null),
+    onSuccess: (r) => {
+      setDialog(null);
+      toast.success(`Спринт «${r.data.name}» создан`);
+    },
     onSettled: () => refresh(),
   });
 
@@ -258,7 +266,8 @@ export function BacklogPage() {
 
   const remove = useMutation({
     mutationFn: (sprint: SprintView) => api.api.v1SprintsDelete(sprint.id!),
-    onError: (e, s) => setActionError(`«${s.name}»: ${errorText(e)}`),
+    onSuccess: (_, s) => toast.success(`Спринт «${s.name}» удалён, его задачи — в бэклоге`),
+    onError: (e, s) => toast.error(`«${s.name}»: ${errorText(e)}`),
     onSettled: () => refresh(),
   });
 
@@ -328,8 +337,13 @@ export function BacklogPage() {
                 type="button"
                 className="danger"
                 disabled={remove.isPending}
-                onClick={() =>
-                  window.confirm(`Удалить спринт «${sp.name}»? Его задачи вернутся в бэклог.`) && remove.mutate(sp)
+                onClick={async () =>
+                  (await confirm({
+                    title: `Удалить спринт «${sp.name}»?`,
+                    body: "Его задачи вернутся в бэклог.",
+                    confirmLabel: "Удалить",
+                    danger: true,
+                  })) && remove.mutate(sp)
                 }
               >
                 Удалить
@@ -357,7 +371,9 @@ export function BacklogPage() {
         )}
       </ProjectHeader>
 
-      {loadError && <p role="alert">{errorText(loadError)}</p>}
+      {loadError && (
+        <LoadError error={loadError} onRetry={() => [project, members, snapshot].forEach((q) => q.isError && void q.refetch())} />
+      )}
       {snapshot.isPending && !loadError && <p className="muted">Загрузка…</p>}
       {notice && (
         <p className="notice">

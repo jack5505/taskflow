@@ -8,6 +8,9 @@ import { membersQueryKey, projectQueryKey, useProjectMembers } from "../projects
 import { projectsQueryKey } from "../projects/logic";
 import { usersQueryKey, useUsers } from "./hooks";
 import { memberErrorText } from "./logic";
+import { useConfirm } from "../ui/Confirm";
+import { useToast } from "../ui/Toast";
+import { LoadError } from "../ui/LoadError";
 
 type Role = "manager" | "member";
 
@@ -28,6 +31,8 @@ interface Props {
  * системы здесь же заводит пользователя (§7.1) и деактивирует его во всей системе (§3.1).
  */
 export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const members = useProjectMembers(projectKey);
   const [error, setError] = useState("");
   const qc = useQueryClient();
@@ -39,11 +44,18 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
     qc.invalidateQueries({ queryKey: projectQueryKey(projectKey) });
   };
 
+  const nameOf = (userId: string) => {
+    const m = members.data?.find((x) => x.user_id === userId);
+    return m?.display_name || m?.email || "Участник";
+  };
   const setRole = useMutation({
     mutationFn: ({ userId, role }: { userId: string; role: Role }) =>
       api.api.v1ProjectsMembersUpdate(projectKey, userId, { role }),
     onMutate: () => setError(""),
-    onSuccess: refresh,
+    onSuccess: () => {
+      refresh();
+      toast.success("Роль изменена");
+    },
     onError: (e) => setError(memberErrorText(e, "role")),
   });
 
@@ -58,6 +70,7 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
         return;
       }
       refresh();
+      toast.success(`${nameOf(userId)} больше не участвует в проекте`);
     },
     onError: (e) => setError(memberErrorText(e, "remove")),
   });
@@ -66,9 +79,10 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
     mutationFn: ({ userId, active }: { userId: string; active: boolean }) =>
       api.api.v1UsersPartialUpdate(userId, { is_active: active }),
     onMutate: () => setError(""),
-    onSuccess: () => {
+    onSuccess: (_, { userId, active }) => {
       refresh();
       qc.invalidateQueries({ queryKey: usersQueryKey });
+      toast.success(`Учётная запись ${nameOf(userId)} ${active ? "снова активна" : "деактивирована"}`);
     },
     onError: (e) => setError(memberErrorText(e, "deactivate")),
   });
@@ -79,7 +93,7 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
 
   return (
     <>
-      {members.isError && <p role="alert">{errorText(members.error)}</p>}
+      {members.isError && <LoadError error={members.error} onRetry={() => void members.refetch()} />}
       {error && (
         <p role="alert" className="board-error">
           {error}
@@ -125,8 +139,13 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() =>
-                      window.confirm(`Исключить ${m.display_name} из проекта?`) && remove.mutate(m.user_id ?? "")
+                    onClick={async () =>
+                      (await confirm({
+                        title: `Исключить ${m.display_name} из проекта?`,
+                        body: "Его задачи в проекте освободятся, доступ к проекту пропадёт. Записи времени останутся.",
+                        confirmLabel: "Исключить",
+                        danger: true,
+                      })) && remove.mutate(m.user_id ?? "")
                     }
                   >
                     Исключить
@@ -156,6 +175,7 @@ function DeactivateButton({
   busy: boolean;
   onToggle: (active: boolean) => void;
 }) {
+  const confirm = useConfirm();
   if (member.is_active === false)
     return (
       <button type="button" disabled={busy} onClick={() => onToggle(true)}>
@@ -167,11 +187,13 @@ function DeactivateButton({
       type="button"
       className="danger"
       disabled={busy}
-      onClick={() =>
-        window.confirm(
-          `Деактивировать ${member.display_name} во всей системе? Пользователь не сможет войти, его таймер ` +
-            "остановится, открытые задачи освободятся, привязка Telegram снимется.",
-        ) && onToggle(false)
+      onClick={async () =>
+        (await confirm({
+          title: `Деактивировать ${member.display_name}?`,
+          body: "Во всей системе: пользователь не сможет войти, его таймер остановится, открытые задачи освободятся, привязка Telegram снимется.",
+          confirmLabel: "Деактивировать",
+          danger: true,
+        })) && onToggle(false)
       }
     >
       Деактивировать
@@ -189,14 +211,17 @@ function AddMember({
   members: ProjectMemberView[];
   onAdded: () => void;
 }) {
+  const toast = useToast();
   const users = useUsers();
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState<Role>("member");
   const add = useMutation({
     mutationFn: () => api.api.v1ProjectsMembersUpdate(projectKey, userId, { role }),
     onSuccess: () => {
+      const u = users.data?.find((x) => x.id === userId);
       setUserId("");
       onAdded();
+      toast.success(`${u?.display_name || u?.email || "Участник"} теперь в проекте`);
     },
   });
   const inProject = new Set(members.map((m) => m.user_id));

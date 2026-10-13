@@ -3,6 +3,7 @@ import type { ProjectView } from "../api/client";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { useUpdateProject } from "./hooks";
 import { GROUP_EVENTS, changedEvents, effectiveEvents, isValidTime, normalizeTime } from "./logic";
+import { useToast } from "../ui/Toast";
 
 /** Уведомления (§7.9): события бота в группе из §8.6 и время ежедневной сводки. */
 export function NotificationsTab({ project, readOnly }: { project: ProjectView; readOnly: boolean }) {
@@ -10,7 +11,7 @@ export function NotificationsTab({ project, readOnly }: { project: ProjectView; 
   const initialTime = normalizeTime(project.daily_summary_time) || "10:00";
   const [events, setEvents] = useState(initial);
   const [time, setTime] = useState(initialTime);
-  const [saved, setSaved] = useState(false);
+  const toast = useToast();
   const update = useUpdateProject(project.key ?? "");
 
   const timeError = isValidTime(time) ? "" : "Время в формате ЧЧ:ММ";
@@ -23,8 +24,8 @@ export function NotificationsTab({ project, readOnly }: { project: ProjectView; 
     const body: { notification_settings?: Record<string, boolean>; daily_summary_time?: string } = {};
     if (Object.keys(changes).length > 0) body.notification_settings = changes;
     if (time !== initialTime) body.daily_summary_time = time;
-    if (Object.keys(body).length === 0) return setSaved(true);
-    update.mutate(body, { onSuccess: () => setSaved(true) });
+    if (Object.keys(body).length === 0) return toast.success("Сохранено");
+    update.mutate(body, { onSuccess: () => toast.success("Сохранено") });
   };
 
   return (
@@ -41,7 +42,6 @@ export function NotificationsTab({ project, readOnly }: { project: ProjectView; 
               checked={events[ev.key]}
               onChange={(e) => {
                 setEvents({ ...events, [ev.key]: e.target.checked });
-                setSaved(false);
               }}
             />
             {ev.label}
@@ -57,7 +57,6 @@ export function NotificationsTab({ project, readOnly }: { project: ProjectView; 
           value={time}
           onChange={(e) => {
             setTime(e.target.value);
-            setSaved(false);
           }}
           aria-invalid={timeError ? true : undefined}
         />
@@ -70,7 +69,6 @@ export function NotificationsTab({ project, readOnly }: { project: ProjectView; 
           <button type="submit" className="primary" disabled={update.isPending}>
             {update.isPending ? "Сохраняем…" : "Сохранить"}
           </button>
-          {saved && <span className="muted">Сохранено</span>}
         </div>
       )}
     </form>

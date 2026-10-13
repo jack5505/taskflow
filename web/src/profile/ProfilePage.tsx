@@ -17,13 +17,16 @@ import {
 } from "./logic";
 import { GitHubBlock } from "./GitHubBlock";
 import { TelegramBlock } from "./TelegramBlock";
+import { useConfirm } from "../ui/Confirm";
+import { useToast } from "../ui/Toast";
+import { LoadError } from "../ui/LoadError";
 
 /** Профиль (ТЗ §7.8): имя и часовой пояс, пароль и сессии, Telegram, личные уведомления §8.7. */
 export function ProfilePage() {
   const me = useMe();
 
   let body;
-  if (me.isError) body = <p role="alert">{errorText(me.error)}</p>;
+  if (me.isError) body = <LoadError error={me.error} onRetry={() => void me.refetch()} />;
   else if (!me.data) body = <p className="muted">Загрузка…</p>;
   else
     body = (
@@ -56,7 +59,7 @@ function AccountForm({ me }: { me: MeProfile }) {
   const [base, setBase] = useState({ display_name: me.display_name ?? "", timezone: me.timezone ?? "" });
   const [name, setName] = useState(base.display_name);
   const [timezone, setTimezone] = useState(base.timezone);
-  const [saved, setSaved] = useState(false);
+  const toast = useToast();
   const [touched, setTouched] = useState(false);
   const zones = useMemo(() => timeZones(), []);
   const update = useUpdateMe();
@@ -69,7 +72,6 @@ function AccountForm({ me }: { me: MeProfile }) {
 
   const edit = (set: (v: string) => void, v: string) => {
     set(v);
-    setSaved(false);
     if (update.isError) update.reset();
   };
 
@@ -78,7 +80,7 @@ function AccountForm({ me }: { me: MeProfile }) {
     setTouched(true);
     if (displayNameError(name) || !isKnownTimeZone(timezone, zones)) return;
     const body = profileChanges(base, name, timezone);
-    if (Object.keys(body).length === 0) return setSaved(true);
+    if (Object.keys(body).length === 0) return toast.success("Сохранено");
     update.mutate(body, {
       onSuccess: (fresh) => {
         // Форма — с тем, что сохранил сервер (имя он обрезает).
@@ -86,7 +88,7 @@ function AccountForm({ me }: { me: MeProfile }) {
         setBase(next);
         setName(next.display_name);
         setTimezone(next.timezone);
-        setSaved(true);
+        toast.success("Сохранено");
       },
     });
   };
@@ -127,7 +129,6 @@ function AccountForm({ me }: { me: MeProfile }) {
         <button type="submit" className="primary" disabled={update.isPending}>
           {update.isPending ? "Сохраняем…" : "Сохранить"}
         </button>
-        {saved && <span className="muted">Сохранено</span>}
       </div>
     </form>
   );
@@ -139,6 +140,7 @@ function AccountForm({ me }: { me: MeProfile }) {
  * «Выйти везде» отзывает сессии сразу, в том числе эту.
  */
 function SecurityBlock({ me }: { me: MeProfile }) {
+  const confirm = useConfirm();
   const logoutAll = useLogoutAll();
   return (
     <section className="panel">
@@ -150,9 +152,13 @@ function SecurityBlock({ me }: { me: MeProfile }) {
           type="button"
           className="danger"
           disabled={logoutAll.isPending}
-          onClick={() =>
-            window.confirm("Завершить все сеансы, включая этот? Потребуется войти заново на всех устройствах.") &&
-            logoutAll.mutate()
+          onClick={async () =>
+            (await confirm({
+              title: "Выйти на всех устройствах?",
+              body: "Завершатся все сеансы, включая этот: войти придётся заново везде.",
+              confirmLabel: "Выйти везде",
+              danger: true,
+            })) && logoutAll.mutate()
           }
         >
           Выйти везде
@@ -165,9 +171,10 @@ function SecurityBlock({ me }: { me: MeProfile }) {
 const emptyPasswords = { current: "", next: "", repeat: "" };
 
 function PasswordChangeForm({ email }: { email: string }) {
+  const confirm = useConfirm();
   const [form, setForm] = useState(emptyPasswords);
   const [touched, setTouched] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const toast = useToast();
   const change = usePasswordChange();
   const link = usePasswordLink();
 
@@ -189,7 +196,6 @@ function PasswordChangeForm({ email }: { email: string }) {
 
   const edit = (key: keyof typeof form, v: string) => {
     setForm({ ...form, [key]: v });
-    setSaved(false);
     if (change.isError) change.reset();
   };
 
@@ -203,7 +209,7 @@ function PasswordChangeForm({ email }: { email: string }) {
         onSuccess: () => {
           setForm(emptyPasswords);
           setTouched(false);
-          setSaved(true);
+          toast.success("Пароль изменён. Остальные сеансы завершены.");
         },
       },
     );
@@ -232,7 +238,6 @@ function PasswordChangeForm({ email }: { email: string }) {
         Не короче {MIN_PASSWORD} символов. После смены пароля остальные сеансы завершатся, этот останется.
       </span>
       {generalError && <p role="alert">{generalError}</p>}
-      {saved && <p className="notice">Пароль изменён. Остальные сеансы завершены.</p>}
       <div className="actions">
         <button type="submit" className="primary" disabled={change.isPending}>
           {change.isPending ? "Сохраняем…" : "Сменить пароль"}
@@ -241,8 +246,12 @@ function PasswordChangeForm({ email }: { email: string }) {
           type="button"
           className="link"
           disabled={link.isPending || !email}
-          onClick={() =>
-            window.confirm(`Отправить ссылку для установки нового пароля на ${email}?`) && link.mutate(email)
+          onClick={async () =>
+            (await confirm({
+              title: "Отправить ссылку для нового пароля?",
+              body: `Письмо со ссылкой придёт на ${email}. Текущий пароль действует, пока вы не зададите новый.`,
+              confirmLabel: "Отправить",
+            })) && link.mutate(email)
           }
         >
           Забыли текущий пароль?
@@ -266,13 +275,13 @@ function PasswordChangeForm({ email }: { email: string }) {
 function NotificationsForm({ me }: { me: MeProfile }) {
   const [base, setBase] = useState(() => effectiveNotifications(me.notification_settings));
   const [events, setEvents] = useState(base);
-  const [saved, setSaved] = useState(false);
+  const toast = useToast();
   const update = useUpdateMe();
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const changes = changedNotifications(base, events);
-    if (Object.keys(changes).length === 0) return setSaved(true);
+    if (Object.keys(changes).length === 0) return toast.success("Сохранено");
     update.mutate(
       { notification_settings: changes },
       {
@@ -280,7 +289,7 @@ function NotificationsForm({ me }: { me: MeProfile }) {
           const next = effectiveNotifications(fresh.notification_settings);
           setBase(next);
           setEvents(next);
-          setSaved(true);
+          toast.success("Сохранено");
         },
       },
     );
@@ -300,7 +309,6 @@ function NotificationsForm({ me }: { me: MeProfile }) {
               checked={events[ev.key]}
               onChange={(e) => {
                 setEvents({ ...events, [ev.key]: e.target.checked });
-                setSaved(false);
                 if (update.isError) update.reset();
               }}
             />
@@ -313,7 +321,6 @@ function NotificationsForm({ me }: { me: MeProfile }) {
         <button type="submit" className="primary" disabled={update.isPending}>
           {update.isPending ? "Сохраняем…" : "Сохранить"}
         </button>
-        {saved && <span className="muted">Сохранено</span>}
       </div>
     </form>
   );

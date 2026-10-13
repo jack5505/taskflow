@@ -12,6 +12,7 @@ import { RowCells } from "./BacklogRow";
 import { archiveSummary } from "./logic";
 import { useSprints } from "./useSprints";
 import { ProjectHeader } from "../projects/ProjectHeader";
+import { LoadError } from "../ui/LoadError";
 
 /**
  * Сводка закрытого спринта: что в нём осталось после завершения (§5.4 — готовые и отменённые;
@@ -95,7 +96,7 @@ export function SprintArchivePage() {
       <ProjectHeader projectKey={key}>
         <span className="muted">Архив спринтов</span>
       </ProjectHeader>
-      {loadError && <p role="alert">{errorText(loadError)}</p>}
+      {loadError && <LoadError error={loadError} onRetry={() => [project, sprints].forEach((q) => q.isError && void q.refetch())} />}
       {sprints.isPending && !loadError && <p className="muted">Загрузка…</p>}
       {sprints.isSuccess && closed.length === 0 && <p className="muted">Завершённых спринтов пока нет.</p>}
       {closed.length > 0 && (

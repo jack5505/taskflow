@@ -20,6 +20,7 @@ import {
 } from "./create";
 import { MarkdownEditor } from "./Markdown";
 import { DateField } from "../ui/DateField";
+import { useConfirm } from "../ui/Confirm";
 
 interface Props {
   /** Проект текущей страницы — предвыбран (§7.6). */
@@ -32,6 +33,7 @@ const sprintStates: Record<string, string> = { active: "активный", plann
 
 /** Окно «Новая задача» (ТЗ §7.6). Исполнитель и спринт — только менеджеру и администратору (§2). */
 export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const me = useMe();
   const [form, setForm] = useState<CreateForm>(() => emptyForm(projectKey));
@@ -96,9 +98,10 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
   // пользователь мог бы создать задачу повторно. Случайный щелчок мимо окна или Escape не
   // выбрасывает набранное без вопроса.
   const dirty = JSON.stringify(form) !== JSON.stringify(emptyForm(projectKey));
-  const dismiss = () => {
+  const dismiss = async () => {
     if (create.isPending) return;
-    if (dirty && !window.confirm("Закрыть окно? Введённые данные не сохранятся.")) return;
+    if (dirty && !(await confirm({ title: "Закрыть окно?", body: "Введённые данные не сохранятся.", confirmLabel: "Закрыть" })))
+      return;
     onCancel();
   };
 

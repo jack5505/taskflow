@@ -1,5 +1,4 @@
 import { useParams, useSearchParams } from "react-router";
-import { errorText } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { actorFor, useProject } from "../projects/hooks";
 import { isSystemAdmin } from "../projects/logic";
@@ -12,6 +11,7 @@ import { NotificationsTab } from "./NotificationsTab";
 import { TelegramTab } from "./TelegramTab";
 import { TrashTab } from "./TrashTab";
 import { ProjectHeader } from "../projects/ProjectHeader";
+import { LoadError } from "../ui/LoadError";
 
 /** Настройки проекта (ТЗ §7.9, §12.1): шесть вкладок и «GitHub», текущая — в адресе (?tab=…). */
 export function SettingsPage() {
@@ -30,7 +30,10 @@ export function SettingsPage() {
   const readOnly = !!p?.is_archived;
 
   let body;
-  if (project.isError || me.isError) body = <p role="alert">{errorText(project.error ?? me.error)}</p>;
+  if (project.isError || me.isError)
+    body = (
+      <LoadError error={project.error ?? me.error} onRetry={() => [project, me].forEach((q) => q.isError && void q.refetch())} />
+    );
   else if (!p || !me.data) body = <p className="muted">Загрузка…</p>;
   else if (!tab) body = <p className="notice">Настройки проекта доступны менеджеру проекта и администратору системы.</p>;
   else

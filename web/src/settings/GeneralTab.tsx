@@ -7,18 +7,21 @@ import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { projectQueryKey } from "../projects/hooks";
 import { projectsQueryKey, timeZones } from "../projects/logic";
 import { useUpdateProject } from "./hooks";
+import { useConfirm } from "../ui/Confirm";
+import { useToast } from "../ui/Toast";
 
 /**
  * Общее (§7.9): название, описание, часовой пояс; архивация и мягкое удаление — только
  * администратор системы (§3.2).
  */
 export function GeneralTab({ project, admin }: { project: ProjectView; admin: boolean }) {
+  const confirm = useConfirm();
   const key = project.key ?? "";
   const readOnly = !!project.is_archived;
   const [name, setName] = useState(project.name ?? "");
   const [description, setDescription] = useState(project.description ?? "");
   const [timezone, setTimezone] = useState(project.timezone ?? "");
-  const [saved, setSaved] = useState(false);
+  const toast = useToast();
   const zones = useMemo(() => timeZones(), []);
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -31,6 +34,7 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
       qc.invalidateQueries({ queryKey: projectsQueryKey });
       qc.removeQueries({ queryKey: projectQueryKey(key) });
       navigate("/");
+      toast.success(`Проект ${key} удалён — восстановить его можно в списке проектов`);
     },
   });
 
@@ -40,7 +44,6 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
 
   const edit = (set: (v: string) => void, v: string) => {
     set(v);
-    setSaved(false);
     if (update.isError) update.reset();
   };
 
@@ -51,8 +54,8 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
     if (name.trim() !== (project.name ?? "")) body.name = name.trim();
     if (description.trim() !== (project.description ?? "")) body.description = description.trim();
     if (timezone.trim() !== (project.timezone ?? "")) body.timezone = timezone.trim();
-    if (Object.keys(body).length === 0) return setSaved(true);
-    update.mutate(body, { onSuccess: () => setSaved(true) });
+    if (Object.keys(body).length === 0) return toast.success("Сохранено");
+    update.mutate(body, { onSuccess: () => toast.success("Сохранено") });
   };
 
   const adminError = archive.error ?? remove.error;
@@ -100,7 +103,6 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
             <button type="submit" className="primary" disabled={update.isPending}>
               {update.isPending ? "Сохраняем…" : "Сохранить"}
             </button>
-            {saved && <span className="muted">Сохранено</span>}
           </div>
         )}
       </form>
@@ -125,7 +127,14 @@ export function GeneralTab({ project, admin }: { project: ProjectView; admin: bo
               type="button"
               className="danger"
               disabled={remove.isPending}
-              onClick={() => window.confirm(`Удалить проект ${key}?`) && remove.mutate()}
+              onClick={async () =>
+                (await confirm({
+                  title: `Удалить проект ${key}?`,
+                  body: "Проект пропадёт из списков, бота и отчётов. Данные сохранятся: восстановить можно в списке проектов.",
+                  confirmLabel: "Удалить проект",
+                  danger: true,
+                })) && remove.mutate()
+              }
             >
               Удалить проект
             </button>
