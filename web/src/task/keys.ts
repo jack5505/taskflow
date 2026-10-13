@@ -7,3 +7,5 @@ export const historyQueryKey = (key: string) => ["task-history", key] as const;
 export const commentsQueryKey = (key: string) => ["task-comments", key] as const;
 export const attachmentsQueryKey = (key: string) => ["task-attachments", key] as const;
 export const worklogsQueryKey = (key: string) => ["task-worklogs", key] as const;
+/** Корзина проекта (удалённые задачи, §7.9). */
+export const trashQueryKey = (projectKey: string) => ["project-trash", projectKey] as const;

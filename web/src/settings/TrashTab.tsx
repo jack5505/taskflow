@@ -6,7 +6,7 @@ import { useTimeZone } from "../auth/hooks";
 import { boardQueryKey } from "../board/cards";
 import { formatDateTime } from "../lib/format";
 import { myTasksQueryKey } from "../projects/logic";
-import { historyQueryKey, taskQueryKey } from "../task/keys";
+import { historyQueryKey, taskQueryKey, trashQueryKey } from "../task/keys";
 import { trashDeleter } from "./logic";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
@@ -20,7 +20,7 @@ export function TrashTab({ projectKey, readOnly }: { projectKey: string; readOnl
   const toast = useToast();
   const qc = useQueryClient();
   const timeZone = useTimeZone();
-  const queryKey = ["project-trash", projectKey];
+  const queryKey = trashQueryKey(projectKey);
 
   const trash = useInfiniteQuery({
     queryKey,

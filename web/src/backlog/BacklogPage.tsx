@@ -173,7 +173,6 @@ export function BacklogPage() {
   const planned = open.filter((s) => s.state === "planned");
 
   const [notice, setNotice] = useState("");
-  const [actionError, setActionError] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [dragging, setDragging] = useState<TaskListItem | null>(null);
 
@@ -207,7 +206,7 @@ export function BacklogPage() {
     },
     onError: (e, m) => {
       moveInCache(m.task.id!, m.undo);
-      setActionError(`${m.task.key}: ${errorText(e)}`);
+      toast.error(`${m.task.key}: ${errorText(e)}`);
     },
     onSettled: () => refresh(1),
   });
@@ -273,7 +272,6 @@ export function BacklogPage() {
 
   const openDialog = (d: Dialog) => {
     setNotice("");
-    setActionError("");
     create.reset();
     start.reset();
     close.reset();
@@ -289,7 +287,6 @@ export function BacklogPage() {
   const dropDisabled = (sectionId: string) => !!fromSection && !manager && sectionId !== fromSection;
 
   const onDragStart = (e: DragStartEvent) => {
-    setActionError("");
     setDragging((e.active.data.current?.task as TaskListItem | undefined) ?? null);
   };
   const onDragEnd = (e: DragEndEvent) => {
@@ -379,14 +376,6 @@ export function BacklogPage() {
         <p className="notice">
           {notice}{" "}
           <button type="button" className="link" onClick={() => setNotice("")}>
-            Скрыть
-          </button>
-        </p>
-      )}
-      {actionError && (
-        <p role="alert" className="board-error">
-          {actionError}{" "}
-          <button type="button" className="link" onClick={() => setActionError("")}>
             Скрыть
           </button>
         </p>

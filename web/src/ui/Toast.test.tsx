@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TOAST_MS, ToastProvider, useToast, type Toasts } from "./Toast";
@@ -16,12 +16,14 @@ function Grab() {
 
 describe("ToastProvider", () => {
   let host: HTMLDivElement;
+  let root: Root;
   beforeEach(() => {
     vi.useFakeTimers();
     host = document.createElement("div");
     document.body.append(host);
+    root = createRoot(host);
     act(() =>
-      createRoot(host).render(
+      root.render(
         <ToastProvider>
           <Grab />
         </ToastProvider>,
@@ -29,11 +31,13 @@ describe("ToastProvider", () => {
     );
   });
   afterEach(() => {
+    act(() => root.unmount());
     vi.useRealTimers();
     host.remove();
   });
 
-  const texts = (role: string) => [...host.querySelectorAll(`[role="${role}"] .toast-text`)].map((e) => e.textContent);
+  // Сообщения рисуются порталом в document.body (или в открытое модальное окно).
+  const texts = (role: string) => [...document.body.querySelectorAll(`[role="${role}"] .toast-text`)].map((e) => e.textContent);
 
   it("успех — в вежливой области, ошибка — в срочной; сами исчезают", () => {
     act(() => toast.success("Сохранено"));
@@ -45,22 +49,24 @@ describe("ToastProvider", () => {
     expect(texts("alert")).toEqual([]);
   });
 
-  it("не больше трёх сразу: старые уходят", () => {
+  it("не больше трёх каждого вида: старые уходят, успехи не вытесняют ошибку", () => {
+    act(() => toast.error("Ошибка"));
     act(() => ["1", "2", "3", "4"].forEach((t) => toast.success(t)));
     expect(texts("status")).toEqual(["2", "3", "4"]);
+    expect(texts("alert")).toEqual(["Ошибка"]);
   });
 
   it("действие выполняется и закрывает сообщение; крестик закрывает", () => {
     const undo = vi.fn();
     act(() => toast.success("Задача удалена", { label: "Отменить", onClick: undo }));
-    const action = host.querySelector<HTMLButtonElement>(".toast-action")!;
+    const action = document.body.querySelector<HTMLButtonElement>(".toast-action")!;
     expect(action.textContent).toBe("Отменить");
     act(() => action.click());
     expect(undo).toHaveBeenCalledOnce();
     expect(texts("status")).toEqual([]);
 
     act(() => toast.success("Ещё"));
-    act(() => host.querySelector<HTMLButtonElement>(".toast-close")!.click());
+    act(() => document.body.querySelector<HTMLButtonElement>(".toast-close")!.click());
     expect(texts("status")).toEqual([]);
   });
 });

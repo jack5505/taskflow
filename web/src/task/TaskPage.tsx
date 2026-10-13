@@ -22,7 +22,7 @@ import { canStartTimer } from "../timer/timer";
 import { useSprints } from "../backlog/useSprints";
 import { Attachments } from "./Attachments";
 import { Comments } from "./Comments";
-import { commentsQueryKey, historyQueryKey, projectKeyOf, taskQueryKey, worklogsQueryKey } from "./keys";
+import { commentsQueryKey, historyQueryKey, projectKeyOf, taskQueryKey, trashQueryKey, worklogsQueryKey } from "./keys";
 import { ConflictDialog, type Conflict } from "./ConflictDialog";
 import { describeHistory, type ValueContext } from "./history";
 import { MarkdownEditor, MarkdownView } from "./Markdown";
@@ -322,6 +322,9 @@ export function TaskPage() {
                 void api.api.v1TasksRestoreCreate(key).then(
                   () => {
                     changed();
+                    // Пользователь уже на доске: перечитать её сразу, а не при следующем заходе.
+                    void queryClient.invalidateQueries({ queryKey: boardQueryKey(projectKey) });
+                    void queryClient.invalidateQueries({ queryKey: trashQueryKey(projectKey) });
                     toast.success(`Задача ${key} восстановлена`);
                   },
                   (e: unknown) => toast.error(errorText(e)),

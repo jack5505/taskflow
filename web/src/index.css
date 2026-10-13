@@ -1131,13 +1131,19 @@ button.primary:hover:not(:disabled) {
   width: 480px;
   max-width: calc(100vw - var(--space-8));
   max-height: calc(100vh - var(--space-12));
-  padding: var(--space-5);
-  overflow: auto;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-drag);
+}
+
+.modal-body {
+  max-height: calc(100vh - var(--space-12));
+  padding: var(--space-5);
+  overflow: auto;
 }
 
 .modal-dialog::backdrop {

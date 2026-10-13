@@ -219,7 +219,6 @@ function WorklogRow({
       worklogsChanged(queryClient, key);
       toast.success("Запись времени удалена");
     },
-    onError: (e) => toast.error(errorText(e)),
   });
   return (
     <tr data-testid="worklog-row" data-worklog-id={w.id}>
