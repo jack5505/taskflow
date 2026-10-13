@@ -920,6 +920,21 @@ button.primary:hover:not(:disabled) {
   color: var(--danger);
 }
 
+.column-empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.board-nothing {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+}
+
 .board-cards {
   display: flex;
   flex-direction: column;
@@ -1109,21 +1124,6 @@ button.primary:hover:not(:disabled) {
   align-self: flex-start;
   padding: 3px var(--space-3);
   font-size: var(--fs-sm);
-}
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--backdrop);
-}
-
-.modal {
-  width: 480px;
-  margin: 0;
 }
 
 /* Модальное окно на <dialog> (ui/Modal.tsx): фон — ::backdrop, содержимое — панель */
@@ -1468,10 +1468,8 @@ button.link.danger {
   margin-left: var(--space-2);
 }
 
-.modal.conflict {
+.modal-dialog.conflict {
   width: 760px;
-  max-height: 90vh;
-  overflow: auto;
 }
 
 .conflict .table {
@@ -1800,10 +1798,8 @@ button.link.danger {
 }
 
 /* Создание задачи (ТЗ §7.6) */
-.modal.create-task {
+.modal-dialog.create-task {
   width: 600px;
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
 }
 
 .form-row {

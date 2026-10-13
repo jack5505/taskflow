@@ -21,6 +21,7 @@ import {
 import { MarkdownEditor } from "./Markdown";
 import { DateField } from "../ui/DateField";
 import { useConfirm } from "../ui/Confirm";
+import { Modal } from "../ui/Modal";
 
 interface Props {
   /** Проект текущей страницы — предвыбран (§7.6). */
@@ -114,16 +115,12 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
   const invalid = (f: keyof FormErrors) => (errors[f] ? true : undefined);
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismiss()}>
+    <Modal labelledBy="create-task-title" className="create-task" onCancel={() => void dismiss()}>
       <form
-        className="form panel modal create-task"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="create-task-title"
+        className="form"
         noValidate
         onSubmit={submit}
         onKeyDown={(e) => {
-          if (e.key === "Escape") dismiss();
           // Ctrl+Enter — создать из любого поля, в том числе из описания.
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) e.currentTarget.requestSubmit();
         }}
@@ -152,7 +149,7 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
         <label>
           Название
           <input
-            autoFocus
+            data-autofocus
             value={form.title}
             onChange={(e) => set("title", e.target.value)}
             aria-invalid={invalid("title")}
@@ -282,6 +279,6 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

@@ -61,7 +61,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             <h2 id={`${id}-title`}>{open.title}</h2>
             {open.body && <div className="confirm-body">{open.body}</div>}
             <div className="actions">
-              <button type="submit" className={open.danger ? "danger-solid" : "primary"} autoFocus>
+              <button type="submit" className={open.danger ? "danger-solid" : "primary"} data-autofocus>
                 {open.confirmLabel}
               </button>
               <button type="button" onClick={() => finish(false)}>

@@ -52,6 +52,7 @@ import { ProjectHeader } from "../projects/ProjectHeader";
 import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
+import { keyboardCodes, useReducedMotion } from "../ui/dnd";
 
 const moveKey = ["backlog-move"];
 
@@ -81,7 +82,7 @@ const collision: CollisionDetection = (args) => {
 const dndAccessibility = {
   screenReaderInstructions: {
     draggable:
-      "Чтобы взять задачу, нажмите пробел или Enter. Стрелками переместите её, пробелом или Enter " +
+      "Enter открывает задачу. Чтобы взять её, нажмите пробел, стрелками переместите, пробелом или Enter " +
       "положите, Escape — отмена.",
   },
   announcements: {
@@ -278,9 +279,10 @@ export function BacklogPage() {
     setDialog(d);
   };
 
+  const reducedMotion = useReducedMotion();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
+    useSensor(KeyboardSensor, { keyboardCodes }),
   );
   const fromSection = dragging ? sectionOf(dragging) : null;
   // Исполнитель меняет только порядок: чужие секции во время перетаскивания закрыты (§2).
@@ -411,7 +413,7 @@ export function BacklogPage() {
               )}
             </SectionBox>
           ))}
-          <DragOverlay>
+          <DragOverlay dropAnimation={reducedMotion ? null : undefined}>
             {dragging && (
               <div className="backlog-row overlay">
                 <RowCells

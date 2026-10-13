@@ -3,6 +3,7 @@ import type { SprintView } from "../api/client";
 import { formatDuration } from "../lib/duration";
 import { BACKLOG, sprintDatesError, totals } from "./logic";
 import { DateField } from "../ui/DateField";
+import { Modal as Dialog } from "../ui/Modal";
 
 function Modal({ id, title, onCancel, onSubmit, children }: {
   id: string;
@@ -12,19 +13,15 @@ function Modal({ id, title, onCancel, onSubmit, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <Dialog labelledBy={id} onCancel={onCancel}>
       <form
-        className="form panel modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={id}
+        className="form"
         onSubmit={onSubmit}
-        onKeyDown={(e) => e.key === "Escape" && onCancel()}
       >
         <h2 id={id}>{title}</h2>
         {children}
       </form>
-    </div>
+    </Dialog>
   );
 }
 
@@ -78,7 +75,7 @@ export function CreateSprintDialog(p: FormProps & { onSubmit: (f: SprintFields) 
     <Modal id="sprint-create-title" title="Новый спринт" onCancel={p.onCancel} onSubmit={submit}>
       <label>
         Название
-        <input autoFocus maxLength={100} value={f.name} onChange={set("name")} />
+        <input data-autofocus maxLength={100} value={f.name} onChange={set("name")} />
         <span className="hint">Пусто — «Спринт N» по порядку</span>
       </label>
       <label>
@@ -143,7 +140,7 @@ export function StartSprintDialog(
       </p>
       <label>
         Цель
-        <textarea autoFocus rows={3} maxLength={1000} value={f.goal} onChange={set("goal")} />
+        <textarea data-autofocus rows={3} maxLength={1000} value={f.goal} onChange={set("goal")} />
       </label>
       <div className="date-range">
         <label>
@@ -191,7 +188,7 @@ export function CloseSprintDialog(p: {
         <label>
           Куда перенести незакрытые задачи
           <select
-            autoFocus
+            data-autofocus
             value={moveTo}
             onChange={(e) => {
               setMoveTo(e.target.value);

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type { ProjectMemberView, TaskListItem } from "../api/client";
 import { statusLabel } from "../lib/status";
 import { commentError, type Status } from "./transitions";
+import { Modal } from "../ui/Modal";
 
 interface Props {
   task: Pick<TaskListItem, "key" | "title" | "status">;
@@ -37,14 +38,10 @@ export function TransitionDialog(p: Props) {
   const title = p.comment ? titles[p.comment] : "Переоткрыть задачу";
   const error = localError || p.error;
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && p.onCancel()}>
+    <Modal labelledBy="transition-title" onCancel={p.onCancel}>
       <form
-        className="form panel modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="transition-title"
+        className="form"
         onSubmit={submit}
-        onKeyDown={(e) => e.key === "Escape" && p.onCancel()}
       >
         <h2 id="transition-title">{title}</h2>
         <p className="muted">
@@ -54,7 +51,7 @@ export function TransitionDialog(p: Props) {
           <label>
             {p.comment === "rework" ? "Причина возврата" : "Причина отмены"}
             <textarea
-              autoFocus
+              data-autofocus
               rows={4}
               maxLength={5000}
               value={comment}
@@ -70,7 +67,7 @@ export function TransitionDialog(p: Props) {
           <label>
             Новый исполнитель
             <select
-              autoFocus={!p.comment}
+              data-autofocus={!p.comment || undefined}
               value={assignee}
               onChange={(e) => {
                 setAssignee(e.target.value);
@@ -97,6 +94,6 @@ export function TransitionDialog(p: Props) {
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

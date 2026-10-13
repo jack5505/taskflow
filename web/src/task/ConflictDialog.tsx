@@ -1,6 +1,7 @@
 import type { TaskTask, TaskUpdateRequest } from "../api/client";
 import { fieldLabels, formatFieldValue, type ValueContext } from "./history";
 import { compareConflict, isEmptyPatch, rebasePatch } from "./patch";
+import { Modal } from "../ui/Modal";
 
 export interface Conflict {
   /** Версия, от которой шла правка. */
@@ -32,14 +33,8 @@ export function ConflictDialog({ conflict, ctx, pending, error, onRetry, onDisca
   const nothingLeft = isEmptyPatch(retry);
   const v = (field: string, value: unknown) => formatFieldValue(field, value, ctx);
   return (
-    <div className="modal-backdrop">
-      <div
-        className="panel modal conflict"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="conflict-title"
-        onKeyDown={(e) => e.key === "Escape" && !pending && onDiscard()}
-      >
+    <Modal labelledBy="conflict-title" className="conflict" closeOnBackdrop={false} onCancel={() => !pending && onDiscard()}>
+      <div>
         <h2 id="conflict-title">Задачу уже изменил другой пользователь</h2>
         <p className="muted">
           Ваши изменения не сохранены. Ниже — что поменялось с тех пор, как вы открыли карточку, и что меняете вы.
@@ -71,15 +66,15 @@ export function ConflictDialog({ conflict, ctx, pending, error, onRetry, onDisca
         {error && <p role="alert">{error}</p>}
         <div className="actions">
           {!nothingLeft && (
-            <button type="button" className="primary" disabled={pending} onClick={() => onRetry(retry)} autoFocus>
+            <button type="button" className="primary" disabled={pending} onClick={() => onRetry(retry)} data-autofocus>
               {pending ? "Сохраняем…" : "Сохранить мои изменения поверх"}
             </button>
           )}
-          <button type="button" disabled={pending} onClick={onDiscard} autoFocus={nothingLeft}>
+          <button type="button" disabled={pending} onClick={onDiscard} data-autofocus={nothingLeft || undefined}>
             {nothingLeft ? "Закрыть" : "Оставить актуальную версию"}
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -26,6 +26,7 @@ import { DateField } from "../ui/DateField";
 import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
+import { Modal } from "../ui/Modal";
 
 /**
  * После списания, правки или удаления: список записей и задача (списано, остаток) перечитываются,
@@ -112,16 +113,12 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismiss()}>
+    <Modal labelledBy="worklog-title" onCancel={() => void dismiss()}>
       <form
-        className="form panel modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="worklog-title"
+        className="form"
         data-testid="worklog-form"
         noValidate
         onSubmit={submit}
-        onKeyDown={(e) => e.key === "Escape" && dismiss()}
       >
         <h2 id="worklog-title">{worklog ? "Изменить запись времени" : "Списать время"}</h2>
         <p className="muted">
@@ -130,7 +127,7 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
         <label>
           Длительность
           <input
-            autoFocus
+            data-autofocus
             data-testid="worklog-duration"
             placeholder="2h 30m"
             maxLength={100}
@@ -187,7 +184,7 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 

@@ -27,6 +27,7 @@ import {
 } from "./logic";
 import { INVALID_DATE } from "../lib/date";
 import { DateField } from "../ui/DateField";
+import { Tabs, tabPanel } from "../ui/Tabs";
 
 /** Период отчёта не бывает пустым: стёртая или недописанная дата не применяется, поле вернётся. */
 const validDate = (v: string) => v !== "" && v !== INVALID_DATE;
@@ -319,26 +320,21 @@ export function ReportsPage() {
       )}
       {csv.isError && <p role="alert">Не удалось скачать CSV: {reportErrorText(csv.error)}</p>}
 
-      <nav className="tabs report-tabs" role="tablist" aria-label="Представление отчёта">
-        {REPORT_VIEWS.map((v) => (
-          <button
-            key={v.id}
-            type="button"
-            role="tab"
-            aria-selected={f.view === v.id}
-            className={f.view === v.id ? "tab active" : "tab"}
-            onClick={() => update({ ...f, view: v.id })}
-          >
-            {v.label}
-          </button>
-        ))}
+      <Tabs
+        label="Представление отчёта"
+        className="report-tabs"
+        idPrefix="report"
+        tabs={REPORT_VIEWS}
+        value={f.view}
+        onChange={(view) => update({ ...f, view })}
+      >
         {current && (
           <span className="muted report-period">
             {formatDate(current.from)} — {formatDate(current.to)} · всего {current.total} ({current.hours} ч)
           </span>
         )}
-      </nav>
-      <div role="tabpanel" className={report.isFetching && r ? "report-body loading-dim" : "report-body"}>
+      </Tabs>
+      <div {...tabPanel("report", f.view)} className={report.isFetching && r ? "report-body loading-dim" : "report-body"}>
         {body}
       </div>
     </section>
