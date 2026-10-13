@@ -35,7 +35,7 @@
 | `JWT_REFRESH_TTL` | нет | `720h` | срок refresh-токена (cookie), 30 дней |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | нет | порт `587` | внешний SMTP (§10.2). Без `SMTP_HOST` письма не отправляются, а `admin create` печатает ссылку в консоль |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME` | этап 2 | — | бот (§8): токен от BotFather, секрет заголовка webhook, имя бота без `@` |
-| `GITHUB_APP_ID` | нет | пусто | ID GitHub App (§12). Пусто — интеграция выключена, маршруты `/api/v1/github/…` не регистрируются. Остальные `GITHUB_*` задаются вместе с ним (раздел 4.5) |
+| `GITHUB_APP_ID` | нет | пусто | ID GitHub App (§12). Пусто — интеграция выключена, маршруты `/api/v1/github/…` не регистрируются. Остальные `GITHUB_*` задаются вместе с ним (раздел 4.4) |
 | `GITHUB_APP_PRIVATE_KEY_FILE` | с `GITHUB_APP_ID` | `/run/secrets/github-app.pem` | путь к PEM-ключу App **внутри контейнера**; на сервере файл лежит в `./secrets/`. Нет файла или не RSA PEM — `api` и `worker` не стартуют |
 | `GITHUB_WEBHOOK_SECRET` | с `GITHUB_APP_ID` | — | секрет вебхука App (подпись `X-Hub-Signature-256`), от 16 символов: `openssl rand -hex 32` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | с `GITHUB_APP_ID` | — | Client ID и Client secret App: вход в GitHub для связки аккаунтов в профиле (§12.5) |
