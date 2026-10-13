@@ -40,6 +40,7 @@ else
 fi
 BACKUP_KEEP_DAYS=$(env_get BACKUP_KEEP_DAYS 30)
 BACKUP_REMOTE=$(env_get BACKUP_REMOTE)
+BACKUP_SECRETS_PASSWORD=$(env_get BACKUP_SECRETS_PASSWORD)
 PORT=$(env_get TASKFLOW_PORT 8100)
 
 # compose_exec SERVICE CMD… — команда в контейнере сервиса; имена контейнеров не фиксированы,
