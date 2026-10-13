@@ -4,6 +4,7 @@ import { NavLink } from "react-router";
 import { useMe } from "../auth/hooks";
 import { actorFor, useProject } from "./hooks";
 import { isSystemAdmin } from "./logic";
+import { visibleTabs } from "../settings/logic";
 
 /**
  * Заголовок страниц проекта (ТЗ §7.3, §7.4, §7.9): ключ и название, метка архива и одинаковые
@@ -14,7 +15,9 @@ import { isSystemAdmin } from "./logic";
 export function ProjectHeader({ projectKey, children }: { projectKey: string; children?: ReactNode }) {
   const me = useMe();
   const project = useProject(projectKey);
-  const settings = !!actorFor(me.data, project.data)?.manager || isSystemAdmin(me.data);
+  // То же правило, что у самой страницы настроек: есть хоть одна доступная вкладка.
+  const settings =
+    visibleTabs({ manager: !!actorFor(me.data, project.data)?.manager, admin: isSystemAdmin(me.data) }).length > 0;
   const base = `/projects/${encodeURIComponent(projectKey)}`;
   return (
     <div className="project-head">

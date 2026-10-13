@@ -246,8 +246,12 @@ export function BoardPage() {
           <span className="sprint-info">
             <strong>{sprint.name}</strong>
             {dates && <span className="muted">{dates}</span>}
-            {left !== null && left >= 0 && <span className="muted">{daysLeftText(left)}</span>}
-            {left !== null && left < 0 && <span className="badge overdue">Просрочен</span>}
+            {left !== null &&
+              (left > 0 ? (
+                <span className="muted">{daysLeftText(left)}</span>
+              ) : (
+                <span className="badge overdue">{daysLeftText(left)}</span>
+              ))}
           </span>
         )}
       </ProjectHeader>

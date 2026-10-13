@@ -39,13 +39,14 @@ export function AppLayout() {
   const name = me.data?.display_name || me.data?.email || "Профиль";
   const close = () => menu.current?.removeAttribute("open");
 
-  // Меню закрывается щелчком мимо и Escape (фокус возвращается на аватар).
+  // Меню закрывается щелчком мимо и Escape, если фокус в нём (Escape в открытом поверх окне —
+  // этому окну), фокус возвращается на аватар.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
       if (menu.current?.open && !menu.current.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && menu.current?.open) {
+      if (e.key === "Escape" && menu.current?.open && menu.current.contains(document.activeElement)) {
         close();
         menu.current.querySelector("summary")?.focus();
       }
@@ -59,48 +60,53 @@ export function AppLayout() {
   }, []);
 
   return (
-    // Цвета аватаров текущего проекта — и в шапке, и на страницах: у человека один цвет.
-    <ProjectAvatarColors projectKey={projectKey}>
-      <div className="app">
-        <header className="topbar">
-          <Link to="/" className="brand">
-            TaskFlow
-          </Link>
-          <nav className="topbar-nav" aria-label="Разделы">
-            {/* «Проекты» подсвечены и на странице проекта: проект — раздел внутри них. */}
-            <NavLink to="/" className={() => (pathname === "/" ? "active" : projectKey ? "active-parent" : "")}>
-              Проекты
-            </NavLink>
-            {projectKey && <CurrentProject projectKey={projectKey} />}
-            <NavLink to="/reports">Отчёты</NavLink>
-          </nav>
-          <div className="topbar-tools">
-            <HeaderTimer />
-            <NotificationBell />
-            <CreateTask />
-            <details className="user-menu" ref={menu}>
-              <summary aria-label={`Меню пользователя: ${name}`} title={name}>
-                <Avatar id={me.data?.id} name={name} />
-              </summary>
-              <div className="user-menu-panel" role="menu">
-                <div className="user-menu-name">
-                  <strong>{name}</strong>
-                  {me.data?.display_name && <span className="muted">{me.data.email}</span>}
-                </div>
-                <Link to="/profile" role="menuitem" onClick={close}>
-                  Профиль
-                </Link>
-                <button type="button" role="menuitem" onClick={() => logout.mutate()} disabled={logout.isPending}>
-                  Выйти
-                </button>
+    <div className="app">
+      <header className="topbar">
+        <Link to="/" className="brand">
+          TaskFlow
+        </Link>
+        <nav className="topbar-nav" aria-label="Разделы">
+          {/* «Проекты» подсвечены и на странице проекта: проект — раздел внутри них. */}
+          <NavLink to="/" className={() => (pathname === "/" ? "active" : projectKey ? "active-parent" : "")}>
+            Проекты
+          </NavLink>
+          {projectKey && <CurrentProject projectKey={projectKey} />}
+          <NavLink to="/reports">Отчёты</NavLink>
+        </nav>
+        <div className="topbar-tools">
+          <HeaderTimer />
+          <NotificationBell />
+          <CreateTask />
+          <details className="user-menu" ref={menu}>
+            <summary aria-label={`Меню пользователя: ${name}`} title={name}>
+              {/* Свой аватар — цветом по id, одинаковым на всех страницах. */}
+              {me.data?.id ? (
+                <Avatar id={me.data.id} name={name} decorative />
+              ) : (
+                <span className="avatar empty" aria-hidden="true" />
+              )}
+            </summary>
+            <div className="user-menu-panel">
+              <div className="user-menu-name">
+                <strong>{name}</strong>
+                {me.data?.display_name && <span className="muted">{me.data.email}</span>}
               </div>
-            </details>
-          </div>
-        </header>
-        <main className="content">
+              <Link to="/profile" onClick={close}>
+                Профиль
+              </Link>
+              <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>
+                Выйти
+              </button>
+            </div>
+          </details>
+        </div>
+      </header>
+      <main className="content">
+        {/* Цвета аватаров участников текущего проекта: разные у разных людей. */}
+        <ProjectAvatarColors projectKey={projectKey}>
           <Outlet />
-        </main>
-      </div>
-    </ProjectAvatarColors>
+        </ProjectAvatarColors>
+      </main>
+    </div>
   );
 }

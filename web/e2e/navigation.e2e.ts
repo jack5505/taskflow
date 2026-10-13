@@ -29,10 +29,12 @@ test("навигация: шапка, вкладки проекта, меню п
   // Меню пользователя: профиль, Escape закрывает, выход ведёт на вход.
   const menu = page.getByLabel(/Меню пользователя/);
   await menu.click();
-  await expect(page.getByRole("menuitem", { name: "Профиль" })).toBeVisible();
+  const profile = page.getByRole("banner").getByRole("link", { name: "Профиль" });
+  await expect(profile).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("menuitem", { name: "Профиль" })).toBeHidden();
+  await expect(profile).toBeHidden();
+  await expect(menu).toBeFocused();
   await menu.click();
-  await page.getByRole("menuitem", { name: "Выйти" }).click();
+  await page.getByRole("banner").getByRole("button", { name: "Выйти", exact: true }).click();
   await expect(page).toHaveURL(/\/login/);
 });
