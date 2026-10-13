@@ -6,7 +6,6 @@ import { formatSpentEstimate } from "../lib/duration";
 import { formatDate } from "../lib/format";
 import { Avatar } from "../ui/Avatar";
 import { Icon, PriorityIcon, TypeIcon } from "../ui/Icon";
-import type { Priority, TaskType } from "./filters";
 
 interface CardProps {
   task: TaskListItem;
@@ -20,8 +19,6 @@ interface CardProps {
 
 /** Содержимое карточки доски (ТЗ §7.3). */
 export function CardBody({ task: t, assignee, timerRunning, linked = false }: CardProps & { linked?: boolean }) {
-  const type = (t.type ?? "task") as TaskType;
-  const priority = (t.priority ?? "medium") as Priority;
   const due = formatDate(t.due_date);
   return (
     <>
@@ -37,9 +34,9 @@ export function CardBody({ task: t, assignee, timerRunning, linked = false }: Ca
         )}
       </div>
       <div className="task-foot">
-        <TypeIcon type={type} />
+        <TypeIcon type={t.type} />
         <span className="card-key">{t.key}</span>
-        <PriorityIcon priority={priority} />
+        <PriorityIcon priority={t.priority} />
         {due && (
           <span className={t.overdue ? "due overdue" : "due muted"} title={t.overdue ? "Срок просрочен" : "Срок"}>
             {due}

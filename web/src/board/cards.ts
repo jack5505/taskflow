@@ -8,17 +8,6 @@ export const boardQueryKey = (key: string) => ["board", key] as const;
 /** Ключ мутаций перехода с доски: пока они идут, доску не перечитываем — ответ откатил бы карточку. */
 export const moveKey = ["board-move"];
 
-/** Инициалы для аватара: «Иван Петров» → «ИП». */
-export function initials(name: string | undefined): string {
-  return (name ?? "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => [...w][0]!.toUpperCase())
-    .join("");
-}
-
 /** Задачи по колонкам в порядке ответа сервера; задачи вне колонок (отменённые) отбрасываются. */
 export function groupByStatus(tasks: TaskListItem[]): Map<BoardStatus, TaskListItem[]> {
   const m = new Map<BoardStatus, TaskListItem[]>(BOARD_COLUMNS.map((s) => [s, []]));

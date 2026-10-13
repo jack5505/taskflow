@@ -1,17 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMove, groupByStatus, initials } from "./cards";
-
-describe("initials", () => {
-  it.each([
-    ["Иван Петров", "ИП"],
-    ["анна", "А"],
-    ["  Мария  Сергеевна Иванова ", "МС"],
-    ["", ""],
-    [undefined, ""],
-  ])("%s → %s", (name, want) => {
-    expect(initials(name)).toBe(want);
-  });
-});
+import { applyMove, groupByStatus } from "./cards";
 
 describe("groupByStatus", () => {
   it("четыре колонки, отменённые не показываются, порядок сохраняется", () => {

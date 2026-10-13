@@ -2,6 +2,7 @@ import { errorText, parseApiError } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { useFlash, useStartTimer, useStopTimer } from "./hooks";
 import { startMessage, stopMessage } from "./timer";
+import { Icon } from "../ui/Icon";
 
 /**
  * Кнопка «Старт / Стоп» таймера на задаче (ТЗ §6.4, §7.5): «Стоп» — если таймер идёт на этой
@@ -41,7 +42,8 @@ export function TimerButton({ taskKey, canStart, className }: { taskKey: string;
           onClick={onClick}
           aria-label={running ? `Остановить таймер ${taskKey}` : `Запустить таймер ${taskKey}`}
         >
-          {running ? (stop.isPending ? "Стоп…" : "■ Стоп") : start.isPending ? "Старт…" : "▶ Старт"}
+          <Icon name={running ? "stop" : "play"} size={12} />
+          {running ? (stop.isPending ? "Стоп…" : "Стоп") : start.isPending ? "Старт…" : "Старт"}
         </button>
       )}
       {flash && (
