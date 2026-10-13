@@ -119,7 +119,7 @@ docker exec mahalla-dev-nginx nginx -s reload
    cd ~/taskflow && mkdir -p secrets
    cp ~/Downloads/<app>.private-key.pem secrets/github-app.pem
    # в .env: GITHUB_APP_ID, GITHUB_WEBHOOK_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
-   deploy/deploy.sh "$(tail -1 .deployed | cut -d' ' -f2)"   # тот же релиз: выставит права и перезапустит api и worker
+   deploy/deploy.sh "$(tail -1 .deployed | cut -d' ' -f1)"   # тот же релиз: выставит права и перезапустит api и worker
    ```
    Права выставляет `deploy.sh`: каталог `secrets/` — ваш пользователь и группа `10001` (пользователь образа), `750`, файлы `640`; остальные пользователи сервера ключ не видят. Если `cp` пишет «Permission denied» — каталог когда-то создал docker от root: сначала `deploy/deploy.sh <текущий тег>`, он вернёт владельца.
 4. **Install App** на нужные репозитории. Дальше менеджер проекта выбирает репозиторий во вкладке «GitHub» настроек проекта, а участники связывают свой аккаунт GitHub в профиле.
