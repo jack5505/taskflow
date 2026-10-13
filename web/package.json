@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "lint": "oxlint && stylelint \"src/**/*.css\"",
     "test": "vitest run",
     "preview": "vite preview",
     "e2e": "playwright test",
@@ -29,6 +29,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^30.1.2",
     "oxlint": "^1.81.0",
+    "stylelint": "17.15.0",
     "swagger-typescript-api": "^13.13.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",

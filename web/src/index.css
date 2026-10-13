@@ -1153,6 +1153,8 @@ button.link.danger {
 
 .settings-text h4 {
   margin: 16px 0 4px;
+}
+
 /* Бэклог и спринты (ТЗ §7.4) */
 .backlog-page .block-head .primary {
   margin-left: auto;
@@ -1388,6 +1390,8 @@ button.link.danger {
 
 .report-deleted {
   margin-left: 8px;
+}
+
 /* Профиль (ТЗ §7.8) */
 .profile-page .panel {
   max-width: 720px;

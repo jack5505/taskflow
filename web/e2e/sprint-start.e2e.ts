@@ -11,6 +11,9 @@ test("создание и запуск спринта", async ({ page, api }) =>
   await page.goto(`/projects/${key}/backlog`);
   const backlog = page.getByRole("region", { name: "Бэклог" });
   await expect(backlog.getByText(first.key)).toBeVisible();
+  // Стили бэклога применились (#174: потерянная скобка в index.css отключала их целиком).
+  await expect(backlog.locator("li", { hasText: first.key })).toHaveCSS("display", "grid");
+  await expect(page.locator(".topbar-link")).toHaveCSS("margin-left", "24px");
 
   await page.getByRole("button", { name: "Создать спринт" }).click();
   const create = page.getByRole("dialog", { name: "Новый спринт" });

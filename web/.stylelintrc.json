@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "max-nesting-depth": [0, { "message": "Вложенные правила запрещены: скорее всего, пропущена закрывающая скобка" }],
+    "block-no-empty": true,
+    "declaration-block-no-duplicate-properties": [true, { "ignore": ["consecutive-duplicates-with-different-values"] }],
+    "no-duplicate-selectors": true,
+    "property-no-unknown": true,
+    "color-no-invalid-hex": true,
+    "unit-no-unknown": true,
+    "no-invalid-double-slash-comments": true
+  }
+}
