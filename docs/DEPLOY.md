@@ -19,7 +19,7 @@
 
 ## 2. Переменные окружения (`.env`)
 
-`.env` создаётся из [`.env.example`](../.env.example) и в git не попадает. Секреты (`JWT_SECRET`, `SMTP_PASSWORD`, `TELEGRAM_*`) — только здесь. Значения с пробелами и `<>` берите в кавычки: `SMTP_FROM="TaskFlow <noreply@example.com>"`.
+`.env` создаётся из [`.env.example`](../.env.example) и в git не попадает. Секреты (`JWT_SECRET`, `SMTP_PASSWORD`, `TELEGRAM_*`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_CLIENT_SECRET`) — только здесь; приватный ключ GitHub App — файлом в `./secrets/` (раздел 4.4). Значения с пробелами и `<>` берите в кавычки: `SMTP_FROM="TaskFlow <noreply@example.com>"`.
 
 ### Приложение (читает `api/internal/config`)
 
@@ -35,6 +35,11 @@
 | `JWT_REFRESH_TTL` | нет | `720h` | срок refresh-токена (cookie), 30 дней |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | нет | порт `587` | внешний SMTP (§10.2). Без `SMTP_HOST` письма не отправляются, а `admin create` печатает ссылку в консоль |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME` | этап 2 | — | бот (§8): токен от BotFather, секрет заголовка webhook, имя бота без `@` |
+| `GITHUB_APP_ID` | нет | пусто | ID GitHub App (§12). Пусто — интеграция выключена, маршруты `/api/v1/github/…` не регистрируются. Остальные `GITHUB_*` задаются вместе с ним (раздел 4.5) |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | с `GITHUB_APP_ID` | `/run/secrets/github-app.pem` | путь к PEM-ключу App **внутри контейнера**; на сервере файл лежит в `./secrets/`. Нет файла или не RSA PEM — `api` и `worker` не стартуют |
+| `GITHUB_WEBHOOK_SECRET` | с `GITHUB_APP_ID` | — | секрет вебхука App (подпись `X-Hub-Signature-256`), от 16 символов: `openssl rand -hex 32` |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | с `GITHUB_APP_ID` | — | Client ID и Client secret App: вход в GitHub для связки аккаунтов в профиле (§12.5) |
+| `GITHUB_API_URL`, `GITHUB_WEB_URL` | нет | `https://api.github.com`, `https://github.com` | меняются только для GitHub Enterprise |
 | `ATTACHMENTS_DIR` | нет | `./data/attachments` | в compose — `/data/attachments` (том) |
 | `ATTACHMENT_MAX_BYTES` | нет | `52428800` | лимит вложения (§3.9, 50 МБ); у nginx `client_max_body_size` чуть больше |
 
@@ -96,7 +101,31 @@ docker exec mahalla-dev-nginx nginx -s reload
 
 Продление — общий таймер сервера `mahalla-cert-renew`. Чтобы подключение к сети `taskflow_default` пережило пересоздание контейнера nginx, добавьте её в `~/mahalla-dev/nginx/docker-compose.nginx.yml` (блок `networks`). Контейнер nginx при этом не пересоздавать — на нём живут другие сайты.
 
-### 4.4. Таймеры бэкапа и проверки восстановления
+### 4.4. GitHub App (по желанию, ТЗ §12)
+
+Без App всё работает, интеграции просто нет. Чтобы включить:
+
+1. GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App** (у организации — в её настройках):
+   - Homepage URL — `APP_BASE_URL`;
+   - **Callback URL** — `<APP_BASE_URL>/api/v1/github/callback`;
+   - **Webhook URL** — `<APP_BASE_URL>/api/v1/github/webhook`, **Webhook secret** — то же значение, что `GITHUB_WEBHOOK_SECRET`;
+   - **Permissions → Repository:** Contents — Read-only, Metadata — Read-only, Pull requests — Read-only, Issues — **Read and write** (публикация задач в Issues, §12.9);
+   - **Subscribe to events:** Pull request, Create, Delete;
+   - «Where can this GitHub App be installed» — Only on this account (или Any account, если репозитории в разных организациях).
+2. На странице App: записать **App ID** и **Client ID**, создать **Client secret** и **Private key** (скачается `.pem`).
+3. На сервере:
+   ```bash
+   cd ~/taskflow && mkdir -p secrets
+   cp ~/Downloads/<app>.private-key.pem secrets/github-app.pem
+   chmod 644 secrets/github-app.pem    # контейнер читает ключ от uid 10001, не от вашего пользователя
+   # в .env: GITHUB_APP_ID, GITHUB_WEBHOOK_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+   docker compose up -d --no-build api worker
+   ```
+4. **Install App** на нужные репозитории. Дальше менеджер проекта выбирает репозиторий во вкладке «GitHub» настроек проекта, а участники связывают свой аккаунт GitHub в профиле.
+
+Если App уже был установлен до появления прав на Issues, GitHub попросит владельца репозитория **подтвердить новые права** (письмо и баннер в Settings → Integrations → GitHub Apps). Пока не подтвердят, публикация в Issues падает с 403 — это видно только в логе `worker`.
+
+### 4.5. Таймеры бэкапа и проверки восстановления
 
 ```bash
 deploy/install-timers.sh
@@ -127,10 +156,12 @@ deploy/deploy.sh v1.2.3
 
 **Бэкап** — `deploy/backup.sh [метка]`:
 
-- `db-<метка>.sql.gz` — `pg_dump` базы, `attachments-<метка>.tar.gz` — том вложений; метка по умолчанию — дата и время UTC (`20261011-0330`).
+- `db-<метка>.sql.gz` — `pg_dump` базы, `attachments-<метка>.tar.gz` — том вложений, `secrets-<метка>.tar.gz` — `.env` и `secrets/` (права `600`: в архиве все секреты стенда); метка по умолчанию — дата и время UTC (`20261011-0330`).
 - Датированные файлы старше `BACKUP_KEEP_DAYS` (30) дней удаляются; именованные (`pre-…`, `check-…`) живут, пока их не удалят руками.
 - С `BACKUP_REMOTE` копия сразу уходит во внешнее хранилище через rclone (в контейнере, ставить rclone не нужно). Без него скрипт пишет об этом в лог — для §10.3 внешнее хранилище обязательно, задайте его при развёртывании.
 - Redis не бэкапится: очередь и ключи идемпотентности — производные данные.
+
+**Секреты** `restore.sh` не трогает — на живом стенде `.env` уже правильный. На новом сервере их возвращают руками до первого запуска: `tar xzf backups/secrets-<метка>.tar.gz -C ~/taskflow` (появятся `.env` и `secrets/`), затем раздел 4.
 
 **Восстановление на стенде** — `deploy/restore.sh <метка>`: останавливает `api` и `worker`, пересоздаёт базу из дампа, заменяет вложения, сбрасывает Redis (`FLUSHALL` — очередь и отметки обработанных событий относятся к прежнему состоянию базы), поднимает сервисы. **Текущие данные стенда заменяются**, скрипт спрашивает подтверждение (`RESTORE_YES=1` — без вопроса). Бэкап из внешнего хранилища сначала скачивается (как в разделе 7.2) и восстанавливается с `BACKUP_DIR=<каталог>`.
 
@@ -192,7 +223,7 @@ SMTP и токен бота в копии обнуляются: иначе `work
 | Задача | Команда |
 |---|---|
 | Состояние | `docker compose ps`, `curl -s 127.0.0.1:8100/health` |
-| Логи (JSON, с `request_id`) | `docker compose logs -f --tail 100 api worker` |
+| Логи (JSON, с `request_id`) | `docker compose logs -f --tail 100 api worker`; хранятся до 5 файлов по 20 МБ на сервис (`x-logging` в `docker-compose.yml`), старое удаляет Docker |
 | Какой релиз стоит | `grep TASKFLOW_IMAGE .env`, `tail -3 .deployed` |
 | Перезапуск без смены образа | `docker compose up -d --no-build api worker` |
 | Консоль базы | `docker compose exec postgres psql -U taskflow` |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ежедневный бэкап (ТЗ §10.3): дамп PostgreSQL + архив тома вложений,
+# Ежедневный бэкап (ТЗ §10.3): дамп PostgreSQL + архив тома вложений + секреты стенда (.env, secrets/),
 # хранение BACKUP_KEEP_DAYS (30) дней локально, копия на внешнее хранилище через rclone, если задан BACKUP_REMOTE.
 #   deploy/backup.sh            — обычный запуск (таймер taskflow-backup.timer)
 #   deploy/backup.sh pre-v1.2.3 — именованный снимок перед выкладкой, по сроку не удаляется
@@ -13,6 +13,7 @@ mkdir -p "$BACKUP_DIR"
 
 DB_FILE="$BACKUP_DIR/db-$LABEL.sql.gz"
 FILES_FILE="$BACKUP_DIR/attachments-$LABEL.tar.gz"
+SECRETS_FILE="$BACKUP_DIR/secrets-$LABEL.tar.gz"
 
 log "pg_dump → $DB_FILE"
 compose_exec postgres pg_dump -U taskflow --no-owner --no-privileges taskflow | gzip -9 > "$DB_FILE.tmp"
@@ -23,8 +24,16 @@ docker run --rm -v "${PROJECT}_attachments:/data:ro" -v "$BACKUP_DIR:/out" alpin
   tar czf "/out/$(basename "$FILES_FILE").tmp" -C /data .
 mv "$FILES_FILE.tmp" "$FILES_FILE"
 
+# .env (JWT_SECRET, токен бота, SMTP) и secrets/ (ключ GitHub App): после потери сервера их не
+# перевыпускать. Только для владельца; restore.sh их не трогает — возвращаются руками (DEPLOY.md §6).
+log "secrets → $SECRETS_FILE"
+secrets=(.env)
+[ -d secrets ] && secrets+=(secrets)
+(umask 077 && tar czf "$SECRETS_FILE.tmp" "${secrets[@]}")
+mv "$SECRETS_FILE.tmp" "$SECRETS_FILE"
+
 # Именованные снимки (pre-…, check-…) живут, пока их не удалят вручную; датированные — BACKUP_KEEP_DAYS.
-find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'db-20*' -o -name 'attachments-20*' \) -mtime +"$BACKUP_KEEP_DAYS" -delete
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'db-20*' -o -name 'attachments-20*' -o -name 'secrets-20*' \) -mtime +"$BACKUP_KEEP_DAYS" -delete
 
 if [ -n "$BACKUP_REMOTE" ]; then
   # rclone без установки на сервер: конфиг в deploy/rclone.conf (не в git), remote вида s3:bucket/taskflow

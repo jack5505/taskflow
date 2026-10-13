@@ -12,6 +12,9 @@ set -euo pipefail
 TAG=${1:-}
 [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: deploy/deploy.sh vX.Y.Z" >&2; exit 2; }
 [ -f .env ] || { echo ".env не найден: cp .env.example .env и заполните секреты" >&2; exit 2; }
+# ./secrets монтируется в api и worker (ключ GitHub App); без каталога docker создаст его от root,
+# и положить ключ без sudo будет нельзя. Каталог должен быть доступен uid 10001 (пользователь образа).
+mkdir -p secrets
 
 IMAGE_REPO=${TASKFLOW_IMAGE_REPO:-ghcr.io/jack5505/taskflow}
 IMAGE="$IMAGE_REPO:$TAG"

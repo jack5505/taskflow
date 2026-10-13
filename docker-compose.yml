@@ -2,6 +2,13 @@
 # на сервере deploy/deploy.sh подставляет TASKFLOW_IMAGE=ghcr.io/jack5505/taskflow:<тег>.
 # Имена контейнеров не фиксированы: копия стенда с другим COMPOSE_PROJECT_NAME и TASKFLOW_PORT
 # может жить рядом (проверка восстановления). nginx сервера ходит на alias taskflow-api в сети стенда.
+# Логи контейнеров (json-file) по умолчанию растут без ограничений: не больше 5 файлов по 20 МБ на сервис.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 20m
+    max-file: "5"
+
 services:
   api:
     build:
@@ -30,6 +37,7 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
   worker:
     image: ${TASKFLOW_IMAGE:-taskflow:local}
@@ -44,6 +52,7 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
   postgres:
     image: postgres:16-alpine
@@ -59,6 +68,7 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
   redis:
     image: redis:7-alpine
@@ -71,6 +81,7 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
 volumes:
   pgdata:
