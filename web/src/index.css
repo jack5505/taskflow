@@ -27,8 +27,6 @@
   --priority-critical: var(--danger);
   --avatar: #8250df;
   --backdrop: rgb(0 0 0 / 0.35);
-  /* устаревшее имя, пока на него ссылаются компоненты */
-  --notice-bg: var(--accent-soft);
 
   /* Шрифт: размеры строго из шкалы */
   --font: system-ui, "Segoe UI", Roboto, sans-serif;
@@ -165,7 +163,8 @@ button:focus-visible,
 summary:focus-visible,
 [tabindex]:focus-visible,
 .button-like:focus-within {
-  outline: none;
+  /* прозрачный контур остаётся видимым в режиме высокой контрастности Windows, где тени нет */
+  outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
 

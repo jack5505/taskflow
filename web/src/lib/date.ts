@@ -4,6 +4,17 @@
  * открывается отдельной кнопкой.
  */
 
+import { formatDate } from "./format";
+
+/**
+ * Значение поля даты, в котором набрано не дату (недописанная, 31.02.2026). Формы считают его
+ * ошибкой ввода — не «без даты» и не прежней датой.
+ */
+export const INVALID_DATE = "invalid";
+
+/** Ошибка формы для INVALID_DATE. */
+export const INVALID_DATE_TEXT = "Дата в формате дд.мм.гггг";
+
 const RU = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
 const ISO = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -29,6 +40,5 @@ export function parseInputDate(text: string): string | null {
 
 /** `YYYY-MM-DD` → `DD.MM.YYYY`; всё остальное — пустая строка. */
 export function toInputDate(iso: string | null | undefined): string {
-  const m = iso ? ISO.exec(iso) : null;
-  return m ? `${m[3]}.${m[2]}.${m[1]}` : "";
+  return iso && ISO.test(iso) ? formatDate(iso) : "";
 }

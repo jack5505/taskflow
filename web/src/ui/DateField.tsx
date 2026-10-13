@@ -1,15 +1,17 @@
 import { useRef, useState, type Ref } from "react";
 
-import { parseInputDate, toInputDate } from "../lib/date";
+import { INVALID_DATE, parseInputDate, toInputDate } from "../lib/date";
 
 export interface DateFieldProps {
-  /** Дата `YYYY-MM-DD` или "". */
+  /** Дата `YYYY-MM-DD`, "" или INVALID_DATE (то, что пришло из onChange). */
   value: string;
   /**
-   * Новая дата `YYYY-MM-DD` или "" (поле очищено). Недописанная или несуществующая дата не
-   * передаётся: поле подсвечивается при уходе фокуса. `picked` — выбрана в календаре, а не введена.
+   * Новая дата `YYYY-MM-DD`, "" (поле очищено) или INVALID_DATE — набрано не дату; форма решает,
+   * ошибка это или поле просто вернуть. `picked` — выбрана в календаре, а не введена.
    */
   onChange: (value: string, picked: boolean) => void;
+  /** При уходе фокуса вернуть текст к value, если набрано не то (фильтры, где нет кнопки «Сохранить»). */
+  revertOnBlur?: boolean;
   min?: string;
   max?: string;
   required?: boolean;
@@ -28,6 +30,13 @@ export interface DateFieldProps {
  * Поле даты в формате dd.mm.yyyy (ТЗ §7) независимо от языка браузера: текст плюс кнопка
  * календаря, которая открывает нативный выбор даты скрытого поля `type="date"`.
  */
+// Календарь — только через showPicker (Chrome 99+, Firefox 101+, Safari 16+): программный click по
+// скрытому полю календарь не открывает, и без showPicker кнопка не показывается.
+const canPick = typeof HTMLInputElement !== "undefined" && "showPicker" in HTMLInputElement.prototype;
+
+/** Значение для onChange из набранного текста. */
+const fromText = (s: string) => parseInputDate(s) ?? INVALID_DATE;
+
 export function DateField(p: DateFieldProps) {
   const [text, setText] = useState(() => toInputDate(p.value));
   const [shown, setShown] = useState(p.value);
@@ -35,10 +44,10 @@ export function DateField(p: DateFieldProps) {
   const picker = useRef<HTMLInputElement>(null);
 
   // Значение поменялось снаружи (сброс формы, ответ сервера) — показать его, если оно не то,
-  // что сейчас набрано.
+  // что сейчас набрано. INVALID_DATE пришло от нас же: текст не трогаем.
   if (p.value !== shown) {
     setShown(p.value);
-    if (parseInputDate(text) !== p.value) {
+    if (p.value !== INVALID_DATE && fromText(text) !== p.value) {
       setText(toInputDate(p.value));
       setBad(false);
     }
@@ -46,21 +55,23 @@ export function DateField(p: DateFieldProps) {
 
   const type = (s: string) => {
     setText(s);
-    const iso = parseInputDate(s);
-    if (iso !== null) {
+    const v = fromText(s);
+    if (v !== INVALID_DATE) setBad(false);
+    if (v !== p.value) p.onChange(v, false);
+  };
+
+  const leave = () => {
+    if (p.revertOnBlur && fromText(text) !== p.value) {
+      setText(toInputDate(p.value));
       setBad(false);
-      if (iso !== p.value) p.onChange(iso, false);
-    }
+    } else setBad(fromText(text) === INVALID_DATE);
   };
 
   const openPicker = () => {
-    const el = picker.current;
-    if (!el) return;
     try {
-      el.showPicker();
+      picker.current?.showPicker();
     } catch {
-      el.focus();
-      el.click();
+      // Браузер отказал (например, поле отключено) — остаётся ручной ввод.
     }
   };
 
@@ -83,16 +94,17 @@ export function DateField(p: DateFieldProps) {
         data-testid={p["data-testid"]}
         onChange={(e) => type(e.target.value)}
         onBlur={() => {
-          setBad(parseInputDate(text) === null);
+          leave();
           p.onBlur?.();
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
-            setBad(parseInputDate(text) === null);
+            leave();
             p.onEnter?.();
           }
         }}
       />
+      {canPick && (
       <button
         type="button"
         className="date-field-pick"
@@ -106,13 +118,14 @@ export function DateField(p: DateFieldProps) {
           <path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" stroke="currentColor" strokeWidth="1.5" />
         </svg>
       </button>
+      )}
       <input
         ref={picker}
         type="date"
         className="date-field-native"
         tabIndex={-1}
         aria-hidden="true"
-        value={p.value}
+        value={p.value === INVALID_DATE ? "" : p.value}
         min={p.min}
         max={p.max}
         disabled={p.disabled}

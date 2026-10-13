@@ -45,7 +45,7 @@ export class Api {
     return key;
   }
 
-  task(project: string, fields: { title: string; estimate_minutes?: number; sprint_id?: string; assignee_id?: string }) {
+  task(project: string, fields: { title: string; estimate_minutes?: number; sprint_id?: string; assignee_id?: string; due_date?: string }) {
     return this.call<Task>("POST", `/api/v1/projects/${project}/tasks`, fields);
   }
 

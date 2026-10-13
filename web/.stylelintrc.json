@@ -36,7 +36,11 @@
         "font-size": [
           "/^var\\(--fs-/",
           "inherit",
-          "/em$/"
+          "/^[0-9.]+em$/"
+        ],
+        "font": [
+          "inherit",
+          "/var\\(--fs-/"
         ]
       },
       {

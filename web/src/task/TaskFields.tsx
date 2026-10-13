@@ -6,6 +6,7 @@ import { formatDuration, parseDuration } from "../lib/duration";
 import { formatDate, formatDateTime } from "../lib/format";
 import { parseLabels, type Edits } from "./patch";
 import type { TaskPerms } from "./perms";
+import { INVALID_DATE } from "../lib/date";
 import { DateField } from "../ui/DateField";
 
 /** Итог сохранения: при ошибке редактор остаётся открытым, при конфликте правку забирает окно конфликта. */
@@ -118,8 +119,10 @@ function DateInput(p: { task: TaskTask; disabled: boolean; onSave: (v: string, b
   const value = p.task.due_date ?? "";
   const [draft, setDraft] = useState<string | null>(null);
   const [base, setBase] = useState<TaskTask>(p.task);
-  // Недописанную дату DateField не передаёт — она не считается очисткой срока.
+  // Набранное не дату (INVALID_DATE) не сохраняется и не считается очисткой срока: поле остаётся
+  // красным с набранным текстом, пока его не исправят.
   const commit = (v = draft, from = base) => {
+    if (v === INVALID_DATE) return;
     if (v !== null && v !== value) p.onSave(v, from);
     setDraft(null);
   };

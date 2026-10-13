@@ -88,8 +88,6 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
     e.preventDefault();
     if (create.isPending) return;
     const { body, errors: errs } = validateCreate({ ...form, projectKey: key }, manage);
-    // Недописанная дата даёт value "" — это не «без срока», а ошибка ввода.
-    if (dueRef.current?.validity.badInput) errs.dueDate = "Дата введена не полностью";
     setLocalErrors(errs);
     if (Object.keys(errs).length === 0) create.mutate({ key, body });
   };
