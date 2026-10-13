@@ -72,7 +72,7 @@ export class Api {
   }
 
   getTask(key: string) {
-    return this.call<Task & { sprint_id?: string; spent_minutes?: number }>("GET", `/api/v1/tasks/${key}`);
+    return this.call<Task & { sprint_id?: string; spent_minutes?: number; due_date?: string }>("GET", `/api/v1/tasks/${key}`);
   }
 
   worklog(key: string, duration: string) {

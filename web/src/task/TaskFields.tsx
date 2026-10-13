@@ -6,6 +6,7 @@ import { formatDuration, parseDuration } from "../lib/duration";
 import { formatDate, formatDateTime } from "../lib/format";
 import { parseLabels, type Edits } from "./patch";
 import type { TaskPerms } from "./perms";
+import { DateField } from "../ui/DateField";
 
 /** Итог сохранения: при ошибке редактор остаётся открытым, при конфликте правку забирает окно конфликта. */
 export type SaveResult = "saved" | "conflict" | "error";
@@ -117,23 +118,24 @@ function DateInput(p: { task: TaskTask; disabled: boolean; onSave: (v: string, b
   const value = p.task.due_date ?? "";
   const [draft, setDraft] = useState<string | null>(null);
   const [base, setBase] = useState<TaskTask>(p.task);
-  const commit = (el: HTMLInputElement) => {
-    // Недописанная дата (validity.badInput) даёт value "" — это не очистка срока.
-    if (draft !== null && draft !== value && !el.validity.badInput) p.onSave(draft, base);
+  // Недописанную дату DateField не передаёт — она не считается очисткой срока.
+  const commit = (v = draft, from = base) => {
+    if (v !== null && v !== value) p.onSave(v, from);
     setDraft(null);
   };
   return (
-    <input
-      type="date"
+    <DateField
       aria-label="Срок"
       value={draft ?? value}
       disabled={p.disabled}
-      onChange={(e) => {
+      onChange={(v, picked) => {
+        // Из календаря — сразу: фокус в текстовое поле не возвращается, blur не наступит.
+        if (picked) return commit(v, draft === null ? p.task : base);
         if (draft === null) setBase(p.task);
-        setDraft(e.target.value);
+        setDraft(v);
       }}
-      onBlur={(e) => commit(e.currentTarget)}
-      onKeyDown={(e) => e.key === "Enter" && commit(e.currentTarget)}
+      onBlur={() => commit()}
+      onEnter={() => commit()}
     />
   );
 }

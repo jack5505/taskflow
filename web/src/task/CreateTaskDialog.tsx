@@ -19,6 +19,7 @@ import {
   type FormErrors,
 } from "./create";
 import { MarkdownEditor } from "./Markdown";
+import { DateField } from "../ui/DateField";
 
 interface Props {
   /** Проект текущей страницы — предвыбран (§7.6). */
@@ -249,11 +250,10 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
           </label>
           <label>
             Срок
-            <input
-              type="date"
+            <DateField
               ref={dueRef}
               value={form.dueDate}
-              onChange={(e) => set("dueDate", e.target.value)}
+              onChange={(v) => set("dueDate", v)}
               aria-invalid={invalid("dueDate")}
             />
             {err("dueDate")}

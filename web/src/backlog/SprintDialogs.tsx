@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import type { SprintView } from "../api/client";
 import { formatDuration } from "../lib/duration";
 import { BACKLOG, sprintDatesError, totals } from "./logic";
+import { DateField } from "../ui/DateField";
 
 function Modal({ id, title, onCancel, onSubmit, children }: {
   id: string;
@@ -86,11 +87,11 @@ export function CreateSprintDialog(p: FormProps & { onSubmit: (f: SprintFields) 
       <div className="date-range">
         <label>
           Начало
-          <input type="date" value={f.start} onChange={set("start")} />
+          <DateField value={f.start} onChange={(v) => set("start")({ target: { value: v } })} />
         </label>
         <label>
           Окончание
-          <input type="date" value={f.end} onChange={set("end")} />
+          <DateField value={f.end} onChange={(v) => set("end")({ target: { value: v } })} />
         </label>
       </div>
       <span className="hint">Даты можно задать и при запуске</span>
@@ -145,11 +146,11 @@ export function StartSprintDialog(
       <div className="date-range">
         <label>
           Начало
-          <input type="date" required value={f.start} onChange={set("start")} />
+          <DateField required value={f.start} onChange={(v) => set("start")({ target: { value: v } })} />
         </label>
         <label>
           Окончание
-          <input type="date" required value={f.end} onChange={set("end")} />
+          <DateField required value={f.end} onChange={(v) => set("end")({ target: { value: v } })} />
         </label>
       </div>
       <span className="hint">Не длиннее 42 дней</span>

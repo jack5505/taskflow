@@ -1,20 +1,79 @@
-/* Минимальное оформление без UI-библиотек. Ширина от 1024 px, мобильной вёрстки нет (ТЗ §7). */
+/* Оформление без UI-библиотек. Ширина от 1024 px, мобильной вёрстки нет (ТЗ §7).
+   Все цвета, размеры шрифта, отступы, радиусы и тени — переменные ниже; литералы в правилах запрещает
+   stylelint (кроме этого блока). */
+/* stylelint-disable color-no-hex, function-disallowed-list */
 :root {
+  /* Цвета */
   --text: #1f2328;
   --muted: #656d76;
   --bg: #f6f8fa;
   --surface: #fff;
+  --surface-hover: #f3f4f6;
   --border: #d0d7de;
   --accent: #0969da;
   --accent-hover: #0550ae;
+  --accent-soft: #ddf4ff;
+  --on-accent: #fff;
   --danger: #cf222e;
-  --notice-bg: #ddf4ff;
+  --danger-soft: #ffebe9;
+  --warning-soft: #fff8c5;
   --column-bg: #eaeef2;
+  --type-task: #2f6fdb;
+  --type-bug: var(--danger);
+  --type-feature: #1a7f37;
+  --priority-low: var(--muted);
+  --priority-medium: #9a6700;
+  --priority-high: #bc4c00;
+  --priority-critical: var(--danger);
+  --avatar: #8250df;
+  --backdrop: rgb(0 0 0 / 0.35);
+  /* устаревшее имя, пока на него ссылаются компоненты */
+  --notice-bg: var(--accent-soft);
 
-  font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
+  /* Шрифт: размеры строго из шкалы */
+  --font: system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-2xs: 11px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-base: 15px;
+  --fs-lg: 16px;
+  --fs-xl: 18px;
+  --fs-2xl: 20px;
+  --fs-3xl: 24px;
+
+  /* Отступы: шаг 4 px */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Поля ввода и кнопки одной высоты */
+  --control-py: 6px;
+  --control-px: 12px;
+  --control-py-sm: 3px;
+  --control-px-sm: 8px;
+
+  /* Радиусы и тени */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+  --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.1);
+  --shadow-drag: 0 8px 20px rgb(0 0 0 / 0.15);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+
+  font: var(--fs-base) / 1.5 var(--font);
   color: var(--text);
   background: var(--bg);
 }
+/* stylelint-enable color-no-hex, function-disallowed-list */
 
 * {
   box-sizing: border-box;
@@ -32,7 +91,7 @@ h2 {
 }
 
 h2 {
-  font-size: 20px;
+  font-size: var(--fs-2xl);
 }
 
 p {
@@ -48,34 +107,80 @@ a:hover {
   text-decoration: underline;
 }
 
+/* Поля ввода, списки и кнопки — одной высоты и одного вида везде; локальные правила меняют только
+   ширину. Фокус с клавиатуры виден у всего интерактивного. */
 input,
-textarea {
+textarea,
+select {
   font: inherit;
-  padding: 7px 10px;
+  padding: var(--control-py) var(--control-px);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
+  border-radius: var(--radius);
+  background-color: var(--surface);
   color: inherit;
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+  padding: 0;
+}
+
+select {
+  padding-right: var(--space-8);
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    right 15px center,
+    right 10px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
 input:focus,
-textarea:focus {
-  outline: 2px solid var(--accent);
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+
+input[aria-invalid="true"],
+textarea[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  background-color: var(--bg);
+  color: var(--muted);
+  cursor: default;
+}
+
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible,
+.button-like:focus-within {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 button {
   font: inherit;
-  padding: 6px 14px;
+  padding: var(--control-py) var(--control-px);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: inherit;
   cursor: pointer;
 }
 
 button:hover:not(:disabled) {
-  background: var(--bg);
+  background: var(--surface-hover);
 }
 
 button:disabled {
@@ -86,7 +191,7 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 button.primary:hover:not(:disabled) {
@@ -102,13 +207,13 @@ button.primary:hover:not(:disabled) {
 }
 
 .notice {
-  padding: 8px 12px;
-  border-radius: 6px;
-  background: var(--notice-bg);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
 }
 
 .loading {
-  padding: 48px;
+  padding: var(--space-12);
   text-align: center;
   color: var(--muted);
 }
@@ -122,27 +227,27 @@ button.primary:hover:not(:disabled) {
 
 .auth-card {
   width: 380px;
-  padding: 32px;
+  padding: var(--space-8);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
 .auth-card .brand {
-  margin-bottom: 20px;
-  font-size: 24px;
+  margin-bottom: var(--space-5);
+  font-size: var(--fs-3xl);
 }
 
 .form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .form label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   font-weight: 500;
 }
 
@@ -152,13 +257,13 @@ button.primary:hover:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   height: 52px;
-  padding: 0 24px;
+  padding: 0 var(--space-6);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 
 .topbar .brand {
-  font-size: 18px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   color: var(--text);
 }
@@ -166,33 +271,33 @@ button.primary:hover:not(:disabled) {
 .topbar-user {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 /* Таймер и колокольчик в шапке (ТЗ §6.4, §7.7) */
 .topbar-tools {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin: 0 20px 0 auto;
+  gap: var(--space-4);
+  margin: 0 var(--space-5) 0 auto;
 }
 
 .header-timer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
+  gap: var(--space-2);
+  font-size: var(--fs-md);
 }
 
 .header-timer.running {
-  padding: 2px 4px 2px 10px;
+  padding: 2px var(--space-1) 2px var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--notice-bg);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
 }
 
 .header-timer button {
-  padding: 2px 10px;
+  padding: 2px var(--space-3);
 }
 
 .timer-dot {
@@ -211,16 +316,16 @@ button.primary:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .timer-flash {
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .task-card .card-timer button {
-  padding: 3px 10px;
-  font-size: 13px;
+  padding: 3px var(--space-3);
+  font-size: var(--fs-sm);
 }
 
 .timer-indicator {
@@ -233,7 +338,7 @@ button.primary:hover:not(:disabled) {
 
 .bell-button {
   position: relative;
-  padding: 4px 10px;
+  padding: var(--space-1) var(--space-3);
 }
 
 .bell-count {
@@ -241,11 +346,11 @@ button.primary:hover:not(:disabled) {
   top: -6px;
   right: -8px;
   min-width: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
   background: var(--danger);
-  color: #fff;
-  font-size: 11px;
+  color: var(--on-accent);
+  font-size: var(--fs-2xs);
   line-height: 18px;
   text-align: center;
 }
@@ -259,22 +364,22 @@ button.primary:hover:not(:disabled) {
   max-height: 480px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.1);
+  box-shadow: var(--shadow-popover);
 }
 
 .bell-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
 }
 
 .bell-empty {
   margin: 0;
-  padding: 12px;
+  padding: var(--space-3);
 }
 
 .bell-list {
@@ -285,14 +390,14 @@ button.primary:hover:not(:disabled) {
 
 .bell-item {
   display: flex;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .bell-item.unread {
-  background: var(--notice-bg);
+  background: var(--accent-soft);
 }
 
 .bell-text {
@@ -303,38 +408,38 @@ button.primary:hover:not(:disabled) {
 
 .bell-detail,
 .bell-time {
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .bell-read {
   align-self: flex-start;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
 .bell-more {
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   text-align: center;
 }
 
 .content {
-  padding: 24px;
+  padding: var(--space-6);
 }
 
 .content h2 {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
 /* Список проектов и «Мои задачи» (ТЗ §7.2) */
 .block {
-  margin-bottom: 32px;
+  margin-bottom: var(--space-8);
 }
 
 .block-head {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 12px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
 .content .block-head h2 {
@@ -347,7 +452,7 @@ button.primary:hover:not(:disabled) {
 
 .tabs {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .tab.active {
@@ -365,7 +470,7 @@ button.primary:hover:not(:disabled) {
 
 .table th,
 .table td {
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
@@ -388,16 +493,16 @@ button.primary:hover:not(:disabled) {
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px;
+  gap: var(--space-2);
+  padding: var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
@@ -412,43 +517,43 @@ button.primary:hover:not(:disabled) {
 
 .card h3 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 
 .card-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .card-key {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--muted);
 }
 
 .badge {
-  padding: 0 8px;
-  border-radius: 10px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
   background: var(--bg);
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .card-stats {
   display: flex;
-  gap: 24px;
+  gap: var(--space-6);
   margin: 0;
 }
 
 .card-stats dt {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
 .card-stats dd {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-xl);
   font-weight: 600;
 }
 
@@ -458,15 +563,15 @@ button.primary:hover:not(:disabled) {
 
 .panel {
   max-width: 520px;
-  margin-bottom: 16px;
-  padding: 20px;
+  margin-bottom: var(--space-4);
+  padding: var(--space-5);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
 .form .hint {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 400;
   color: var(--muted);
 }
@@ -477,7 +582,7 @@ button.primary:hover:not(:disabled) {
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 /* Доска (ТЗ §7.3) */
@@ -489,20 +594,20 @@ button.primary:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 64px 0;
+  gap: var(--space-2);
+  padding: var(--space-16) 0;
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  font-size: 17px;
+  font-size: var(--fs-lg);
 }
 
 .board-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .board-filters .search {
@@ -518,9 +623,9 @@ button.primary:hover:not(:disabled) {
 }
 
 .chip {
-  padding: 4px 10px;
+  padding: var(--space-1) var(--space-3);
   border-radius: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .chip + .chip {
@@ -528,17 +633,17 @@ button.primary:hover:not(:disabled) {
 }
 
 .chip:first-child {
-  border-radius: 6px 0 0 6px;
+  border-radius: var(--radius) 0 0 var(--radius);
 }
 
 .chip:last-child {
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .chip.active {
   position: relative;
   border-color: var(--accent);
-  background: var(--notice-bg);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
@@ -547,9 +652,9 @@ button.primary:hover:not(:disabled) {
 }
 
 .dropdown summary {
-  padding: 6px 12px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
   cursor: pointer;
   list-style: none;
@@ -568,23 +673,23 @@ button.primary:hover:not(:disabled) {
   min-width: 240px;
   max-height: 320px;
   overflow: auto;
-  padding: 8px 0;
+  padding: var(--space-2) 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.1);
+  box-shadow: var(--shadow-popover);
 }
 
 .dropdown-menu label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
   cursor: pointer;
 }
 
 .dropdown-menu hr {
-  margin: 4px 0;
+  margin: var(--space-1) 0;
   border: 0;
   border-top: 1px solid var(--border);
 }
@@ -599,22 +704,22 @@ button.primary:hover:not(:disabled) {
 .board {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--space-3);
   align-items: start;
-  margin-top: 8px;
+  margin-top: var(--space-2);
 }
 
 .board-column {
   min-height: 200px;
-  padding: 8px;
+  padding: var(--space-2);
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--column-bg);
 }
 
 .board-column h3 {
-  margin: 4px 4px 8px;
-  font-size: 14px;
+  margin: var(--space-1) var(--space-1) var(--space-2);
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
@@ -624,42 +729,42 @@ button.primary:hover:not(:disabled) {
 }
 
 .board-column.drop-allowed.over {
-  background: var(--notice-bg);
+  background: var(--accent-soft);
 }
 
 .board-column.drop-forbidden {
   border-color: var(--danger);
-  background: #ffebe9;
+  background: var(--danger-soft);
   opacity: 0.7;
   cursor: not-allowed;
 }
 
 .drop-hint {
-  margin: 0 4px 8px;
-  font-size: 13px;
+  margin: 0 var(--space-1) var(--space-2);
+  font-size: var(--fs-sm);
   color: var(--danger);
 }
 
 .board-cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .task-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
+  gap: var(--space-2);
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
 }
 
 .task-drag {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .task-drag.draggable {
@@ -673,15 +778,15 @@ button.primary:hover:not(:disabled) {
 
 .task-card.overlay {
   cursor: grabbing;
-  box-shadow: 0 8px 20px rgb(0 0 0 / 0.15);
+  box-shadow: var(--shadow-drag);
 }
 
 .task-head,
 .task-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
 }
 
 .task-head .priority-icon,
@@ -699,22 +804,22 @@ button.primary:hover:not(:disabled) {
   justify-content: center;
   width: 18px;
   height: 18px;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 11px;
+  border-radius: var(--radius-sm);
+  color: var(--on-accent);
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
 .type-task {
-  background: #4c8bf5;
+  background: var(--type-task);
 }
 
 .type-bug {
-  background: var(--danger);
+  background: var(--type-bug);
 }
 
 .type-feature {
-  background: #1a7f37;
+  background: var(--type-feature);
 }
 
 .priority-icon {
@@ -722,19 +827,19 @@ button.primary:hover:not(:disabled) {
 }
 
 .priority-low {
-  color: var(--muted);
+  color: var(--priority-low);
 }
 
 .priority-medium {
-  color: #9a6700;
+  color: var(--priority-medium);
 }
 
 .priority-high {
-  color: #bc4c00;
+  color: var(--priority-high);
 }
 
 .priority-critical {
-  color: var(--danger);
+  color: var(--priority-critical);
 }
 
 .avatar {
@@ -745,9 +850,9 @@ button.primary:hover:not(:disabled) {
   height: 24px;
   flex: none;
   border-radius: 50%;
-  background: #8250df;
-  color: #fff;
-  font-size: 11px;
+  background: var(--avatar);
+  color: var(--on-accent);
+  font-size: var(--fs-2xs);
   font-weight: 600;
 }
 
@@ -758,8 +863,8 @@ button.primary:hover:not(:disabled) {
 
 .task-card .take {
   align-self: flex-start;
-  padding: 3px 10px;
-  font-size: 13px;
+  padding: 3px var(--space-3);
+  font-size: var(--fs-sm);
 }
 
 .modal-backdrop {
@@ -769,7 +874,7 @@ button.primary:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgb(0 0 0 / 0.35);
+  background: var(--backdrop);
 }
 
 .modal {
@@ -777,46 +882,39 @@ button.primary:hover:not(:disabled) {
   margin: 0;
 }
 
-.modal select {
-  font: inherit;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
 /* Карточка задачи (ТЗ §7.5) */
 .task-page nav[aria-label="Путь"] {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
 .task-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 8px 0 16px;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-4);
 }
 
 .task-heading {
   flex: 1;
   min-width: 0;
-  font-size: 22px;
+  font-size: var(--fs-2xl);
 }
 
 .task-heading input {
   width: 100%;
-  font-size: 20px;
+  font-size: var(--fs-2xl);
 }
 
 .task-buttons {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .task-buttons .dropdown-menu {
   left: auto;
   right: 0;
-  padding: 4px 0;
+  padding: var(--space-1) 0;
 }
 
 .menu-item {
@@ -828,8 +926,8 @@ button.primary:hover:not(:disabled) {
 }
 
 .status-badge {
-  padding: 4px 10px;
-  font-size: 14px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--fs-md);
 }
 
 button.danger {
@@ -848,8 +946,8 @@ button.link.danger {
 }
 
 .inline-edit {
-  padding: 2px 6px;
-  margin-left: -6px;
+  padding: 2px var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
   border-color: transparent;
   background: none;
   font: inherit;
@@ -867,20 +965,20 @@ button.link.danger {
 }
 
 .field-error {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 400;
 }
 
 .task-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 24px;
+  gap: var(--space-6);
   align-items: start;
 }
 
 .task-main h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-lg);
 }
 
 .task-side {
@@ -890,32 +988,29 @@ button.link.danger {
 .task-fields {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
-  gap: 8px 12px;
+  gap: var(--space-2) var(--space-3);
   margin: 0;
   align-items: center;
 }
 
 .task-fields dt {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .task-fields dd {
   margin: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
   align-items: center;
 }
 
 .task-fields select,
-.task-fields input {
-  font: inherit;
+.task-fields input:not([type="checkbox"], [type="date"]) {
   width: 100%;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
+  padding-top: var(--control-py-sm);
+  padding-bottom: var(--control-py-sm);
 }
 
 .task-fields .progress-row {
@@ -925,7 +1020,7 @@ button.link.danger {
 .progress {
   width: 100%;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   border: 1px solid var(--border);
   overflow: hidden;
@@ -942,7 +1037,7 @@ button.link.danger {
 }
 
 .task-main .tabs {
-  margin: 8px 0 12px;
+  margin: var(--space-2) 0 var(--space-3);
 }
 
 .markdown {
@@ -955,15 +1050,15 @@ button.link.danger {
 
 .markdown pre {
   overflow: auto;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
   background: var(--bg);
 }
 
 .md-editor {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .md-editor .tabs {
@@ -977,37 +1072,37 @@ button.link.danger {
 
 .md-preview {
   min-height: 80px;
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
 }
 
 .comment-list {
   list-style: none;
   padding: 0;
-  margin: 0 0 16px;
+  margin: 0 0 var(--space-4);
 }
 
 .comment {
-  padding: 10px 0;
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
 }
 
 .comment-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .comment-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   margin-left: auto;
 }
 
 .history .badge {
-  margin-left: 6px;
+  margin-left: var(--space-2);
 }
 
 .modal.conflict {
@@ -1017,35 +1112,82 @@ button.link.danger {
 }
 
 .conflict .table {
-  margin: 12px 0;
+  margin: var(--space-3) 0;
 }
 
 .conflict tr.clash {
-  background: #fff8c5;
+  background: var(--warning-soft);
 }
 
 .conflict .hint {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
 .attachment-upload {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .button-like {
-  padding: 6px 14px;
+  padding: var(--control-py) var(--control-px);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
   cursor: pointer;
 }
 
-.button-like:focus-within {
-  outline: 2px solid var(--accent);
+/* Поле даты dd.mm.yyyy с кнопкой календаря (ui/DateField.tsx) */
+.date-field {
+  position: relative;
+  display: inline-flex;
+  width: 11em;
+}
+
+.form .date-field,
+.create-task .date-field,
+.task-fields .date-field {
+  width: 100%;
+}
+
+.date-field input[type="text"] {
+  width: 100%;
+  padding-right: var(--space-8);
+  font-variant-numeric: tabular-nums;
+}
+
+.date-field-pick {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: none;
+  color: var(--muted);
+}
+
+.date-field-pick:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* Нативный выбор даты: невидим, но в разметке — showPicker() открывает календарь у кнопки. */
+.date-field-native {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .visually-hidden {
@@ -1064,8 +1206,8 @@ button.link.danger {
 
 .attachment {
   display: flex;
-  gap: 12px;
-  padding: 8px 0;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1077,10 +1219,10 @@ button.link.danger {
   width: 96px;
   height: 72px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg);
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .attachment-thumb img {
@@ -1106,11 +1248,11 @@ button.link.danger {
 
 /* Настройки проекта (ТЗ §7.9) */
 .settings-tabs {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .settings-page .notice {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
 .settings-page .panel {
@@ -1118,24 +1260,24 @@ button.link.danger {
 }
 
 .settings-page h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-lg);
 }
 
 .settings-page .table {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .row-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   justify-content: flex-end;
 }
 
 .toggles {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
   border: 0;
@@ -1144,16 +1286,16 @@ button.link.danger {
 .form .toggle {
   flex-direction: row;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   font-weight: 400;
 }
 
 .settings-text ol {
-  padding-left: 20px;
+  padding-left: var(--space-5);
 }
 
 .settings-text h4 {
-  margin: 16px 0 4px;
+  margin: var(--space-4) 0 var(--space-1);
 }
 
 /* Бэклог и спринты (ТЗ §7.4) */
@@ -1162,48 +1304,48 @@ button.link.danger {
 }
 
 .backlog-section {
-  margin-bottom: 16px;
-  padding: 12px;
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--column-bg);
 }
 
 .backlog-section.over {
   border-color: var(--accent);
   border-style: dashed;
-  background: var(--notice-bg);
+  background: var(--accent-soft);
 }
 
 .section-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  margin-bottom: 8px;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .section-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-base);
   font-weight: 600;
 }
 
 .section-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   margin-left: auto;
 }
 
 .section-goal {
   flex-basis: 100%;
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .section-empty {
-  margin: 4px;
-  font-size: 14px;
+  margin: var(--space-1);
+  font-size: var(--fs-md);
 }
 
 .badge.overdue {
@@ -1213,7 +1355,7 @@ button.link.danger {
 .backlog-rows {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1223,12 +1365,12 @@ button.link.danger {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr) 120px 180px 70px;
   align-items: center;
-  gap: 12px;
-  padding: 6px 10px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .backlog-row.draggable {
@@ -1246,7 +1388,7 @@ button.link.danger {
 
 .backlog-row.overlay {
   cursor: grabbing;
-  box-shadow: 0 8px 20px rgb(0 0 0 / 0.15);
+  box-shadow: var(--shadow-drag);
 }
 
 .row-title {
@@ -1257,7 +1399,7 @@ button.link.danger {
 
 .date-range {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .date-range label {
@@ -1265,11 +1407,11 @@ button.link.danger {
 }
 
 .archive-table {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .archive-table tr.selected td {
-  background: var(--notice-bg);
+  background: var(--accent-soft);
 }
 
 .archive-sprint {
@@ -1277,11 +1419,11 @@ button.link.danger {
 }
 
 .archive-sprint h3 {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
 }
 
 .archive-sprint .card-stats {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
 /* Создание задачи (ТЗ §7.6) */
@@ -1294,63 +1436,57 @@ button.link.danger {
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .create-task .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .create-notice {
-  padding: 4px 10px;
-  font-size: 14px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--fs-md);
 }
 
 /* Отчёты по времени (ТЗ §6.6) */
 .topbar-link {
-  margin-left: 24px;
+  margin-left: var(--space-6);
 }
 
 .report-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .report-filters label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 14px;
+  gap: var(--space-1);
+  font-size: var(--fs-md);
 }
 
 .report-filters select {
-  font: inherit;
   min-width: 180px;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: inherit;
 }
 
 .report-hint {
-  font-size: 14px;
-  margin-bottom: 8px;
+  font-size: var(--fs-md);
+  margin-bottom: var(--space-2);
 }
 
 .report-tabs {
   align-items: center;
-  margin: 16px 0 12px;
+  margin: var(--space-4) 0 var(--space-3);
 }
 
 .report-period {
   margin-left: auto;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .report-body.loading-dim {
@@ -1381,7 +1517,7 @@ button.link.danger {
 
 .report-hours {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 
@@ -1390,7 +1526,7 @@ button.link.danger {
 }
 
 .report-deleted {
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 
 /* Профиль (ТЗ §7.8) */
@@ -1399,38 +1535,38 @@ button.link.danger {
 }
 
 .profile-page h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-lg);
 }
 
 .profile-page .panel > p + p,
 .profile-page .panel > p + .actions,
 .profile-page .link-code {
-  margin-top: 8px;
+  margin-top: var(--space-2);
 }
 
 .profile-page .hint {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
 .link-code-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 8px 0 4px;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-1);
 }
 
 .link-code-value {
-  font: 600 20px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 600 var(--fs-2xl) / 1.2 var(--font-mono);
   letter-spacing: 2px;
 }
 
 .link-code-open {
-  padding: 6px 14px;
-  border-radius: 6px;
+  padding: var(--control-py) var(--control-px);
+  border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   text-decoration: none;
 }
 

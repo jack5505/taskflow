@@ -6,6 +6,7 @@ import { useTimeZone } from "../auth/hooks";
 import { formatDateTime } from "../lib/format";
 import { useUsers, userName } from "./hooks";
 import { AUDIT_ACTIONS, auditActionLabel, auditChanges, auditEntity, auditQuery, auditSourceLabel } from "./logic";
+import { DateField } from "../ui/DateField";
 
 const emptyFilter = { from: "", to: "", userId: "", action: "" };
 
@@ -33,10 +34,10 @@ export function AuditTab({ projectKey }: { projectKey: string }) {
     <>
       <div className="board-filters">
         <label>
-          С <input type="date" value={filter.from} onChange={(e) => set("from")(e.target.value)} />
+          С <DateField value={filter.from} onChange={set("from")} />
         </label>
         <label>
-          по <input type="date" value={filter.to} onChange={(e) => set("to")(e.target.value)} />
+          по <DateField value={filter.to} onChange={set("to")} />
         </label>
         <select aria-label="Пользователь" value={filter.userId} onChange={(e) => set("userId")(e.target.value)}>
           <option value="">Все пользователи</option>

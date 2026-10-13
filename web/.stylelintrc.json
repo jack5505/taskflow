@@ -7,6 +7,41 @@
         "message": "Вложенные правила запрещены: скорее всего, пропущена закрывающая скобка"
       }
     ],
-    "no-descending-specificity": null
+    "no-descending-specificity": null,
+    "color-no-hex": [
+      true,
+      {
+        "message": "Цвет — переменной из :root в index.css"
+      }
+    ],
+    "color-named": [
+      "never",
+      {
+        "message": "Цвет — переменной из :root в index.css"
+      }
+    ],
+    "function-disallowed-list": [
+      [
+        "rgb",
+        "rgba",
+        "hsl",
+        "hsla"
+      ],
+      {
+        "message": "Цвет — переменной из :root в index.css"
+      }
+    ],
+    "declaration-property-value-allowed-list": [
+      {
+        "font-size": [
+          "/^var\\(--fs-/",
+          "inherit",
+          "/em$/"
+        ]
+      },
+      {
+        "message": "Размер шрифта — из шкалы --fs-* в :root"
+      }
+    ]
   }
 }
