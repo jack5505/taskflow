@@ -33,7 +33,7 @@ export function ConflictDialog({ conflict, ctx, pending, error, onRetry, onDisca
   const nothingLeft = isEmptyPatch(retry);
   const v = (field: string, value: unknown) => formatFieldValue(field, value, ctx);
   return (
-    <Modal labelledBy="conflict-title" className="conflict" onCancel={() => !pending && onDiscard()}>
+    <Modal labelledBy="conflict-title" className="conflict" closeOnBackdrop={false} onCancel={() => !pending && onDiscard()}>
       <div>
         <h2 id="conflict-title">Задачу уже изменил другой пользователь</h2>
         <p className="muted">
@@ -66,11 +66,11 @@ export function ConflictDialog({ conflict, ctx, pending, error, onRetry, onDisca
         {error && <p role="alert">{error}</p>}
         <div className="actions">
           {!nothingLeft && (
-            <button type="button" className="primary" disabled={pending} onClick={() => onRetry(retry)} autoFocus>
+            <button type="button" className="primary" disabled={pending} onClick={() => onRetry(retry)} data-autofocus>
               {pending ? "Сохраняем…" : "Сохранить мои изменения поверх"}
             </button>
           )}
-          <button type="button" disabled={pending} onClick={onDiscard} autoFocus={nothingLeft}>
+          <button type="button" disabled={pending} onClick={onDiscard} data-autofocus={nothingLeft || undefined}>
             {nothingLeft ? "Закрыть" : "Оставить актуальную версию"}
           </button>
         </div>

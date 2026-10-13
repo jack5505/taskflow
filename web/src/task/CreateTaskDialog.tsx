@@ -149,7 +149,7 @@ export function CreateTaskDialog({ projectKey, onCreated, onCancel }: Props) {
         <label>
           Название
           <input
-            autoFocus
+            data-autofocus
             value={form.title}
             onChange={(e) => set("title", e.target.value)}
             aria-invalid={invalid("title")}

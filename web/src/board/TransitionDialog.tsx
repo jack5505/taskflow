@@ -51,7 +51,7 @@ export function TransitionDialog(p: Props) {
           <label>
             {p.comment === "rework" ? "Причина возврата" : "Причина отмены"}
             <textarea
-              autoFocus
+              data-autofocus
               rows={4}
               maxLength={5000}
               value={comment}
@@ -67,7 +67,7 @@ export function TransitionDialog(p: Props) {
           <label>
             Новый исполнитель
             <select
-              autoFocus={!p.comment}
+              data-autofocus={!p.comment || undefined}
               value={assignee}
               onChange={(e) => {
                 setAssignee(e.target.value);

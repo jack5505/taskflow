@@ -127,7 +127,7 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
         <label>
           Длительность
           <input
-            autoFocus
+            data-autofocus
             data-testid="worklog-duration"
             placeholder="2h 30m"
             maxLength={100}

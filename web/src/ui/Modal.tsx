@@ -7,7 +7,12 @@ const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
 const FOCUSABLE =
-  'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]';
+
+/** Элементы окна в порядке Tab: видимые и не выключенные из него (tabindex=-1, как у неактивных вкладок). */
+function tabbable(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0 && el.offsetParent !== null);
+}
 
 /** Верхнее открытое модальное окно или null. */
 export function useTopModal(): HTMLDialogElement | null {
@@ -25,7 +30,18 @@ export function useTopModal(): HTMLDialogElement | null {
  * недоступна, после закрытия фокус возвращается туда, где был. Escape и щелчок по фону вызывают
  * onCancel — закрывать или нет, решает владелец (например, спросить про несохранённое).
  */
-export function Modal(p: { labelledBy: string; onCancel: () => void; className?: string; children: ReactNode }) {
+/**
+ * Первое поле окна — атрибутом data-autofocus, а не autoFocus: React ставит фокус до showModal(),
+ * пока окно ещё закрыто, и фокус теряется. closeOnBackdrop={false} — окно, которое нельзя закрыть
+ * случайным щелчком мимо (конфликт версий: закрытие выбрасывает правки).
+ */
+export function Modal(p: {
+  labelledBy: string;
+  onCancel: () => void;
+  className?: string;
+  closeOnBackdrop?: boolean;
+  children: ReactNode;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   const cancel = useRef(p.onCancel);
   useEffect(() => {
@@ -37,15 +53,25 @@ export function Modal(p: { labelledBy: string; onCancel: () => void; className?:
     if (!d) return;
     const back = document.activeElement as HTMLElement | null;
     if (!d.open) d.showModal();
+    d.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     stack = [...stack, d];
     emit();
     const onCancel = (e: Event) => {
       e.preventDefault(); // Escape: окно закрывает владелец, а не браузер
       cancel.current();
     };
+    // Chrome при частых Escape шлёт неотменяемый cancel и закрывает окно сам, а владелец окно ещё
+    // держит (например, идёт запрос). Пока окно смонтировано, оно открыто: открываем снова.
+    const onClose = () => {
+      if (!d.isConnected) return;
+      d.showModal();
+      cancel.current();
+    };
     d.addEventListener("cancel", onCancel);
+    d.addEventListener("close", onClose);
     return () => {
       d.removeEventListener("cancel", onCancel);
+      d.removeEventListener("close", onClose);
       stack = stack.filter((x) => x !== d);
       emit();
       if (d.open) d.close();
@@ -61,13 +87,11 @@ export function Modal(p: { labelledBy: string; onCancel: () => void; className?:
       aria-labelledby={p.labelledBy}
       // Сам <dialog> без отступов, всё содержимое — в .modal-body: щелчок по самому <dialog> —
       // это щелчок по фону, а не по полям или полосе прокрутки окна.
-      onMouseDown={(e) => e.target === e.currentTarget && cancel.current()}
+      onMouseDown={(e) => p.closeOnBackdrop !== false && e.target === e.currentTarget && cancel.current()}
       onKeyDown={(e) => {
         // Tab по кругу внутри окна: нативный <dialog> отпускает фокус в интерфейс браузера.
         if (e.key !== "Tab") return;
-        const items = [...e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-          (el) => el.offsetParent !== null,
-        );
+        const items = tabbable(e.currentTarget);
         if (items.length === 0) return;
         const first = items[0];
         const last = items[items.length - 1];

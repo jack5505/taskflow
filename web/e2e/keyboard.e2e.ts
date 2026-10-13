@@ -15,6 +15,8 @@ test("клавиатура: окно держит фокус, вкладки с�
   await create.click();
   const dialog = page.getByRole("dialog", { name: "Новая задача" });
   await expect(dialog).toBeVisible();
+  // Фокус сразу в названии, а не на первом поле окна (выбор проекта).
+  await expect(dialog.getByLabel("Название")).toBeFocused();
   for (let i = 0; i < 25; i++) {
     await page.keyboard.press("Tab");
     expect(await dialog.evaluate((d) => d.contains(d.ownerDocument.activeElement))).toBe(true);
@@ -46,6 +48,8 @@ test("клавиатура: окно держит фокус, вкладки с�
   const status = page.getByLabel(/^Статус: .*Сменить$/);
   await status.focus();
   await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".menu-item").last()).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".menu-item").first()).toBeFocused();
   await page.keyboard.press("Escape");

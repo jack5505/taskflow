@@ -60,8 +60,8 @@ interface DialogState extends TransitionPrompt {
 const dndAccessibility = {
   screenReaderInstructions: {
     draggable:
-      "Чтобы взять карточку, нажмите пробел или Enter. Стрелками переместите её в другую колонку, " +
-      "пробелом или Enter положите, Escape — отмена.",
+      "Enter открывает задачу. Чтобы взять карточку, нажмите пробел, стрелками переместите её в другую " +
+      "колонку, пробелом или Enter положите, Escape — отмена.",
   },
   announcements: {
     onDragStart: () => "Карточка взята.",
@@ -76,11 +76,14 @@ const dndAccessibility = {
 function Column({
   status,
   count,
+  loaded,
   state,
   children,
 }: {
   status: BoardStatus;
   count: number;
+  /** Задачи загружены: «Задач нет» — только тогда, а не во время загрузки или после ошибки. */
+  loaded: boolean;
   state: "allowed" | "forbidden" | "source" | null;
   children: React.ReactNode;
 }) {
@@ -96,7 +99,11 @@ function Column({
       </h3>
       {state === "forbidden" && <p className="drop-hint">Сюда нельзя</p>}
       <div className="board-cards">
-        {count === 0 ? <p className="column-empty">{state === "allowed" ? "Перетащите сюда" : "Задач нет"}</p> : children}
+        {count === 0 && loaded ? (
+          <p className="column-empty">{state === "allowed" ? "Перетащите сюда" : "Задач нет"}</p>
+        ) : (
+          children
+        )}
       </div>
     </section>
   );
@@ -303,7 +310,7 @@ export function BoardPage() {
               {BOARD_COLUMNS.map((status) => {
                 const list = byStatus.get(status) ?? [];
                 return (
-                  <Column key={status} status={status} count={list.length} state={columnState(status)}>
+                  <Column key={status} status={status} count={list.length} loaded={tasks.isSuccess} state={columnState(status)}>
                     {list.map((t) => {
                       const free = status === "todo" && !t.assignee_id && !archived && !!actor?.member;
                       const timerHere = !!timerKey && timerKey === t.key;

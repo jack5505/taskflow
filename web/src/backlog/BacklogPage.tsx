@@ -82,7 +82,7 @@ const collision: CollisionDetection = (args) => {
 const dndAccessibility = {
   screenReaderInstructions: {
     draggable:
-      "Чтобы взять задачу, нажмите пробел или Enter. Стрелками переместите её, пробелом или Enter " +
+      "Enter открывает задачу. Чтобы взять её, нажмите пробел, стрелками переместите, пробелом или Enter " +
       "положите, Escape — отмена.",
   },
   announcements: {

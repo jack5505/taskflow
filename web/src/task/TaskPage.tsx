@@ -36,7 +36,7 @@ import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
 import { isSystemAdmin, myTasksQueryKey, projectsQueryKey } from "../projects/logic";
-import { Tabs, tabPanel } from "../ui/Tabs";
+import { Tabs, nextTab, tabPanel } from "../ui/Tabs";
 
 type Tab = "comments" | "history" | "attachments" | "worklog";
 const tabs: { id: Tab; label: string }[] = [
@@ -384,11 +384,14 @@ export function TaskPage() {
     e.preventDefault();
     const items = [...menu.querySelectorAll<HTMLButtonElement>(".menu-item:not(:disabled)")];
     const i = items.indexOf(document.activeElement as HTMLButtonElement);
-    const next = e.key === "ArrowDown" ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
-    items[i < 0 ? 0 : next]?.focus();
+    // Ни один пункт не в фокусе (фокус на статусе): вниз — к первому, вверх — к последнему.
+    const from = i < 0 ? (e.key === "ArrowDown" ? -1 : 0) : i;
+    items[nextTab(from, items.length, e.key === "ArrowDown" ? "ArrowRight" : "ArrowLeft") ?? 0]?.focus();
   };
 
   const startTransition = (to: Status) => {
+    // Фокус — на статус до закрытия меню: окно перехода вернёт его туда, а не на скрытый пункт.
+    statusMenu.current?.querySelector("summary")?.focus();
     if (statusMenu.current) statusMenu.current.open = false;
     transition.reset();
     const assigneeActive = t.assignee_id ? memberList.find((m) => m.user_id === t.assignee_id)?.is_active : undefined;

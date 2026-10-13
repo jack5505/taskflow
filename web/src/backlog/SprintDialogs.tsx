@@ -75,7 +75,7 @@ export function CreateSprintDialog(p: FormProps & { onSubmit: (f: SprintFields) 
     <Modal id="sprint-create-title" title="Новый спринт" onCancel={p.onCancel} onSubmit={submit}>
       <label>
         Название
-        <input autoFocus maxLength={100} value={f.name} onChange={set("name")} />
+        <input data-autofocus maxLength={100} value={f.name} onChange={set("name")} />
         <span className="hint">Пусто — «Спринт N» по порядку</span>
       </label>
       <label>
@@ -140,7 +140,7 @@ export function StartSprintDialog(
       </p>
       <label>
         Цель
-        <textarea autoFocus rows={3} maxLength={1000} value={f.goal} onChange={set("goal")} />
+        <textarea data-autofocus rows={3} maxLength={1000} value={f.goal} onChange={set("goal")} />
       </label>
       <div className="date-range">
         <label>
@@ -188,7 +188,7 @@ export function CloseSprintDialog(p: {
         <label>
           Куда перенести незакрытые задачи
           <select
-            autoFocus
+            data-autofocus
             value={moveTo}
             onChange={(e) => {
               setMoveTo(e.target.value);

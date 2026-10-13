@@ -14,8 +14,11 @@ export const keyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Spac
  * подсказки dnd-kit для чтецов — на самой ссылке.
  */
 export function splitDraggable(attributes: DraggableAttributes, listeners: DraggableSyntheticListeners, roledescription: string) {
-  const { role: _role, tabIndex: _tabIndex, ...aria } = attributes;
-  return { wrapper: { ...listeners }, link: { ...aria, "aria-roledescription": roledescription } };
+  // Ссылке — только подсказка и описание: aria-pressed и aria-disabled для роли link недопустимы.
+  return {
+    wrapper: { ...listeners },
+    link: { "aria-describedby": attributes["aria-describedby"], "aria-roledescription": roledescription },
+  };
 }
 
 const query = "(prefers-reduced-motion: reduce)";
