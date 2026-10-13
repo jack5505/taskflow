@@ -104,7 +104,7 @@ export async function login(page: Page, email = ADMIN_EMAIL, password = ADMIN_PA
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Пароль").fill(password);
   await page.getByRole("button", { name: "Войти" }).click();
-  await expect(page.getByRole("button", { name: "Выйти" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Разделы", exact: true }).getByRole("link", { name: "Проекты" })).toBeVisible();
 }
 
 /**

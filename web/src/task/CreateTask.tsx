@@ -42,14 +42,21 @@ export function CreateTask() {
       )}
       <button
         type="button"
-        className="primary"
+        className="primary create-button"
         title="Горячая клавиша C на странице проекта"
+        aria-keyshortcuts="C"
         onClick={() => {
           setCreated(null);
           setOpen(current ?? "");
         }}
       >
+        <Icon name="plus" />
         Создать задачу
+        {current !== null && (
+          <kbd className="kbd" aria-hidden="true">
+            C
+          </kbd>
+        )}
       </button>
       {open !== null && (
         <Suspense fallback={null}>

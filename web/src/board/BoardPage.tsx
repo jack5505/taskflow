@@ -25,6 +25,7 @@ import { canStartTimer } from "../timer/timer";
 import { timerChanged } from "../timer/hooks";
 import { BoardCard, CardBody } from "./BoardCard";
 import { applyMove, boardQueryKey, groupByStatus, moveKey } from "./cards";
+import { daysLeftText, sprintDaysLeft, today } from "../backlog/logic";
 import { BoardFilters } from "./BoardFilters";
 import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter } from "./filters";
 import {
@@ -36,6 +37,7 @@ import {
   type TransitionPrompt,
 } from "./transitions";
 import { TransitionDialog } from "./TransitionDialog";
+import { ProjectHeader } from "../projects/ProjectHeader";
 
 
 interface Move {
@@ -234,32 +236,25 @@ export function BoardPage() {
   const loadError = project.error ?? projects.error ?? members.error ?? tasks.error;
   const loading = project.isPending || (project.isSuccess && projects.isPending);
   const dates = sprint ? [formatDate(sprint.start_date), formatDate(sprint.end_date)].filter(Boolean).join(" — ") : "";
+  // «Сегодня» и просрочка спринта — по поясу проекта (§5.3).
+  const left = sprint ? sprintDaysLeft(sprint.end_date, today(project.data?.timezone)) : null;
 
   return (
     <section className="board-page">
-      <div className="block-head">
-        <h2>
-          <span className="card-key">{key}</span> {project.data?.name}
-        </h2>
-        {archived && <span className="badge">Архив</span>}
-        <nav className="tabs" aria-label="Разделы проекта">
-          <span className="tab active">Доска</span>
-          <Link className="tab" to={`/projects/${key}/backlog`}>
-            Бэклог
-          </Link>
-          {actor?.manager && (
-            <Link className="tab" to={`/projects/${key}/settings`}>
-              Настройки
-            </Link>
-          )}
-        </nav>
+      <ProjectHeader projectKey={key}>
         {sprint && (
-          <span className="muted sprint-info">
-            {sprint.name}
-            {dates && `: ${dates}`}
+          <span className="sprint-info">
+            <strong>{sprint.name}</strong>
+            {dates && <span className="muted">{dates}</span>}
+            {left !== null &&
+              (left > 0 ? (
+                <span className="muted">{daysLeftText(left)}</span>
+              ) : (
+                <span className="badge overdue">{daysLeftText(left)}</span>
+              ))}
           </span>
         )}
-      </div>
+      </ProjectHeader>
 
       {loadError && <p role="alert">{errorText(loadError)}</p>}
       {loading && !loadError && <p className="muted">Загрузка…</p>}

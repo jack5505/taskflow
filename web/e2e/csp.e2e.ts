@@ -38,7 +38,7 @@ test("нарушений Content-Security-Policy нет", async ({ page, api }) 
 
   for (const path of [`/projects/${key}/backlog`, "/reports", "/profile"]) {
     await page.goto(path);
-    await expect(page.getByRole("button", { name: "Выйти", exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Разделы", exact: true })).toBeVisible();
     await collect();
   }
   await page.goto("/api/docs/index.html");
