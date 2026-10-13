@@ -35,13 +35,18 @@ func TestSecurityHeaders(t *testing.T) {
 		require.Contains(t, csp, "frame-ancestors 'none'", p)
 		require.Contains(t, csp, "object-src 'none'", p)
 		if p == "/api/docs/index.html" {
-			require.Contains(t, csp, "style-src 'self' 'unsafe-inline'", p)
+			require.Contains(t, csp, "style-src 'self' 'unsafe-hashes' 'sha256-", p)
+			require.NotContains(t, csp, "unsafe-inline", p)
 		} else {
 			require.Contains(t, csp, "style-src 'self';", p)
 		}
 	}
 
-	rec, _ := do(t, r, http.MethodGet, "/api/v1/strict", "")
+	// oauth2-redirect.html со своим inline-скриптом Swagger UI не отдаётся: OAuth2 в API нет.
+	rec, _ := do(t, r, http.MethodGet, "/api/docs/oauth2-redirect.html", "")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec, _ = do(t, r, http.MethodGet, "/api/v1/strict", "")
 	require.Equal(t, "default-src 'none'; sandbox", rec.Header().Get("Content-Security-Policy"))
 	require.Len(t, rec.Header().Values("Content-Security-Policy"), 1)
 }
