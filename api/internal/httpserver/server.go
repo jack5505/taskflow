@@ -70,7 +70,7 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) Router() *gin.Engine {
 	r := gin.New()
 	// accessLog снаружи recovery: строка лога пишется и для запроса, который упал с паникой.
-	r.Use(requestID(), accessLog(), recovery())
+	r.Use(requestID(), securityHeaders(), accessLog(), recovery())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(func(c *gin.Context) {
 		Abort(c, apierr.New(http.StatusMethodNotAllowed, apierr.CodeMethodNotAllowed, "Метод не поддерживается"))
@@ -106,7 +106,7 @@ func docsRedirect(c *gin.Context) {
 // docsFiles — то, что отдаёт gin-swagger; остальное под /api/docs отвечает 404 и 405 в формате §9.3,
 // а не plain-text ответами самого gin-swagger.
 var docsFiles = map[string]bool{
-	"index.html": true, "doc.json": true, "doc.yaml": true, "swagger-initializer.js": true,
+	"index.html": true, "index.css": true, "doc.json": true, "doc.yaml": true, "swagger-initializer.js": true,
 	"oauth2-redirect.html": true, "favicon-16x16.png": true, "favicon-32x32.png": true,
 	"swagger-ui.css": true, "swagger-ui.css.map": true, "swagger-ui-bundle.js": true, "swagger-ui-bundle.js.map": true,
 	"swagger-ui-standalone-preset.js": true, "swagger-ui-standalone-preset.js.map": true,
