@@ -53,6 +53,14 @@ func Run(ctx context.Context, cfg *config.Config, g *gorm.DB) error {
 	projects := project.NewService(g)
 	tasks := task.NewService(g, projects)
 	github.Register(d, github.NewProcessor(g, tasks)) // доставки вебхуков GitHub (§12.2)
+	if cfg.GitHubEnabled() {
+		// Публикация задач в Issues (§12.9); ключ App не прочитался — без неё, остальное работает.
+		if client, err := github.NewClient(cfg.GitHubAppID, cfg.GitHubPrivateKeyFile, cfg.GitHubAPIURL); err != nil {
+			slog.Error("github: app client", "err", err)
+		} else {
+			github.RegisterIssues(d, github.NewIssues(g, client, cfg.BaseURL))
+		}
+	}
 	stopTimers := func(ctx context.Context) (int64, error) { return tasks.StopStaleTimers(ctx) }
 	// Архивация и удаление проекта останавливают его таймеры (§3.2) на момент события.
 	for _, typ := range []string{events.ProjectArchived, events.ProjectDeleted} {

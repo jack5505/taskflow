@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -73,11 +74,12 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	page := r.URL.Query().Get("page")
 	path := strings.ToLower(r.URL.Path) // GitHub не различает регистр owner/name
 	switch {
-	case path == "/repos/acme/backend/installation" && f.appAuth(r):
+	case (path == "/repos/acme/backend/installation" || path == "/repos/acme/old-backend/installation") && f.appAuth(r):
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": f.installation.Load()})
 	case strings.HasPrefix(path, "/repos/") && f.appAuth(r):
 		http.NotFound(w, r)
-	case path == "/repos/acme/backend" && strings.HasPrefix(r.Header.Get("Authorization"), "token tok-"):
+	case (path == "/repos/acme/backend" || path == "/repos/acme/old-backend") && strings.HasPrefix(r.Header.Get("Authorization"), "token tok-"):
+		// acme/old-backend переименован в acme/backend: GitHub отвечает уже с новым именем.
 		_ = json.NewEncoder(w).Encode(map[string]any{"full_name": "acme/backend", "private": true, "html_url": "https://github.com/acme/backend"})
 	case r.URL.Path == "/app/installations" && f.appAuth(r):
 		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 7}, {"id": 8}, {"id": 9}})
@@ -114,7 +116,7 @@ func newBindEnv(t *testing.T) *bindEnv {
 	client, err := github.NewClient("42", keyFile, gh.URL)
 	require.NoError(t, err)
 	db := testutil.SharedDB(t)
-	require.NoError(t, db.Exec(`UPDATE projects SET github_repo = NULL, github_installation_id = NULL`).Error)
+	require.NoError(t, db.Exec(`UPDATE projects SET github_repo = NULL, github_installation_id = NULL, github_issues = false`).Error)
 	return &bindEnv{db: db, svc: github.NewService(db, client), gh: gh}
 }
 
@@ -160,44 +162,80 @@ func TestBindRepository(t *testing.T) {
 	p := e.project(t, map[*user.User]string{m: project.RoleManager})
 	other := e.project(t, map[*user.User]string{m: project.RoleManager})
 
-	got, err := e.svc.Bind(ctx, e.access(t, m, p), "acme/backend")
+	got, err := e.svc.Bind(ctx, e.access(t, m, p), "acme/backend", false)
 	require.NoError(t, err)
 	require.Equal(t, "acme/backend", *got.GitHubRepo)
 	require.EqualValues(t, 7, *got.GitHubInstallationID)
 
-	_, err = e.svc.Bind(ctx, e.access(t, m, other), "ACME/Backend")
+	_, err = e.svc.Bind(ctx, e.access(t, m, other), "ACME/Backend", false)
 	require.Equal(t, apierr.CodeValidation, code(err), "репозиторий другого проекта (регистр не важен)")
 
 	// Переустановка App: та же привязка с новой установкой записывается.
 	e.gh.installation.Store(70)
-	got, err = e.svc.Bind(ctx, e.access(t, m, p), "ACME/backend")
+	got, err = e.svc.Bind(ctx, e.access(t, m, p), "ACME/backend", false)
 	require.NoError(t, err)
 	require.Equal(t, "acme/backend", *got.GitHubRepo, "имя — как в GitHub")
 	require.EqualValues(t, 70, *got.GitHubInstallationID)
 
-	_, err = e.svc.Bind(ctx, e.access(t, m, other), "acme/missing")
+	_, err = e.svc.Bind(ctx, e.access(t, m, other), "acme/missing", false)
 	require.Equal(t, apierr.CodeValidation, code(err), "App не установлен")
 	for _, bad := range []string{"not a repo", "acme/..", "acme/."} {
-		_, err = e.svc.Bind(ctx, e.access(t, m, other), bad)
+		_, err = e.svc.Bind(ctx, e.access(t, m, other), bad, false)
 		require.Equal(t, apierr.CodeValidation, code(err), bad)
 	}
 
+	// §12.9: публикация в Issues включается вместе с привязкой и выключается отвязкой.
+	got, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/backend", true)
+	require.NoError(t, err)
+	require.True(t, got.GitHubIssues)
+	require.True(t, e.access(t, m, p).Project.GitHubIssues)
+
 	_, err = e.svc.Unbind(ctx, e.access(t, m, p))
 	require.NoError(t, err)
+	require.False(t, e.access(t, m, p).Project.GitHubIssues, "отвязка выключает публикацию")
 	var repo *string
 	require.NoError(t, e.db.Raw(`SELECT github_repo FROM projects WHERE id = ?`, p.ID).Scan(&repo).Error)
 	require.Nil(t, repo)
-	_, err = e.svc.Bind(ctx, e.access(t, m, other), "acme/backend")
+	_, err = e.svc.Bind(ctx, e.access(t, m, other), "acme/backend", false)
 	require.NoError(t, err, "после отвязки репозиторий свободен")
 
 	var actions []string
 	require.NoError(t, e.db.Raw(`SELECT action FROM audit_logs WHERE project_id = ? ORDER BY created_at`, p.ID).Scan(&actions).Error)
-	require.Equal(t, []string{github.AuditRepoBound, github.AuditRepoBound, github.AuditRepoUnbound}, actions)
+	require.Equal(t, []string{github.AuditRepoBound, github.AuditRepoBound, github.AuditIssues, github.AuditRepoUnbound, github.AuditIssues}, actions)
 
 	// Удалённый проект репозиторий не держит.
 	require.NoError(t, project.NewService(e.db).Delete(ctx, other.Key))
-	_, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/backend")
+	_, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/backend", false)
 	require.NoError(t, err, "после удаления проекта репозиторий свободен")
+}
+
+// §12.9: переключатель публикации меняется без обращения к GitHub (App уже снят); переименованный
+// в GitHub репозиторий переносит связи задач на новое имя.
+func TestBindIssuesToggleAndRename(t *testing.T) {
+	e := newBindEnv(t)
+	ctx := context.Background()
+	m := e.user(t, false)
+	p := e.project(t, map[*user.User]string{m: project.RoleManager})
+	require.NoError(t, e.db.Exec(`UPDATE projects SET github_repo = 'acme/gone', github_installation_id = 7, github_issues = true WHERE id = ?`, p.ID).Error)
+	got, err := e.svc.Bind(ctx, e.access(t, m, p), "ACME/gone", false)
+	require.NoError(t, err, "выключение без GitHub")
+	require.False(t, got.GitHubIssues)
+	_, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/gone", false)
+	require.Equal(t, apierr.CodeValidation, code(err), "без смены переключателя — проверка в GitHub")
+
+	tk := uuid.New()
+	require.NoError(t, e.db.Exec(`UPDATE projects SET github_repo = 'acme/old-backend' WHERE id = ?`, p.ID).Error)
+	reporter := e.user(t, false)
+	require.NoError(t, e.db.Exec(`INSERT INTO tasks (id, project_id, number, key, title, type, status, priority, reporter_id, position, version)
+		VALUES (?, ?, 1, ?, 'x', 'task', 'todo', 'medium', ?, 1, 1)`, tk, p.ID, p.Key+"-1", reporter.ID).Error)
+	require.NoError(t, e.db.Exec(`INSERT INTO github_links (id, task_id, kind, repo, number, name, url, state)
+		VALUES (?, ?, 'issue', 'acme/old-backend', 1, 'x', 'u', 'open')`, uuid.New(), tk).Error)
+	got, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/backend", true)
+	require.NoError(t, err)
+	require.Equal(t, "acme/backend", *got.GitHubRepo)
+	var repo string
+	require.NoError(t, e.db.Raw(`SELECT repo FROM github_links WHERE task_id = ?`, tk).Scan(&repo).Error)
+	require.Equal(t, "acme/backend", repo, "связи перешли на новое имя")
 }
 
 // §12.6: привязывает менеджер; участник — 403; архив — 409.
@@ -206,10 +244,10 @@ func TestBindRights(t *testing.T) {
 	ctx := context.Background()
 	m, member := e.user(t, false), e.user(t, false)
 	p := e.project(t, map[*user.User]string{m: project.RoleManager, member: project.RoleMember})
-	_, err := e.svc.Bind(ctx, e.access(t, member, p), "acme/backend")
+	_, err := e.svc.Bind(ctx, e.access(t, member, p), "acme/backend", false)
 	require.Equal(t, apierr.CodeForbidden, code(err))
 	require.NoError(t, e.db.Model(&project.Project{}).Where("id = ?", p.ID).Update("is_archived", true).Error)
-	_, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/backend")
+	_, err = e.svc.Bind(ctx, e.access(t, m, p), "acme/backend", false)
 	require.Equal(t, apierr.CodeProjectArchived, code(err))
 }
 

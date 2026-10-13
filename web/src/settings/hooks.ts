@@ -76,9 +76,9 @@ export function useGitHubRepos(enabled: boolean) {
 export function useSetGitHubRepo(key: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (repo: string | null) => {
-      if (repo === null) await api.api.v1ProjectsGithubDelete(key);
-      else await api.api.v1ProjectsGithubUpdate(key, { repo });
+    mutationFn: async (b: { repo: string; issues: boolean } | null) => {
+      if (b === null) await api.api.v1ProjectsGithubDelete(key);
+      else await api.api.v1ProjectsGithubUpdate(key, b);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectQueryKey(key) });

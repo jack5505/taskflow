@@ -29,13 +29,17 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.DELETE("", h.unbind)
 }
 
-// RepoBinding — репозиторий проекта; null — не привязан.
+// RepoBinding — репозиторий проекта; null — не привязан. Issues — публикация задач в GitHub
+// Issues (§12.9).
 type RepoBinding struct {
-	Repo *string `json:"repo" example:"acme/backend" extensions:"x-nullable"`
+	Repo   *string `json:"repo" example:"acme/backend" extensions:"x-nullable"`
+	Issues bool    `json:"issues"`
 }
 
 type bindRequest struct {
 	Repo string `json:"repo" binding:"required,max=140" example:"acme/backend"`
+	// Issues — публиковать новые задачи в Issues репозитория (§12.9); не передано — выключено.
+	Issues bool `json:"issues"`
 }
 
 // repositories — репозитории, доступные GitHub App.
@@ -71,7 +75,7 @@ func (h *Handlers) access(c *gin.Context) (*project.Access, bool) {
 // get — репозиторий проекта.
 //
 // @Summary      Репозиторий GitHub проекта
-// @Description  Привязанный репозиторий owner/name (§12.1); null — не привязан. Любой участник проекта.
+// @Description  Привязанный репозиторий owner/name (§12.1); null — не привязан; issues — публикация задач в Issues (§12.9). Любой участник проекта.
 // @Tags         github
 // @Produce      json
 // @Security     BearerAuth
@@ -85,13 +89,13 @@ func (h *Handlers) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, RepoBinding{Repo: a.Project.GitHubRepo})
+	c.JSON(http.StatusOK, RepoBinding{Repo: a.Project.GitHubRepo, Issues: a.Project.GitHubIssues})
 }
 
 // bind — привязать репозиторий.
 //
 // @Summary      Привязать репозиторий GitHub
-// @Description  Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.
+// @Description  Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1), и включает или выключает публикацию новых задач в Issues — поле issues (§12.9). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.
 // @Tags         github
 // @Accept       json
 // @Produce      json
@@ -118,12 +122,12 @@ func (h *Handlers) bind(c *gin.Context) {
 	if !httpserver.Bind(c, &req) {
 		return
 	}
-	p, err := h.svc.Bind(c.Request.Context(), a, req.Repo)
+	p, err := h.svc.Bind(c.Request.Context(), a, req.Repo, req.Issues)
 	if err != nil {
 		httpserver.Abort(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, RepoBinding{Repo: p.GitHubRepo})
+	c.JSON(http.StatusOK, RepoBinding{Repo: p.GitHubRepo, Issues: p.GitHubIssues})
 }
 
 // unbind — отвязать репозиторий.

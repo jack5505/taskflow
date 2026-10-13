@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"encoding/json"
@@ -9,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -88,15 +88,42 @@ func (c *Client) appJWT() (string, error) {
 	return s, nil
 }
 
+// APIError — ответ GitHub с ошибкой. Temporary — стоит повторить позже: 5xx, 429, исчерпанный
+// лимит запросов (403 с x-ratelimit-remaining: 0) и вторичный лимит (403 с Retry-After или
+// «secondary rate limit» в ответе).
+type APIError struct {
+	Status    int
+	Temporary bool
+	msg       string
+}
+
+func (e *APIError) Error() string { return e.msg }
+
 // do выполняет запрос с авторизацией auth и разбирает JSON-ответ в out. 404 — errNotFound.
 func (c *Client) do(ctx context.Context, method, path, auth string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, c.api+path, nil)
+	return c.send(ctx, method, path, auth, nil, out)
+}
+
+// send — как do, с телом запроса in в JSON (nil — без тела); out nil — ответ не разбирается.
+func (c *Client) send(ctx context.Context, method, path, auth string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("github: %w", err)
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.api+path, body)
 	if err != nil {
 		return fmt.Errorf("github: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("Authorization", auth)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("github: %s %s: %w", method, path, err)
@@ -106,8 +133,15 @@ func (c *Client) do(ctx context.Context, method, path, auth string, out any) err
 		return errNotFound
 	}
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("github: %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(body)))
+		text, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		limited := resp.StatusCode == http.StatusForbidden && (resp.Header.Get("X-RateLimit-Remaining") == "0" ||
+			resp.Header.Get("Retry-After") != "" || strings.Contains(strings.ToLower(string(text)), "secondary rate limit"))
+		return &APIError{Status: resp.StatusCode,
+			Temporary: resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests || limited,
+			msg:       fmt.Sprintf("github: %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(text)))}
+	}
+	if out == nil {
+		return nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("github: %s %s: %w", method, path, err)
@@ -125,8 +159,7 @@ func (c *Client) Repository(ctx context.Context, fullName string) (*Repo, error)
 	var inst struct {
 		ID int64 `json:"id"`
 	}
-	owner, name, _ := strings.Cut(fullName, "/")
-	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name)
+	path := repoPath(fullName)
 	if err := c.do(ctx, http.MethodGet, path+"/installation", "Bearer "+jwtToken, &inst); err != nil {
 		if errors.Is(err, errNotFound) {
 			return nil, ErrNotInstalled

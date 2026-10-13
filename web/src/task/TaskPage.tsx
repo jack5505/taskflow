@@ -105,7 +105,9 @@ function Description({
 
 const PR_STATES: Record<string, string> = { open: "открыт", draft: "черновик", merged: "влит", closed: "закрыт" };
 
-/** Ветки и PR GitHub задачи (§12.3); связей нет — блока нет. */
+const LINK_KINDS: Record<string, string> = { branch: "Ветка", pr: "PR", issue: "Issue" };
+
+/** Ветки, PR и issue GitHub задачи (§12.3, §12.9); связей нет — блока нет. */
 function GitHubLinks({ taskKey }: { taskKey: string }) {
   const links = useQuery({
     queryKey: ["task", taskKey, "github"],
@@ -118,12 +120,13 @@ function GitHubLinks({ taskKey }: { taskKey: string }) {
       <ul>
         {links.data.map((l) => (
           <li key={l.id}>
-            {l.kind === "pr" ? `PR #${l.number}` : "Ветка"}{" "}
+            {LINK_KINDS[l.kind ?? ""] ?? l.kind}
+            {l.number ? ` #${l.number}` : ""}{" "}
             <a href={l.url} target="_blank" rel="noreferrer">
               {l.name}
             </a>{" "}
             <span className="muted">{l.repo}</span>
-            {l.kind === "pr" && l.state && <span className="badge">{PR_STATES[l.state] ?? l.state}</span>}
+            {l.kind !== "branch" && l.state && <span className="badge">{PR_STATES[l.state] ?? l.state}</span>}
           </li>
         ))}
       </ul>

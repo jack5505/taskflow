@@ -131,6 +131,8 @@ definitions:
     type: object
   github.RepoBinding:
     properties:
+      issues:
+        type: boolean
       repo:
         example: acme/backend
         type: string
@@ -138,6 +140,10 @@ definitions:
     type: object
   github.bindRequest:
     properties:
+      issues:
+        description: Issues — публиковать новые задачи в Issues репозитория (§12.9);
+          не передано — выключено.
+        type: boolean
       repo:
         example: acme/backend
         maxLength: 140
@@ -288,6 +294,10 @@ definitions:
         type: string
       description:
         type: string
+      github_issues:
+        description: GitHubIssues — публикация задач в GitHub Issues (§12.9); только
+          при привязанном репозитории.
+        type: boolean
       github_repo:
         description: GitHubRepo — привязанный репозиторий owner/name (§12.1); установка
           App — служебное поле.
@@ -348,6 +358,10 @@ definitions:
         type: string
       description:
         type: string
+      github_issues:
+        description: GitHubIssues — публикация задач в GitHub Issues (§12.9); только
+          при привязанном репозитории.
+        type: boolean
       github_repo:
         description: GitHubRepo — привязанный репозиторий owner/name (§12.1); установка
           App — служебное поле.
@@ -811,6 +825,7 @@ definitions:
         enum:
         - branch
         - pr
+        - issue
         type: string
       name:
         example: 'TM-42: вход по паролю'
@@ -2443,8 +2458,8 @@ paths:
       tags:
       - github
     get:
-      description: Привязанный репозиторий owner/name (§12.1); null — не привязан.
-        Любой участник проекта.
+      description: Привязанный репозиторий owner/name (§12.1); null — не привязан;
+        issues — публикация задач в Issues (§12.9). Любой участник проекта.
       parameters:
       - description: ключ проекта
         in: path
@@ -2475,7 +2490,8 @@ paths:
       consumes:
       - application/json
       description: 'Менеджер проекта привязывает репозиторий owner/name, в который
-        установлен GitHub App (§12.1). Один репозиторий на проект и один проект на
+        установлен GitHub App (§12.1), и включает или выключает публикацию новых задач
+        в Issues — поле issues (§12.9). Один репозиторий на проект и один проект на
         репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект
         — 409.'
       parameters:

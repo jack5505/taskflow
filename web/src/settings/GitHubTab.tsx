@@ -4,8 +4,9 @@ import { errorText } from "../api/errors";
 import { useGitHubRepos, useSetGitHubRepo } from "./hooks";
 
 /**
- * GitHub (§12.1, §12.7): привязан — репозиторий и кнопка «Отвязать»; нет — выбор из репозиториев,
- * в которые установлен GitHub App. Один репозиторий на проект и один проект на репозиторий.
+ * GitHub (§12.1, §12.7, §12.9): привязан — репозиторий, публикация новых задач в Issues и кнопка
+ * «Отвязать»; нет — выбор из репозиториев, в которые установлен GitHub App. Один репозиторий на
+ * проект и один проект на репозиторий.
  */
 export function GitHubTab({
   project,
@@ -36,6 +37,22 @@ export function GitHubTab({
             </a>
             . Ветки и pull request'ы с ключом задачи ({key}-42) связываются с
             задачами, PR двигает статус.
+          </p>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={!!project.github_issues}
+              disabled={readOnly || set.isPending}
+              onChange={(e) =>
+                set.mutate({ repo: bound, issues: e.target.checked })
+              }
+            />
+            Публиковать новые задачи в GitHub Issues
+          </label>
+          <p className="muted">
+            Issue «{key}-42: название» создаётся для задач, заведённых после
+            включения, и обновляется вместе с задачей; правки в GitHub обратно
+            не переносятся.
           </p>
           {!readOnly && (
             <div className="actions">
@@ -82,7 +99,7 @@ export function GitHubTab({
                     type="button"
                     className="primary"
                     disabled={!choice || set.isPending}
-                    onClick={() => set.mutate(choice)}
+                    onClick={() => set.mutate({ repo: choice, issues: false })}
                   >
                     Привязать
                   </button>
