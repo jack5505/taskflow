@@ -15,6 +15,7 @@ import {
   unreadQueryKey,
   type NotificationsData,
 } from "./notifications";
+import { Icon } from "../ui/Icon";
 
 const PAGE_SIZE = 20;
 // Пушей в браузер нет — новые события подтягиваем опросом.
@@ -115,7 +116,7 @@ export function NotificationBell() {
         title="Уведомления"
         onClick={toggle}
       >
-        <span aria-hidden="true">🔔</span>
+        <Icon name="bell" />
         {badge && (
           <span className="bell-count" aria-hidden="true">
             {badge}

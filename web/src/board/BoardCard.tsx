@@ -4,21 +4,8 @@ import { Link } from "react-router";
 import type { ProjectMemberView, TaskListItem } from "../api/client";
 import { formatSpentEstimate } from "../lib/duration";
 import { formatDate } from "../lib/format";
-import { initials } from "./cards";
-import { priorityLabels, typeLabels, type Priority, type TaskType } from "./filters";
-
-const typeIcons: Record<TaskType, string> = { task: "✓", bug: "✱", feature: "★" };
-const priorityIcons: Record<Priority, string> = { low: "↓", medium: "=", high: "↑", critical: "⇈" };
-
-function Avatar({ assigneeId, member }: { assigneeId?: string; member?: ProjectMemberView }) {
-  if (!assigneeId) return <span className="avatar empty" title="Без исполнителя" aria-label="Без исполнителя" />;
-  const name = member?.display_name || member?.email || "Исполнитель";
-  return (
-    <span className="avatar" title={name} aria-label={`Исполнитель: ${name}`}>
-      {initials(member?.display_name || member?.email) || "?"}
-    </span>
-  );
-}
+import { Avatar } from "../ui/Avatar";
+import { Icon, PriorityIcon, TypeIcon } from "../ui/Icon";
 
 interface CardProps {
   task: TaskListItem;
@@ -32,24 +19,9 @@ interface CardProps {
 
 /** Содержимое карточки доски (ТЗ §7.3). */
 export function CardBody({ task: t, assignee, timerRunning, linked = false }: CardProps & { linked?: boolean }) {
-  const type = (t.type ?? "task") as TaskType;
-  const priority = (t.priority ?? "medium") as Priority;
   const due = formatDate(t.due_date);
   return (
     <>
-      <div className="task-head">
-        <span className={`type-icon type-${type}`} title={typeLabels[type]} aria-label={typeLabels[type]}>
-          {typeIcons[type]}
-        </span>
-        <span className="card-key">{t.key}</span>
-        <span
-          className={`priority-icon priority-${priority}`}
-          title={`Приоритет: ${priorityLabels[priority]}`}
-          aria-label={`Приоритет: ${priorityLabels[priority]}`}
-        >
-          {priorityIcons[priority]}
-        </span>
-      </div>
       <div className="task-title">
         {/* Карточка задачи (§7.5); в окне перетаскивания — просто текст. Enter на ссылке не
             доходит до клавиатурного перетаскивания карточки, иначе ссылка не открылась бы. */}
@@ -62,20 +34,25 @@ export function CardBody({ task: t, assignee, timerRunning, linked = false }: Ca
         )}
       </div>
       <div className="task-foot">
-        <Avatar assigneeId={t.assignee_id} member={assignee} />
-        <span className="muted" title="Списано / оценка">
-          {formatSpentEstimate(t.spent_minutes, t.estimate_minutes)}
-        </span>
-        {timerRunning && (
-          <span className="timer-indicator" title="Идёт таймер" aria-label="Идёт таймер">
-            ⏱
-          </span>
-        )}
+        <TypeIcon type={t.type} />
+        <span className="card-key">{t.key}</span>
+        <PriorityIcon priority={t.priority} />
         {due && (
           <span className={t.overdue ? "due overdue" : "due muted"} title={t.overdue ? "Срок просрочен" : "Срок"}>
             {due}
           </span>
         )}
+        <span className="task-foot-end">
+          {timerRunning && (
+            <span className="timer-indicator">
+              <Icon name="timer" label="Идёт таймер" />
+            </span>
+          )}
+          <span className="muted" title="Списано / оценка">
+            {formatSpentEstimate(t.spent_minutes, t.estimate_minutes)}
+          </span>
+          <Avatar id={t.assignee_id} name={assignee?.display_name || assignee?.email} />
+        </span>
       </div>
     </>
   );

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import type { TaskTask } from "../api/client";
 import { hasOpenDialog, isCreateHotkey, isTypingTarget, projectKeyFromPath } from "./create";
+import { Icon } from "../ui/Icon";
 
 // Окно с Markdown-редактором (marked + DOMPurify) — отдельным чанком, грузится при открытии.
 const CreateTaskDialog = lazy(async () => ({ default: (await import("./CreateTaskDialog")).CreateTaskDialog }));
@@ -34,8 +35,8 @@ export function CreateTask() {
       {created?.key && (
         <span className="notice create-notice" role="status">
           Создана <Link to={`/tasks/${created.key}`}>{created.key}</Link>{" "}
-          <button type="button" className="link" aria-label="Скрыть" onClick={() => setCreated(null)}>
-            ×
+          <button type="button" className="link icon-button" aria-label="Скрыть" onClick={() => setCreated(null)}>
+            <Icon name="close" size={14} />
           </button>
         </span>
       )}
