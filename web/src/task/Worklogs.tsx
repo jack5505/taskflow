@@ -22,6 +22,7 @@ import {
   type DraftErrors,
   type WorklogDraft,
 } from "./worklog";
+import { DateField } from "../ui/DateField";
 
 /**
  * После списания, правки или удаления: список записей и задача (списано, остаток) перечитываются,
@@ -138,14 +139,13 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
         </label>
         <label>
           Дата работы
-          <input
-            type="date"
+          <DateField
             data-testid="worklog-date"
             value={draft.workDate}
             max={today}
             min={minDate || undefined}
             aria-invalid={!!errors.workDate}
-            onChange={(e) => set("workDate", e.target.value)}
+            onChange={(v) => set("workDate", v)}
           />
           {errors.workDate && <span className="field-error">{errors.workDate}</span>}
         </label>

@@ -25,6 +25,11 @@ import {
   withProject,
   type ReportFilter,
 } from "./logic";
+import { INVALID_DATE } from "../lib/date";
+import { DateField } from "../ui/DateField";
+
+/** Период отчёта не бывает пустым: стёртая или недописанная дата не применяется, поле вернётся. */
+const validDate = (v: string) => v !== "" && v !== INVALID_DATE;
 
 /** Длительность «2h 30m» и под ней десятичные часы «2.50» (§6.1); ноль — прочерк. */
 function Minutes({ value }: { value: number | undefined }) {
@@ -250,21 +255,11 @@ export function ReportsPage() {
       <div className="report-filters">
         <label>
           С
-          <input
-            type="date"
-            value={from}
-            max={to || undefined}
-            onChange={(e) => e.target.value && update(withPeriod(f, e.target.value, to, "from"))}
-          />
+          <DateField revertOnBlur value={from} max={to || undefined} onChange={(v) => validDate(v) && update(withPeriod(f, v, to, "from"))} />
         </label>
         <label>
           По
-          <input
-            type="date"
-            value={to}
-            min={from || undefined}
-            onChange={(e) => e.target.value && update(withPeriod(f, from, e.target.value, "to"))}
-          />
+          <DateField revertOnBlur value={to} min={from || undefined} onChange={(v) => validDate(v) && update(withPeriod(f, from, v, "to"))} />
         </label>
         <button type="button" onClick={() => update({ ...f, from: "", to: "" })} disabled={!f.from && !f.to}>
           Текущая неделя

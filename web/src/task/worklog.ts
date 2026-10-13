@@ -3,6 +3,7 @@ import type { TaskTask, TaskWorklogView } from "../api/client";
 import { parseApiError, errorText, fieldErrors } from "../api/errors";
 import type { Actor } from "../board/transitions";
 import { addDays, today } from "../backlog/logic";
+import { INVALID_DATE, INVALID_DATE_TEXT } from "../lib/date";
 import { formatDuration, parseDuration } from "../lib/duration";
 import { formatDate } from "../lib/format";
 
@@ -77,6 +78,7 @@ export function validateDraft(d: WorklogDraft, range: { today: string; minDate?:
   // Дату записи, которую не меняют, сервер не проверяет: её «сегодня» — по поясу автора записи.
   const kept = !!range.keepDate && d.workDate === range.keepDate;
   if (!d.workDate) e.workDate = "Укажите дату";
+  else if (d.workDate === INVALID_DATE) e.workDate = INVALID_DATE_TEXT;
   else if (kept) {
     // не проверяем
   } else if (d.workDate > range.today) e.workDate = "Не позже сегодняшней даты";

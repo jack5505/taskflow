@@ -2,6 +2,7 @@
 import type { QueryKey } from "@tanstack/react-query";
 import type { MeProfile, ProjectListItem, SprintView, TaskCreateRequest } from "../api/client";
 import type { FieldError } from "../api/errors";
+import { INVALID_DATE, INVALID_DATE_TEXT } from "../lib/date";
 import { parseDuration } from "../lib/duration";
 import { membersQueryKey, projectQueryKey } from "../projects/hooks";
 import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
@@ -89,7 +90,8 @@ export function validateCreate(
   const body: TaskCreateRequest = { title, type: f.type, priority: f.priority };
   if (f.description.trim()) body.description = f.description;
   if (estimate !== undefined) body.estimate_minutes = estimate;
-  if (f.dueDate) body.due_date = f.dueDate;
+  if (f.dueDate === INVALID_DATE) errors.dueDate = INVALID_DATE_TEXT;
+  else if (f.dueDate) body.due_date = f.dueDate;
   if (labels.length) body.labels = labels;
   if (canManage && f.assigneeId) body.assignee_id = f.assigneeId;
   if (canManage && f.sprintId) body.sprint_id = f.sprintId;

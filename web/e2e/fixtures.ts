@@ -45,7 +45,7 @@ export class Api {
     return key;
   }
 
-  task(project: string, fields: { title: string; estimate_minutes?: number; sprint_id?: string; assignee_id?: string }) {
+  task(project: string, fields: { title: string; estimate_minutes?: number; sprint_id?: string; assignee_id?: string; due_date?: string }) {
     return this.call<Task>("POST", `/api/v1/projects/${project}/tasks`, fields);
   }
 
@@ -72,7 +72,7 @@ export class Api {
   }
 
   getTask(key: string) {
-    return this.call<Task & { sprint_id?: string; spent_minutes?: number }>("GET", `/api/v1/tasks/${key}`);
+    return this.call<Task & { sprint_id?: string; spent_minutes?: number; due_date?: string }>("GET", `/api/v1/tasks/${key}`);
   }
 
   worklog(key: string, duration: string) {

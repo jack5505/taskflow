@@ -1,7 +1,8 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import type { SprintView } from "../api/client";
 import { formatDuration } from "../lib/duration";
 import { BACKLOG, sprintDatesError, totals } from "./logic";
+import { DateField } from "../ui/DateField";
 
 function Modal({ id, title, onCancel, onSubmit, children }: {
   id: string;
@@ -60,11 +61,12 @@ interface FormProps {
 export function CreateSprintDialog(p: FormProps & { onSubmit: (f: SprintFields) => void }) {
   const [f, setF] = useState<SprintFields>({ name: "", goal: "", start: "", end: "" });
   const [localError, setLocalError] = useState("");
-  const set = (k: keyof SprintFields) => (e: { target: { value: string } }) => {
-    setF({ ...f, [k]: e.target.value });
+  const setField = (k: keyof SprintFields, v: string) => {
+    setF({ ...f, [k]: v });
     setLocalError("");
     p.onEdit();
   };
+  const set = (k: keyof SprintFields) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setField(k, e.target.value);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const err = sprintDatesError(f.start, f.end, false);
@@ -86,11 +88,11 @@ export function CreateSprintDialog(p: FormProps & { onSubmit: (f: SprintFields) 
       <div className="date-range">
         <label>
           Начало
-          <input type="date" value={f.start} onChange={set("start")} />
+          <DateField value={f.start} onChange={(v) => setField("start", v)} />
         </label>
         <label>
           Окончание
-          <input type="date" value={f.end} onChange={set("end")} />
+          <DateField value={f.end} onChange={(v) => setField("end", v)} />
         </label>
       </div>
       <span className="hint">Даты можно задать и при запуске</span>
@@ -119,11 +121,12 @@ export function StartSprintDialog(
     end: p.sprint.end_date || p.defaults.end,
   });
   const [localError, setLocalError] = useState("");
-  const set = (k: keyof SprintFields) => (e: { target: { value: string } }) => {
-    setF({ ...f, [k]: e.target.value });
+  const setField = (k: keyof SprintFields, v: string) => {
+    setF({ ...f, [k]: v });
     setLocalError("");
     p.onEdit();
   };
+  const set = (k: keyof SprintFields) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setField(k, e.target.value);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     let err = sprintDatesError(f.start, f.end, true);
@@ -145,11 +148,11 @@ export function StartSprintDialog(
       <div className="date-range">
         <label>
           Начало
-          <input type="date" required value={f.start} onChange={set("start")} />
+          <DateField required value={f.start} onChange={(v) => setField("start", v)} />
         </label>
         <label>
           Окончание
-          <input type="date" required value={f.end} onChange={set("end")} />
+          <DateField required value={f.end} onChange={(v) => setField("end", v)} />
         </label>
       </div>
       <span className="hint">Не длиннее 42 дней</span>

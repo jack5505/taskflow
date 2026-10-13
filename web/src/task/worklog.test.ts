@@ -59,6 +59,10 @@ describe("validateDraft", () => {
   const range = { today: "2026-10-11", minDate: "2026-10-01" };
   const ok = { duration: "2h 30m", workDate: "2026-10-11", comment: "" };
 
+  it("набрано не дату — ошибка формата, а не прежняя дата", () => {
+    expect(validateDraft({ ...ok, workDate: "invalid" }, range)).toEqual({ workDate: "Дата в формате дд.мм.гггг" });
+  });
+
   it("корректная форма", () => {
     expect(validateDraft(ok, range)).toEqual({});
     expect(validateDraft({ ...ok, duration: "1d" }, range)).toEqual({});

@@ -2,6 +2,7 @@
 import type { SprintView, TaskListItem } from "../api/client";
 import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { boardQueryKey } from "../board/cards";
+import { INVALID_DATE, INVALID_DATE_TEXT } from "../lib/date";
 
 /** Ключ кэша спринтов проекта. */
 export const sprintsQueryKey = (key: string) => ["sprints", key] as const;
@@ -165,6 +166,7 @@ export function daysBetween(start: string, end: string): number {
 
 /** Даты спринта (§5.2). required — для запуска обе обязательны. "" — даты годятся. */
 export function sprintDatesError(start: string, end: string, required: boolean): string {
+  if (start === INVALID_DATE || end === INVALID_DATE) return INVALID_DATE_TEXT;
   if (!start || !end) return required ? "Для запуска нужны даты начала и окончания" : "";
   const days = daysBetween(start, end);
   if (!(days >= 1)) return "Окончание — позже начала";

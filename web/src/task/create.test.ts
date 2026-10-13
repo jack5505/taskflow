@@ -25,6 +25,12 @@ describe("validateCreate", () => {
     expect(body).toEqual({ title: "Починить вход", type: "task", priority: "medium" });
   });
 
+  it("срок, набранный не датой, — ошибка, а не «без срока»", () => {
+    const { body, errors } = validateCreate(form({ title: "Задача", dueDate: "invalid" }), true);
+    expect(errors).toEqual({ dueDate: "Дата в формате дд.мм.гггг" });
+    expect(body.due_date).toBeUndefined();
+  });
+
   it("проект и название обязательны", () => {
     const { errors } = validateCreate(form({ projectKey: "", title: "   " }), false);
     expect(errors).toEqual({ project: "Выберите проект", title: "Название — от 1 до 200 символов" });
