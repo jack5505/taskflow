@@ -1,4 +1,4 @@
-import { Link, useParams, useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { errorText } from "../api/errors";
 import { useMe } from "../auth/hooks";
 import { actorFor, useProject } from "../projects/hooks";
@@ -11,6 +11,7 @@ import { MembersTab } from "./MembersTab";
 import { NotificationsTab } from "./NotificationsTab";
 import { TelegramTab } from "./TelegramTab";
 import { TrashTab } from "./TrashTab";
+import { ProjectHeader } from "../projects/ProjectHeader";
 
 /** Настройки проекта (ТЗ §7.9, §12.1): шесть вкладок и «GitHub», текущая — в адресе (?tab=…). */
 export function SettingsPage() {
@@ -65,12 +66,7 @@ export function SettingsPage() {
 
   return (
     <section className="settings-page">
-      <div className="block-head">
-        <h2>
-          <span className="card-key">{key}</span> {p?.name} — настройки
-        </h2>
-        <Link to={`/projects/${key}`}>← К доске</Link>
-      </div>
+      <ProjectHeader projectKey={key} />
       {body}
     </section>
   );

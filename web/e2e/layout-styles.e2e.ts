@@ -13,7 +13,7 @@ test("стили бэклога, шапки, отчётов и профиля п
   await login(page);
   await page.goto(`/projects/${key}/backlog`);
   await expect(page.locator(".backlog-row", { hasText: t.key })).toHaveCSS("display", "grid");
-  await expect(page.locator(".topbar-link")).not.toHaveCSS("margin-left", "0px");
+  await expect(page.locator(".topbar-nav")).not.toHaveCSS("column-gap", "normal");
 
   await page.goto("/reports");
   await expect(page.locator(".report-hours").first()).toHaveCSS("display", "block");

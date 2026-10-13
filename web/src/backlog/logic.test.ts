@@ -11,6 +11,8 @@ import {
   daysBetween,
   dropTarget,
   sprintDatesError,
+  sprintDaysLeft,
+  daysLeftText,
   sprintErrorText,
   startPatch,
   totals,
@@ -197,4 +199,16 @@ describe("sprintErrorText", () => {
   it("нет связи", () => {
     expect(sprintErrorText(new TypeError("fetch failed"))).toBe("Нет связи с сервером, проверьте подключение");
   });
+});
+
+describe("sprintDaysLeft и daysLeftText (§7.3, §5.3)", () => {
+  it.each([
+    ["2026-10-20", "2026-10-13", 7, "осталось 7 дн."],
+    ["2026-10-13", "2026-10-13", 0, "последний день"],
+    ["2026-10-11", "2026-10-13", -2, "просрочен на 2 дн."],
+  ])("окончание %s, сегодня %s → %i", (end, today, n, text) => {
+    expect(sprintDaysLeft(end, today)).toBe(n);
+    expect(daysLeftText(n)).toBe(text);
+  });
+  it("без даты окончания — null", () => expect(sprintDaysLeft(undefined, "2026-10-13")).toBeNull());
 });

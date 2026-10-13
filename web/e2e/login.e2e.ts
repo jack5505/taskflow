@@ -25,7 +25,8 @@ test("вход по ссылке установки пароля", async ({ page
   await expect(page.getByText("Пароль задан. Войдите с новым паролем.")).toBeVisible();
 
   await login(page, LOGIN_EMAIL, password);
-  await expect(page.getByRole("banner").getByRole("link", { name: "Первый администратор" })).toBeVisible();
+  // Имя — в меню пользователя в шапке.
+  await expect(page.getByRole("banner").getByLabel("Меню пользователя: Первый администратор")).toBeVisible();
 
   // Ссылка одноразовая: повторная установка пароля отклоняется.
   await page.goto(new URL(LOGIN_LINK).pathname + new URL(LOGIN_LINK).search);

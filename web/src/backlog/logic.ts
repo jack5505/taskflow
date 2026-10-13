@@ -224,3 +224,20 @@ export function sprintErrorText(e: unknown): string {
   if (!fields.length) return base;
   return `${base}: ${fields.map((f) => `${fieldLabels[f.field] ?? f.field} — ${f.reason}`).join("; ")}`;
 }
+
+/**
+ * Сколько дней спринта осталось (ТЗ §7.3): от «сегодня» в поясе проекта до даты окончания
+ * включительно; отрицательное — спринт просрочен (§5.3). null — даты окончания нет.
+ */
+export function sprintDaysLeft(endDate: string | undefined, todayStr: string): number | null {
+  if (!endDate) return null;
+  const d = daysBetween(todayStr, endDate);
+  return Number.isNaN(d) ? null : d;
+}
+
+/** «осталось 5 дн.», «последний день», «просрочен на 2 дн.» — без склонений по числу. */
+export function daysLeftText(n: number): string {
+  if (n > 0) return `осталось ${n} дн.`;
+  if (n === 0) return "последний день";
+  return `просрочен на ${-n} дн.`;
+}

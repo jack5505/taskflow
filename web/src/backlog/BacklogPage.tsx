@@ -48,6 +48,7 @@ import {
   type Section,
 } from "./logic";
 import { CloseSprintDialog, CreateSprintDialog, StartSprintDialog, type SprintFields } from "./SprintDialogs";
+import { ProjectHeader } from "../projects/ProjectHeader";
 
 const moveKey = ["backlog-move"];
 
@@ -347,24 +348,14 @@ export function BacklogPage() {
 
   return (
     <section className="backlog-page">
-      <div className="block-head">
-        <h2>
-          <span className="card-key">{key}</span> {project.data?.name}
-        </h2>
-        {archived && <span className="badge">Архив</span>}
-        <nav className="tabs" aria-label="Разделы проекта">
-          <Link className="tab" to={`/projects/${key}`}>
-            Доска
-          </Link>
-          <span className="tab active">Бэклог</span>
-        </nav>
+      <ProjectHeader projectKey={key}>
         <Link to={`/projects/${key}/backlog/archive`}>Архив спринтов</Link>
         {manager && (
           <button type="button" className="primary" onClick={() => openDialog({ kind: "create" })}>
             Создать спринт
           </button>
         )}
-      </div>
+      </ProjectHeader>
 
       {loadError && <p role="alert">{errorText(loadError)}</p>}
       {snapshot.isPending && !loadError && <p className="muted">Загрузка…</p>}

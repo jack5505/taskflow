@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import type { ProjectMemberView, SprintView } from "../api/client";
 import { errorText } from "../api/errors";
 import { useTimeZone } from "../auth/hooks";
@@ -11,6 +11,7 @@ import { fetchAllTasks, useProject, useProjectMembers } from "../projects/hooks"
 import { RowCells } from "./BacklogRow";
 import { archiveSummary } from "./logic";
 import { useSprints } from "./useSprints";
+import { ProjectHeader } from "../projects/ProjectHeader";
 
 /**
  * Сводка закрытого спринта: что в нём осталось после завершения (§5.4 — готовые и отменённые;
@@ -91,12 +92,9 @@ export function SprintArchivePage() {
 
   return (
     <section className="backlog-page">
-      <div className="block-head">
-        <h2>
-          <span className="card-key">{key}</span> Архив спринтов
-        </h2>
-        <Link to={`/projects/${key}/backlog`}>← К бэклогу</Link>
-      </div>
+      <ProjectHeader projectKey={key}>
+        <span className="muted">Архив спринтов</span>
+      </ProjectHeader>
       {loadError && <p role="alert">{errorText(loadError)}</p>}
       {sprints.isPending && !loadError && <p className="muted">Загрузка…</p>}
       {sprints.isSuccess && closed.length === 0 && <p className="muted">Завершённых спринтов пока нет.</p>}
