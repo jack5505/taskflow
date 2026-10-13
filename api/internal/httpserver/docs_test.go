@@ -31,6 +31,10 @@ func TestSwaggerDocsAreServed(t *testing.T) {
 	rec, _ = do(t, r, http.MethodGet, "/api/docs/index.html", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "swagger-ui")
+	// index.html подключает index.css; с nosniff браузер отбросит ответ не с типом text/css.
+	rec, _ = do(t, r, http.MethodGet, "/api/docs/index.css", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/css")
 
 	rec, _ = do(t, r, http.MethodGet, "/api/docs/doc.json", "")
 	require.Equal(t, http.StatusOK, rec.Code)
