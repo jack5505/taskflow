@@ -12,9 +12,12 @@ set -euo pipefail
 TAG=${1:-}
 [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: deploy/deploy.sh vX.Y.Z" >&2; exit 2; }
 [ -f .env ] || { echo ".env не найден: cp .env.example .env и заполните секреты" >&2; exit 2; }
-# ./secrets монтируется в api и worker (ключ GitHub App); без каталога docker создаст его от root,
-# и положить ключ без sudo будет нельзя. Каталог должен быть доступен uid 10001 (пользователь образа).
-mkdir -p secrets
+# ./secrets монтируется в api и worker (ключ GitHub App). Владелец — пользователь сервера (его читает
+# backup.sh), группа — 10001, пользователь образа: каталог 750, файлы 640, остальным не видно. chown
+# через контейнер — без sudo; заодно чинит каталог, который docker раньше создал от root.
+mkdir -p secrets 2>/dev/null || true
+docker run --rm -v "$ROOT/secrets:/s" alpine sh -c \
+  "chown -R $(id -u):10001 /s && chmod 750 /s && find /s -type f -exec chmod 640 {} +"
 
 IMAGE_REPO=${TASKFLOW_IMAGE_REPO:-ghcr.io/jack5505/taskflow}
 IMAGE="$IMAGE_REPO:$TAG"

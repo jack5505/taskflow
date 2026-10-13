@@ -53,6 +53,7 @@
 | `BACKUP_DIR` | `<репозиторий>/backups` | каталог бэкапов; переменная окружения важнее `.env`; относительный путь — от каталога вызова (из `.env` — от корня репозитория) |
 | `BACKUP_KEEP_DAYS` | `30` | сколько дней хранить датированные бэкапы (§10.3) |
 | `BACKUP_REMOTE` | пусто | rclone-адрес внешней копии, например `s3:backups/taskflow`; конфиг rclone — `deploy/rclone.conf` (в git не попадает) |
+| `BACKUP_SECRETS_PASSWORD` | пусто | пароль шифрования архива секретов для внешней копии (`openssl rand -base64 32`). Пусто — секреты (`.env`, `secrets/`) остаются только на сервере. Сохраните пароль и вне сервера: без него архив не открыть |
 
 Переменные окружения самого `deploy.sh` (в `.env` не пишутся, задаются при запуске): `TASKFLOW_DEPLOY_WAIT` (ожидание `/health`, 180 с), `TASKFLOW_IMAGE_REPO` (репозиторий образа), `TASKFLOW_SKIP_PULL=1` (взять локальный образ), `TASKFLOW_HEALTH_URL`, `GHCR_USER`.
 
@@ -117,10 +118,10 @@ docker exec mahalla-dev-nginx nginx -s reload
    ```bash
    cd ~/taskflow && mkdir -p secrets
    cp ~/Downloads/<app>.private-key.pem secrets/github-app.pem
-   chmod 644 secrets/github-app.pem    # контейнер читает ключ от uid 10001, не от вашего пользователя
    # в .env: GITHUB_APP_ID, GITHUB_WEBHOOK_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
-   docker compose up -d --no-build api worker
+   deploy/deploy.sh "$(tail -1 .deployed | cut -d' ' -f2)"   # тот же релиз: выставит права и перезапустит api и worker
    ```
+   Права выставляет `deploy.sh`: каталог `secrets/` — ваш пользователь и группа `10001` (пользователь образа), `750`, файлы `640`; остальные пользователи сервера ключ не видят. Если `cp` пишет «Permission denied» — каталог когда-то создал docker от root: сначала `deploy/deploy.sh <текущий тег>`, он вернёт владельца.
 4. **Install App** на нужные репозитории. Дальше менеджер проекта выбирает репозиторий во вкладке «GitHub» настроек проекта, а участники связывают свой аккаунт GitHub в профиле.
 
 Если App уже был установлен до появления прав на Issues, GitHub попросит владельца репозитория **подтвердить новые права** (письмо и баннер в Settings → Integrations → GitHub Apps). Пока не подтвердят, публикация в Issues падает с 403 — это видно только в логе `worker`.
@@ -156,12 +157,20 @@ deploy/deploy.sh v1.2.3
 
 **Бэкап** — `deploy/backup.sh [метка]`:
 
-- `db-<метка>.sql.gz` — `pg_dump` базы, `attachments-<метка>.tar.gz` — том вложений, `secrets-<метка>.tar.gz` — `.env` и `secrets/` (права `600`: в архиве все секреты стенда); метка по умолчанию — дата и время UTC (`20261011-0330`).
+- `db-<метка>.sql.gz` — `pg_dump` базы, `attachments-<метка>.tar.gz` — том вложений, `secrets-<метка>.tar.gz` — `.env` и `secrets/` (права `600`: в архиве все секреты стенда), с `BACKUP_SECRETS_PASSWORD` — ещё и зашифрованный `secrets-<метка>.tar.gz.enc`; метка по умолчанию — дата и время UTC (`20261011-0330`).
 - Датированные файлы старше `BACKUP_KEEP_DAYS` (30) дней удаляются; именованные (`pre-…`, `check-…`) живут, пока их не удалят руками.
-- С `BACKUP_REMOTE` копия сразу уходит во внешнее хранилище через rclone (в контейнере, ставить rclone не нужно). Без него скрипт пишет об этом в лог — для §10.3 внешнее хранилище обязательно, задайте его при развёртывании.
+- Если секреты заархивировать не удалось (нет прав на `secrets/`, задан `GITHUB_APP_ID`, а ключа нет), база и вложения всё равно сохраняются и уходят наружу, а скрипт завершается с ошибкой — она видна в `systemctl --user status taskflow-backup.service`.
+- С `BACKUP_REMOTE` копия сразу уходит во внешнее хранилище через rclone; открытый `secrets-….tar.gz` не уходит никогда, только `.enc` (в контейнере, ставить rclone не нужно). Без него скрипт пишет об этом в лог — для §10.3 внешнее хранилище обязательно, задайте его при развёртывании.
 - Redis не бэкапится: очередь и ключи идемпотентности — производные данные.
 
-**Секреты** `restore.sh` не трогает — на живом стенде `.env` уже правильный. На новом сервере их возвращают руками до первого запуска: `tar xzf backups/secrets-<метка>.tar.gz -C ~/taskflow` (появятся `.env` и `secrets/`), затем раздел 4.
+**Секреты** `restore.sh` не трогает — на живом стенде `.env` уже правильный. На новом сервере их возвращают руками вместо шага `cp .env.example .env` из раздела 4.1 (его пропустить, иначе `.env` перезапишется образцом):
+
+```bash
+git clone https://github.com/jack5505/taskflow.git ~/taskflow && cd ~/taskflow
+# из внешнего хранилища — зашифрованный архив; пароль — BACKUP_SECRETS_PASSWORD из вашего менеджера паролей
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in secrets-<метка>.tar.gz.enc | tar xz   # или: tar xzf secrets-<метка>.tar.gz
+docker compose up -d --wait postgres redis      # дальше — восстановление базы и раздел 4.2–4.5
+```
 
 **Восстановление на стенде** — `deploy/restore.sh <метка>`: останавливает `api` и `worker`, пересоздаёт базу из дампа, заменяет вложения, сбрасывает Redis (`FLUSHALL` — очередь и отметки обработанных событий относятся к прежнему состоянию базы), поднимает сервисы. **Текущие данные стенда заменяются**, скрипт спрашивает подтверждение (`RESTORE_YES=1` — без вопроса). Бэкап из внешнего хранилища сначала скачивается (как в разделе 7.2) и восстанавливается с `BACKUP_DIR=<каталог>`.
 
@@ -209,21 +218,21 @@ cat backups/CHECKS.md              # журнал проверок
 ```bash
 git clone ~/taskflow ~/taskflow-check && cd ~/taskflow-check
 cp ../taskflow/.env .env
-sed -i 's/^COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=taskflowcheck/; s/^TASKFLOW_PORT=.*/TASKFLOW_PORT=8101/; s/^SMTP_HOST=.*/SMTP_HOST=/; s/^TELEGRAM_BOT_TOKEN=.*/TELEGRAM_BOT_TOKEN=/' .env
+sed -i 's/^COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=taskflowcheck/; s/^TASKFLOW_PORT=.*/TASKFLOW_PORT=8101/; s/^SMTP_HOST=.*/SMTP_HOST=/; s/^TELEGRAM_BOT_TOKEN=.*/TELEGRAM_BOT_TOKEN=/; s/^GITHUB_APP_ID=.*/GITHUB_APP_ID=/' .env
 docker compose up -d --wait postgres redis && deploy/deploy.sh <текущий тег>
 BACKUP_DIR=$HOME/taskflow/backups RESTORE_YES=1 deploy/restore.sh <метка>
 curl -s 127.0.0.1:8101/health     # и выборочно данные: ssh -L 8101:127.0.0.1:8101 … → http://localhost:8101
 docker compose down -v && cd && rm -rf ~/taskflow-check
 ```
 
-SMTP и токен бота в копии обнуляются: иначе `worker` копии разослал бы письма и сообщения из восстановленной очереди.
+SMTP, токен бота и GitHub App в копии обнуляются: иначе `worker` копии разослал бы письма и сообщения и публиковал бы задачи в настоящие GitHub Issues из восстановленной очереди (а без ключа `secrets/`, которого в клоне нет, `api` и не стартовал бы).
 
 ## 8. Повседневное
 
 | Задача | Команда |
 |---|---|
 | Состояние | `docker compose ps`, `curl -s 127.0.0.1:8100/health` |
-| Логи (JSON, с `request_id`) | `docker compose logs -f --tail 100 api worker`; хранятся до 5 файлов по 20 МБ на сервис (`x-logging` в `docker-compose.yml`), старое удаляет Docker |
+| Логи (JSON, с `request_id`) | `docker compose logs -f --tail 100 api worker`; хранятся до 5 файлов по 20 МБ на сервис (`x-logging` в `docker-compose.yml`), старое удаляет Docker. Лимит действует на контейнер, созданный после его появления: `deploy.sh` пересоздаёт только `api` и `worker`, поэтому после выкладки v0.5.0 один раз `docker compose up -d postgres redis` (пересоздаст их, база и очередь — в томах, пауза несколько секунд) |
 | Какой релиз стоит | `grep TASKFLOW_IMAGE .env`, `tail -3 .deployed` |
 | Перезапуск без смены образа | `docker compose up -d --no-build api worker` |
 | Консоль базы | `docker compose exec postgres psql -U taskflow` |
