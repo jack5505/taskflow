@@ -6,6 +6,9 @@ let stack: HTMLDialogElement[] = [];
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
+const FOCUSABLE =
+  'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
 /** Верхнее открытое модальное окно или null. */
 export function useTopModal(): HTMLDialogElement | null {
   return useSyncExternalStore(
@@ -59,6 +62,23 @@ export function Modal(p: { labelledBy: string; onCancel: () => void; className?:
       // Сам <dialog> без отступов, всё содержимое — в .modal-body: щелчок по самому <dialog> —
       // это щелчок по фону, а не по полям или полосе прокрутки окна.
       onMouseDown={(e) => e.target === e.currentTarget && cancel.current()}
+      onKeyDown={(e) => {
+        // Tab по кругу внутри окна: нативный <dialog> отпускает фокус в интерфейс браузера.
+        if (e.key !== "Tab") return;
+        const items = [...e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+          (el) => el.offsetParent !== null,
+        );
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }}
     >
       <div className="modal-body">{p.children}</div>
     </dialog>

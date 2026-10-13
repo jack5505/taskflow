@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type { ProjectMemberView, TaskListItem } from "../api/client";
 import { statusLabel } from "../lib/status";
 import { commentError, type Status } from "./transitions";
+import { Modal } from "../ui/Modal";
 
 interface Props {
   task: Pick<TaskListItem, "key" | "title" | "status">;
@@ -37,14 +38,10 @@ export function TransitionDialog(p: Props) {
   const title = p.comment ? titles[p.comment] : "Переоткрыть задачу";
   const error = localError || p.error;
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && p.onCancel()}>
+    <Modal labelledBy="transition-title" onCancel={p.onCancel}>
       <form
-        className="form panel modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="transition-title"
+        className="form"
         onSubmit={submit}
-        onKeyDown={(e) => e.key === "Escape" && p.onCancel()}
       >
         <h2 id="transition-title">{title}</h2>
         <p className="muted">
@@ -97,6 +94,6 @@ export function TransitionDialog(p: Props) {
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

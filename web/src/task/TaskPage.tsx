@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 import { api } from "../api";
@@ -36,6 +36,7 @@ import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
 import { isSystemAdmin, myTasksQueryKey, projectsQueryKey } from "../projects/logic";
+import { Tabs, tabPanel } from "../ui/Tabs";
 
 type Tab = "comments" | "history" | "attachments" | "worklog";
 const tabs: { id: Tab; label: string }[] = [
@@ -369,6 +370,24 @@ export function TaskPage() {
         )
       : [];
 
+  // Меню статуса с клавиатуры: стрелки — по пунктам, Escape — закрыть и вернуться на статус.
+  const menuKeys = (e: KeyboardEvent<HTMLDetailsElement>) => {
+    const menu = e.currentTarget;
+    if (!menu.open) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+      return;
+    }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = [...menu.querySelectorAll<HTMLButtonElement>(".menu-item:not(:disabled)")];
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = e.key === "ArrowDown" ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+    items[i < 0 ? 0 : next]?.focus();
+  };
+
   const startTransition = (to: Status) => {
     if (statusMenu.current) statusMenu.current.open = false;
     transition.reset();
@@ -413,11 +432,11 @@ export function TaskPage() {
         </h2>
         <div className="task-buttons">
           {transitions.length > 0 ? (
-            <details className="dropdown" ref={statusMenu}>
+            <details className="dropdown" ref={statusMenu} onKeyDown={menuKeys}>
               <summary aria-label={`Статус: ${statusLabel(status)}. Сменить`}>{statusLabel(status)}</summary>
-              <div className="dropdown-menu" role="menu">
+              <div className="dropdown-menu">
                 {transitions.map((to) => (
-                  <button key={to} type="button" role="menuitem" className="menu-item" disabled={busy} onClick={() => startTransition(to)}>
+                  <button key={to} type="button" className="menu-item" disabled={busy} onClick={() => startTransition(to)}>
                     {transitionLabel(status, to)} <span className="muted">→ {statusLabel(to)}</span>
                   </button>
                 ))}
@@ -492,21 +511,8 @@ export function TaskPage() {
 
           <GitHubLinks taskKey={key} />
 
-          <nav className="tabs" role="tablist" aria-label="Разделы задачи">
-            {tabs.map((x) => (
-              <button
-                key={x.id}
-                type="button"
-                role="tab"
-                aria-selected={tab === x.id}
-                className={tab === x.id ? "tab active" : "tab"}
-                onClick={() => setTab(x.id)}
-              >
-                {x.label}
-              </button>
-            ))}
-          </nav>
-          <div className="tab-body" role="tabpanel">
+          <Tabs label="Разделы задачи" idPrefix="task" tabs={tabs} value={tab} onChange={setTab} />
+          <div className="tab-body" {...tabPanel("task", tab)}>
             {tab === "comments" && (
               <Comments
                 taskKey={key}

@@ -5,9 +5,20 @@ import { formatDuration } from "../lib/duration";
 import { statusLabel } from "../lib/status";
 import { Avatar } from "../ui/Avatar";
 import { TypeIcon } from "../ui/Icon";
+import { splitDraggable } from "../ui/dnd";
 
 /** Ячейки строки задачи (§7.4): ключ, название, статус, исполнитель, оценка. */
-export function RowCells({ task: t, assignee, linked }: { task: TaskListItem; assignee?: ProjectMemberView; linked: boolean }) {
+export function RowCells({
+  task: t,
+  assignee,
+  linked,
+  linkProps,
+}: {
+  task: TaskListItem;
+  assignee?: ProjectMemberView;
+  linked: boolean;
+  linkProps?: Record<string, unknown>;
+}) {
   return (
     <>
       <span className="row-key">
@@ -15,9 +26,9 @@ export function RowCells({ task: t, assignee, linked }: { task: TaskListItem; as
         <span className="card-key">{t.key}</span>
       </span>
       <span className="row-title">
-        {/* Enter на ссылке не доходит до клавиатурного перетаскивания строки. */}
+        {/* Ссылка — единственный элемент строки в порядке Tab: Enter открывает, пробел тянет. */}
         {linked ? (
-          <Link to={`/tasks/${t.key}`} onKeyDown={(e) => e.stopPropagation()}>
+          <Link to={`/tasks/${t.key}`} {...linkProps}>
             {t.title}
           </Link>
         ) : (
@@ -51,6 +62,7 @@ export function BacklogRow(props: {
   const id = props.task.id!;
   const drag = useDraggable({ id, data: { task: props.task }, disabled: !props.draggable });
   const drop = useDroppable({ id: `row:${id}`, data: { over: { kind: "row", taskId: id } }, disabled: props.dropDisabled });
+  const dnd = props.draggable ? splitDraggable(drag.attributes, drag.listeners, "перетаскиваемая задача") : null;
   const cls = ["backlog-row", drag.isDragging ? "dragging" : "", drop.isOver ? "over" : "", props.draggable ? "draggable" : ""]
     .filter(Boolean)
     .join(" ");
@@ -61,11 +73,9 @@ export function BacklogRow(props: {
         drop.setNodeRef(el);
       }}
       className={cls}
-      {...(props.draggable
-        ? { ...drag.attributes, ...drag.listeners, "aria-roledescription": "перетаскиваемая задача" }
-        : {})}
+      {...(dnd ? dnd.wrapper : {})}
     >
-      <RowCells task={props.task} assignee={props.assignee} linked />
+      <RowCells task={props.task} assignee={props.assignee} linked linkProps={dnd?.link} />
     </li>
   );
 }

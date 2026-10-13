@@ -27,7 +27,7 @@ import { BoardCard, CardBody } from "./BoardCard";
 import { applyMove, boardQueryKey, groupByStatus, moveKey } from "./cards";
 import { daysLeftText, sprintDaysLeft, today } from "../backlog/logic";
 import { BoardFilters } from "./BoardFilters";
-import { filterFromParams, paramsFromFilter, tasksQuery, type BoardFilter } from "./filters";
+import { emptyFilter, filterFromParams, isFilterEmpty, paramsFromFilter, tasksQuery, type BoardFilter } from "./filters";
 import {
   BOARD_COLUMNS,
   canTransition,
@@ -40,6 +40,7 @@ import { TransitionDialog } from "./TransitionDialog";
 import { ProjectHeader } from "../projects/ProjectHeader";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
+import { keyboardCodes, useReducedMotion } from "../ui/dnd";
 
 
 interface Move {
@@ -94,7 +95,9 @@ function Column({
         {statusLabel(status)} <span className="muted">{count}</span>
       </h3>
       {state === "forbidden" && <p className="drop-hint">Сюда нельзя</p>}
-      <div className="board-cards">{children}</div>
+      <div className="board-cards">
+        {count === 0 ? <p className="column-empty">{state === "allowed" ? "Перетащите сюда" : "Задач нет"}</p> : children}
+      </div>
     </section>
   );
 }
@@ -214,10 +217,11 @@ export function BoardPage() {
     move.mutate({ task: t, to, queryKey: tasksKey });
   };
 
+  const reducedMotion = useReducedMotion();
   const sensors = useSensors(
     // Небольшой порог: щелчок по кнопке на карточке не начинает перетаскивание.
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
+    useSensor(KeyboardSensor, { keyboardCodes }),
   );
   const onDragStart = (e: DragStartEvent) => {
     setDragging((e.active.data.current?.task as TaskListItem | undefined) ?? null);
@@ -287,6 +291,14 @@ export function BoardPage() {
             onDragEnd={onDragEnd}
             onDragCancel={() => setDragging(null)}
           >
+            {tasks.isSuccess && (tasks.data ?? []).length === 0 && !isFilterEmpty(filter) && (
+              <p className="board-nothing" role="status">
+                Ничего не найдено по фильтрам.{" "}
+                <button type="button" className="link" onClick={() => setFilter(emptyFilter)}>
+                  Сбросить фильтры
+                </button>
+              </p>
+            )}
             <div className="board">
               {BOARD_COLUMNS.map((status) => {
                 const list = byStatus.get(status) ?? [];
@@ -320,7 +332,7 @@ export function BoardPage() {
                 );
               })}
             </div>
-            <DragOverlay>
+            <DragOverlay dropAnimation={reducedMotion ? null : undefined}>
               {dragging && (
                 <article className="task-card overlay">
                   <CardBody

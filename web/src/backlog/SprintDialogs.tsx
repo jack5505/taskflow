@@ -3,6 +3,7 @@ import type { SprintView } from "../api/client";
 import { formatDuration } from "../lib/duration";
 import { BACKLOG, sprintDatesError, totals } from "./logic";
 import { DateField } from "../ui/DateField";
+import { Modal as Dialog } from "../ui/Modal";
 
 function Modal({ id, title, onCancel, onSubmit, children }: {
   id: string;
@@ -12,19 +13,15 @@ function Modal({ id, title, onCancel, onSubmit, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <Dialog labelledBy={id} onCancel={onCancel}>
       <form
-        className="form panel modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={id}
+        className="form"
         onSubmit={onSubmit}
-        onKeyDown={(e) => e.key === "Escape" && onCancel()}
       >
         <h2 id={id}>{title}</h2>
         {children}
       </form>
-    </div>
+    </Dialog>
   );
 }
 

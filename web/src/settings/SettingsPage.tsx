@@ -12,6 +12,7 @@ import { TelegramTab } from "./TelegramTab";
 import { TrashTab } from "./TrashTab";
 import { ProjectHeader } from "../projects/ProjectHeader";
 import { LoadError } from "../ui/LoadError";
+import { Tabs, tabPanel } from "../ui/Tabs";
 
 /** Настройки проекта (ТЗ §7.9, §12.1): шесть вкладок и «GitHub», текущая — в адресе (?tab=…). */
 export function SettingsPage() {
@@ -39,23 +40,17 @@ export function SettingsPage() {
   else
     body = (
       <>
-        <nav className="tabs settings-tabs" role="tablist" aria-label="Разделы настроек">
-          {SETTINGS_TABS.filter((t) => visible.includes(t.id)).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              className={tab === t.id ? "tab active" : "tab"}
-              onClick={() => setParams({ tab: t.id }, { replace: true })}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
+        <Tabs
+          label="Разделы настроек"
+          className="settings-tabs"
+          idPrefix="settings"
+          tabs={SETTINGS_TABS.filter((t) => visible.includes(t.id))}
+          value={tab}
+          onChange={(id) => setParams({ tab: id }, { replace: true })}
+        />
         {p.is_archived && <p className="notice">Проект в архиве: настройки только для чтения.</p>}
         {/* key: при переходе в другой проект формы вкладок начинаются заново, а не с чужими значениями. */}
-        <div className="settings-body" role="tabpanel" key={key}>
+        <div className="settings-body" {...tabPanel("settings", tab)} key={key}>
           {tab === "general" && <GeneralTab project={p} admin={admin} />}
           {tab === "members" && <MembersTab projectKey={key} me={me.data} admin={admin} readOnly={readOnly} />}
           {tab === "telegram" && <TelegramTab project={p} readOnly={readOnly} />}
