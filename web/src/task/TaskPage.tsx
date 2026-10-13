@@ -32,6 +32,8 @@ import { taskPerms } from "./perms";
 import { InlineEdit, TaskFields, type Save, type SaveResult } from "./TaskFields";
 import { canAddWorklog } from "./worklog";
 import { WorklogDialog, Worklogs } from "./Worklogs";
+import type { TaskType } from "../board/filters";
+import { TypeIcon } from "../ui/Icon";
 
 type Tab = "comments" | "history" | "attachments" | "worklog";
 const tabs: { id: Tab; label: string }[] = [
@@ -355,6 +357,7 @@ export function TaskPage() {
       {archived && <p className="notice">Проект в архиве: карточка только для чтения.</p>}
 
       <div className="task-header">
+        <TypeIcon type={(t.type ?? "task") as TaskType} size={20} />
         <span className="card-key">{t.key}</span>
         <h2 className="task-heading">
           <InlineEdit

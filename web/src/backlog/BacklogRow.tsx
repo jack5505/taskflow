@@ -3,12 +3,18 @@ import { Link } from "react-router";
 import type { ProjectMemberView, TaskListItem } from "../api/client";
 import { formatDuration } from "../lib/duration";
 import { statusLabel } from "../lib/status";
+import type { TaskType } from "../board/filters";
+import { Avatar } from "../ui/Avatar";
+import { TypeIcon } from "../ui/Icon";
 
 /** Ячейки строки задачи (§7.4): ключ, название, статус, исполнитель, оценка. */
 export function RowCells({ task: t, assignee, linked }: { task: TaskListItem; assignee?: ProjectMemberView; linked: boolean }) {
   return (
     <>
-      <span className="card-key">{t.key}</span>
+      <span className="row-key">
+        <TypeIcon type={(t.type ?? "task") as TaskType} size={14} />
+        <span className="card-key">{t.key}</span>
+      </span>
       <span className="row-title">
         {/* Enter на ссылке не доходит до клавиатурного перетаскивания строки. */}
         {linked ? (
@@ -20,8 +26,11 @@ export function RowCells({ task: t, assignee, linked }: { task: TaskListItem; as
         )}
       </span>
       <span className={`muted status-${t.status}`}>{statusLabel(t.status)}</span>
-      <span className="muted">
-        {t.assignee_id ? assignee?.display_name || assignee?.email || "Исполнитель" : "Без исполнителя"}
+      <span className="row-assignee muted">
+        <Avatar id={t.assignee_id} name={assignee?.display_name || assignee?.email} size="sm" />
+        <span className="row-assignee-name">
+          {t.assignee_id ? assignee?.display_name || assignee?.email || "Исполнитель" : "Без исполнителя"}
+        </span>
       </span>
       <span className="muted nowrap" title="Оценка">
         {formatDuration(t.estimate_minutes) || "—"}

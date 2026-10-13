@@ -25,12 +25,21 @@
   --priority-medium: #9a6700;
   --priority-high: #bc4c00;
   --priority-critical: var(--danger);
-  --avatar: #8250df;
+  /* Аватары: цвет по id пользователя (ui/avatar.ts), белые инициалы читаются на каждом */
+  --avatar-1: #8250df;
+  --avatar-2: #0f7b6c;
+  --avatar-3: #c2255c;
+  --avatar-4: #1971c2;
+  --avatar-5: #b35900;
+  --avatar-6: #495057;
+  --avatar-7: #2b8a3e;
+  --avatar-8: #0b7285;
   --backdrop: rgb(0 0 0 / 0.35);
 
   /* Шрифт: размеры строго из шкалы */
   --font: system-ui, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-3xs: 10px;
   --fs-2xs: 11px;
   --fs-xs: 12px;
   --fs-sm: 13px;
@@ -328,6 +337,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .timer-indicator {
+  display: inline-flex;
   color: var(--danger);
 }
 
@@ -337,7 +347,9 @@ button.primary:hover:not(:disabled) {
 
 .bell-button {
   position: relative;
-  padding: var(--space-1) var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  padding: var(--control-py) var(--space-3);
 }
 
 .bell-count {
@@ -780,7 +792,6 @@ button.primary:hover:not(:disabled) {
   box-shadow: var(--shadow-drag);
 }
 
-.task-head,
 .task-foot {
   display: flex;
   align-items: center;
@@ -788,57 +799,71 @@ button.primary:hover:not(:disabled) {
   font-size: var(--fs-sm);
 }
 
-.task-head .priority-icon,
-.task-foot .due {
+.task-foot-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-left: auto;
+}
+
+.icon {
+  flex: none;
+  vertical-align: middle;
 }
 
 .task-title {
   overflow-wrap: anywhere;
 }
 
+/* Тип задачи: цветной квадрат со знаком (ui/Icon.tsx) */
 .type-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-sm);
+  flex: none;
   color: var(--on-accent);
-  font-size: var(--fs-2xs);
-  font-weight: 700;
+}
+
+.type-icon-bg {
+  fill: var(--type-color);
 }
 
 .type-task {
-  background: var(--type-task);
+  --type-color: var(--type-task);
 }
 
 .type-bug {
-  background: var(--type-bug);
+  --type-color: var(--type-bug);
 }
 
 .type-feature {
-  background: var(--type-feature);
+  --type-color: var(--type-feature);
 }
 
+/* Приоритет: четыре столбика, закрашено по уровню */
 .priority-icon {
-  font-weight: 700;
+  flex: none;
+}
+
+.priority-icon .off {
+  fill: var(--border);
+}
+
+.priority-icon .on {
+  fill: var(--priority-color);
 }
 
 .priority-low {
-  color: var(--priority-low);
+  --priority-color: var(--priority-low);
 }
 
 .priority-medium {
-  color: var(--priority-medium);
+  --priority-color: var(--priority-medium);
 }
 
 .priority-high {
-  color: var(--priority-high);
+  --priority-color: var(--priority-high);
 }
 
 .priority-critical {
-  color: var(--priority-critical);
+  --priority-color: var(--priority-critical);
 }
 
 .avatar {
@@ -849,10 +874,44 @@ button.primary:hover:not(:disabled) {
   height: 24px;
   flex: none;
   border-radius: 50%;
-  background: var(--avatar);
+  background: var(--avatar-1);
   color: var(--on-accent);
   font-size: var(--fs-2xs);
   font-weight: 600;
+}
+
+.avatar-sm {
+  width: 20px;
+  height: 20px;
+  font-size: var(--fs-3xs);
+}
+
+.avatar-c2 {
+  background: var(--avatar-2);
+}
+
+.avatar-c3 {
+  background: var(--avatar-3);
+}
+
+.avatar-c4 {
+  background: var(--avatar-4);
+}
+
+.avatar-c5 {
+  background: var(--avatar-5);
+}
+
+.avatar-c6 {
+  background: var(--avatar-6);
+}
+
+.avatar-c7 {
+  background: var(--avatar-7);
+}
+
+.avatar-c8 {
+  background: var(--avatar-8);
 }
 
 .avatar.empty {
@@ -1362,7 +1421,7 @@ button.link.danger {
 
 .backlog-row {
   display: grid;
-  grid-template-columns: 90px minmax(0, 1fr) 120px 180px 70px;
+  grid-template-columns: 110px minmax(0, 1fr) 120px 180px 70px;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -1388,6 +1447,20 @@ button.link.danger {
 .backlog-row.overlay {
   cursor: grabbing;
   box-shadow: var(--shadow-drag);
+}
+
+.row-key,
+.row-assignee {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.row-assignee-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row-title {
