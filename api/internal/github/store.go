@@ -26,3 +26,12 @@ func deleteDeliveriesBefore(db *gorm.DB, before time.Time) (int64, error) {
 	}
 	return res.RowsAffected, nil
 }
+
+// lockIssueSync — блокировка синхронизации issue задачи taskID до конца транзакции: одновременные
+// события одной задачи не создают два issue (§12.9).
+func lockIssueSync(tx *gorm.DB, taskID string) error {
+	if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, "github-issue:"+taskID).Error; err != nil {
+		return fmt.Errorf("github: issue lock: %w", err)
+	}
+	return nil
+}

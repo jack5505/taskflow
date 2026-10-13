@@ -362,7 +362,7 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 			return err
 		}
 		if err := tx.Model(&p).Updates(map[string]any{"deleted_at": s.now(), "telegram_chat_id": nil, "telegram_chat_title": nil,
-			"github_repo": nil, "github_installation_id": nil}).Error; err != nil {
+			"github_repo": nil, "github_installation_id": nil, "github_issues": false}).Error; err != nil {
 			return fmt.Errorf("project: delete: %w", err)
 		}
 		if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.ProjectDeleted, EntityType: "project",

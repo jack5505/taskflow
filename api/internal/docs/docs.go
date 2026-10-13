@@ -1480,7 +1480,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Привязанный репозиторий owner/name (§12.1); null — не привязан. Любой участник проекта.",
+                "description": "Привязанный репозиторий owner/name (§12.1); null — не привязан; issues — публикация задач в Issues (§12.9). Любой участник проекта.",
                 "produces": [
                     "application/json"
                 ],
@@ -1524,7 +1524,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.",
+                "description": "Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1), и включает или выключает публикацию новых задач в Issues — поле issues (§12.9). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4393,6 +4393,9 @@ const docTemplate = `{
         "github.RepoBinding": {
             "type": "object",
             "properties": {
+                "issues": {
+                    "type": "boolean"
+                },
                 "repo": {
                     "type": "string",
                     "x-nullable": true,
@@ -4406,6 +4409,10 @@ const docTemplate = `{
                 "repo"
             ],
             "properties": {
+                "issues": {
+                    "description": "Issues — публиковать новые задачи в Issues репозитория (§12.9); не передано — выключено.",
+                    "type": "boolean"
+                },
                 "repo": {
                     "type": "string",
                     "maxLength": 140,
@@ -4624,6 +4631,10 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "github_issues": {
+                    "description": "GitHubIssues — публикация задач в GitHub Issues (§12.9); только при привязанном репозитории.",
+                    "type": "boolean"
+                },
                 "github_repo": {
                     "description": "GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле.",
                     "type": "string"
@@ -4709,6 +4720,10 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "github_issues": {
+                    "description": "GitHubIssues — публикация задач в GitHub Issues (§12.9); только при привязанном репозитории.",
+                    "type": "boolean"
                 },
                 "github_repo": {
                     "description": "GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле.",
@@ -5378,7 +5393,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "branch",
-                        "pr"
+                        "pr",
+                        "issue"
                     ]
                 },
                 "name": {

@@ -18,6 +18,7 @@ import (
 const (
 	AuditRepoBound   = "project.github_bound"
 	AuditRepoUnbound = "project.github_unbound"
+	AuditIssues      = "project.github_issues" // включена или выключена публикация в Issues (§12.9)
 )
 
 // repoName — owner/name репозитория GitHub.
@@ -52,9 +53,10 @@ func (s *Service) Repositories(ctx context.Context, u *user.User) ([]Repo, error
 	return s.client.Repositories(ctx)
 }
 
-// Bind привязывает репозиторий owner/name к проекту (менеджер, не архив). App должен быть
-// установлен в репозиторий; репозиторий другого проекта — 400 (один репозиторий — один проект).
-func (s *Service) Bind(ctx context.Context, a *project.Access, fullName string) (*project.Project, error) {
+// Bind привязывает репозиторий owner/name к проекту (менеджер, не архив) и включает или
+// выключает публикацию задач в Issues (§12.9). App должен быть установлен в репозиторий;
+// репозиторий другого проекта — 400 (один репозиторий — один проект).
+func (s *Service) Bind(ctx context.Context, a *project.Access, fullName string, issues bool) (*project.Project, error) {
 	if !repoName.MatchString(fullName) || strings.HasSuffix(fullName, "/.") || strings.HasSuffix(fullName, "/..") {
 		return nil, fieldError("repo", "ожидается owner/name репозитория GitHub")
 	}
@@ -66,17 +68,17 @@ func (s *Service) Bind(ctx context.Context, a *project.Access, fullName string) 
 		return nil, err
 	}
 	// Имя — как в GitHub: с ним приходят вебхуки (repository.full_name).
-	return s.update(ctx, a, &repo.FullName, &repo.InstallationID)
+	return s.update(ctx, a, &repo.FullName, &repo.InstallationID, issues)
 }
 
-// Unbind отвязывает репозиторий проекта; не привязан — ничего не меняется.
+// Unbind отвязывает репозиторий проекта и выключает публикацию; не привязан — ничего не меняется.
 func (s *Service) Unbind(ctx context.Context, a *project.Access) (*project.Project, error) {
-	return s.update(ctx, a, nil, nil)
+	return s.update(ctx, a, nil, nil, false)
 }
 
 // update — под блокировкой проекта: права менеджера и архив перепроверяются, репозиторий
 // записывается с журналом.
-func (s *Service) update(ctx context.Context, a *project.Access, repo *string, inst *int64) (*project.Project, error) {
+func (s *Service) update(ctx context.Context, a *project.Access, repo *string, inst *int64, issues bool) (*project.Project, error) {
 	var p *project.Project
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
@@ -93,25 +95,33 @@ func (s *Service) update(ctx context.Context, a *project.Access, repo *string, i
 		if err := project.EnsureWritable(p); err != nil {
 			return err
 		}
-		old := p.GitHubRepo
-		if samePtr(old, repo) && sameID(p.GitHubInstallationID, inst) {
+		old, oldInst, oldIssues := p.GitHubRepo, p.GitHubInstallationID, p.GitHubIssues
+		if samePtr(old, repo) && sameID(oldInst, inst) && oldIssues == issues {
 			return nil // переустановка App даёт новую установку — её нужно записать
 		}
-		err = project.SetGitHubRepo(tx, p.ID, repo, inst)
+		err = project.SetGitHubRepo(tx, p.ID, repo, inst, issues)
 		if errors.Is(err, project.ErrRepoTaken) {
 			return fieldError("repo", "репозиторий уже привязан к другому проекту")
 		}
 		if err != nil {
 			return err
 		}
-		p.GitHubRepo, p.GitHubInstallationID = repo, inst
-		action, rec := AuditRepoBound, audit.Record{ProjectID: &p.ID, EntityType: "project", EntityID: p.ID.String(),
-			Old: map[string]any{"github_repo": old}, New: map[string]any{"github_repo": repo}}
-		if repo == nil {
-			action = AuditRepoUnbound
+		p.GitHubRepo, p.GitHubInstallationID, p.GitHubIssues = repo, inst, issues
+		if !samePtr(old, repo) || !sameID(oldInst, inst) {
+			rec := audit.Record{Action: AuditRepoBound, ProjectID: &p.ID, EntityType: "project", EntityID: p.ID.String(),
+				Old: map[string]any{"github_repo": old}, New: map[string]any{"github_repo": repo}}
+			if repo == nil {
+				rec.Action = AuditRepoUnbound
+			}
+			if err := audit.Write(tx, rec); err != nil {
+				return err
+			}
 		}
-		rec.Action = action
-		return audit.Write(tx, rec)
+		if oldIssues == issues {
+			return nil
+		}
+		return audit.Write(tx, audit.Record{Action: AuditIssues, ProjectID: &p.ID, EntityType: "project", EntityID: p.ID.String(),
+			Old: map[string]any{"github_issues": oldIssues}, New: map[string]any{"github_issues": issues}})
 	})
 	if err != nil {
 		return nil, err

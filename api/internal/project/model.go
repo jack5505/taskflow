@@ -32,8 +32,10 @@ type Project struct {
 	// TelegramChatTitle — название подключённой группы на момент подключения или переименования (§7.9).
 	TelegramChatTitle *string `json:"telegram_chat_title,omitempty"`
 	// GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле.
-	GitHubRepo           *string         `gorm:"column:github_repo" json:"github_repo,omitempty"`
-	GitHubInstallationID *int64          `gorm:"column:github_installation_id" json:"-"`
+	GitHubRepo           *string `gorm:"column:github_repo" json:"github_repo,omitempty"`
+	GitHubInstallationID *int64  `gorm:"column:github_installation_id" json:"-"`
+	// GitHubIssues — публикация задач в GitHub Issues (§12.9); только при привязанном репозитории.
+	GitHubIssues         bool            `gorm:"column:github_issues" json:"github_issues,omitempty"`
 	IsArchived           bool            `gorm:"not null" json:"is_archived"`
 	Timezone             string          `gorm:"not null" json:"timezone"`
 	NotificationSettings events.JSON     `gorm:"type:jsonb;not null" json:"notification_settings" swaggertype:"object"`

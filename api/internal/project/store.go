@@ -313,11 +313,12 @@ func memberRoles(db *gorm.DB, projectID uuid.UUID) ([]memberRoleRow, error) {
 // ErrRepoTaken — репозиторий уже привязан к другому проекту (§12.7).
 var ErrRepoTaken = errors.New("project: github repository is bound to another project")
 
-// SetGitHubRepo привязывает репозиторий repo (установка installationID) к проекту id; строку
-// проекта вызывающий уже заблокировал. Репозиторий у другого проекта — ErrRepoTaken.
-func SetGitHubRepo(tx *gorm.DB, id uuid.UUID, repo *string, installationID *int64) error {
-	err := tx.Exec(`UPDATE projects SET github_repo = ?, github_installation_id = ?, updated_at = now() WHERE id = ?`,
-		repo, installationID, id).Error
+// SetGitHubRepo привязывает репозиторий repo (установка installationID) к проекту id и включает
+// или выключает публикацию задач в Issues (§12.9); строку проекта вызывающий уже заблокировал.
+// Репозиторий у другого проекта — ErrRepoTaken.
+func SetGitHubRepo(tx *gorm.DB, id uuid.UUID, repo *string, installationID *int64, issues bool) error {
+	err := tx.Exec(`UPDATE projects SET github_repo = ?, github_installation_id = ?, github_issues = ?, updated_at = now() WHERE id = ?`,
+		repo, installationID, issues, id).Error
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return ErrRepoTaken
 	}
@@ -325,6 +326,26 @@ func SetGitHubRepo(tx *gorm.DB, id uuid.UUID, repo *string, installationID *int6
 		return fmt.Errorf("project: github repo: %w", err)
 	}
 	return nil
+}
+
+// IssueTarget — куда публикуются задачи проекта (§12.9).
+type IssueTarget struct {
+	Repo           string
+	InstallationID int64
+}
+
+// IssuesTarget — репозиторий неудалённого проекта id с включённой публикацией задач в Issues;
+// публикация выключена или проекта нет — nil.
+func IssuesTarget(db *gorm.DB, id uuid.UUID) (*IssueTarget, error) {
+	var rows []IssueTarget
+	if err := db.Raw(`SELECT github_repo AS repo, github_installation_id AS installation_id FROM projects
+		WHERE id = ? AND github_issues AND deleted_at IS NULL`, id).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("project: issues target: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
 }
 
 // GitHubTarget — проект, к которому привязан репозиторий: ключ для поиска задач по ключу.

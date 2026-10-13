@@ -92,11 +92,14 @@ export interface GithubRepo {
 }
 
 export interface GithubRepoBinding {
+  issues?: boolean;
   /** @example "acme/backend" */
   repo?: string | null;
 }
 
 export interface GithubBindRequest {
+  /** Issues — публиковать новые задачи в Issues репозитория (§12.9); не передано — выключено. */
+  issues?: boolean;
   /**
    * @maxLength 140
    * @example "acme/backend"
@@ -185,6 +188,8 @@ export interface ProjectListItem {
   /** @format date-time */
   deleted_at?: string;
   description?: string;
+  /** GitHubIssues — публикация задач в GitHub Issues (§12.9); только при привязанном репозитории. */
+  github_issues?: boolean;
   /** GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле. */
   github_repo?: string;
   id?: string;
@@ -216,6 +221,8 @@ export interface ProjectView {
   /** @format date-time */
   deleted_at?: string;
   description?: string;
+  /** GitHubIssues — публикация задач в GitHub Issues (§12.9); только при привязанном репозитории. */
+  github_issues?: boolean;
   /** GitHubRepo — привязанный репозиторий owner/name (§12.1); установка App — служебное поле. */
   github_repo?: string;
   id?: string;
@@ -475,7 +482,7 @@ export interface TaskLink {
   author_login?: string;
   created_at?: string;
   id?: string;
-  kind?: "branch" | "pr";
+  kind?: "branch" | "pr" | "issue";
   /** @example "TM-42: вход по паролю" */
   name?: string;
   /** @example 7 */
@@ -1721,7 +1728,7 @@ export class Api<
       }),
 
     /**
-     * @description Привязанный репозиторий owner/name (§12.1); null — не привязан. Любой участник проекта.
+     * @description Привязанный репозиторий owner/name (§12.1); null — не привязан; issues — публикация задач в Issues (§12.9). Любой участник проекта.
      *
      * @tags github
      * @name V1ProjectsGithubList
@@ -1739,7 +1746,7 @@ export class Api<
       }),
 
     /**
-     * @description Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.
+     * @description Менеджер проекта привязывает репозиторий owner/name, в который установлен GitHub App (§12.1), и включает или выключает публикацию новых задач в Issues — поле issues (§12.9). Один репозиторий на проект и один проект на репозиторий (§12.7): занятый — 400. App не установлен — 400. Архивный проект — 409.
      *
      * @tags github
      * @name V1ProjectsGithubUpdate
