@@ -159,3 +159,13 @@ func IssueSourceOf(db *gorm.DB, id uuid.UUID) (*IssueSource, error) {
 	}
 	return &rows[0], nil
 }
+
+// RenameLinksRepo переписывает имя репозитория from на to в связях задач проекта projectID:
+// репозиторий переименовали или передали другому владельцу в GitHub (§12.9).
+func RenameLinksRepo(tx *gorm.DB, projectID uuid.UUID, from, to string) error {
+	if err := tx.Exec(`UPDATE github_links SET repo = ?, updated_at = now() WHERE lower(repo) = lower(?)
+		AND task_id IN (SELECT id FROM tasks WHERE project_id = ?)`, to, from, projectID).Error; err != nil {
+		return fmt.Errorf("task: rename github repo: %w", err)
+	}
+	return nil
+}

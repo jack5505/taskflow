@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -89,8 +88,9 @@ func (c *Client) appJWT() (string, error) {
 	return s, nil
 }
 
-// APIError — ответ GitHub с ошибкой. Temporary — стоит повторить позже: 5xx, 429 и исчерпанный
-// лимит запросов (403 с x-ratelimit-remaining: 0).
+// APIError — ответ GitHub с ошибкой. Temporary — стоит повторить позже: 5xx, 429, исчерпанный
+// лимит запросов (403 с x-ratelimit-remaining: 0) и вторичный лимит (403 с Retry-After или
+// «secondary rate limit» в ответе).
 type APIError struct {
 	Status    int
 	Temporary bool
@@ -134,10 +134,11 @@ func (c *Client) send(ctx context.Context, method, path, auth string, in, out an
 	}
 	if resp.StatusCode >= 300 {
 		text, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		limited := resp.StatusCode == http.StatusForbidden && (resp.Header.Get("X-RateLimit-Remaining") == "0" ||
+			resp.Header.Get("Retry-After") != "" || strings.Contains(strings.ToLower(string(text)), "secondary rate limit"))
 		return &APIError{Status: resp.StatusCode,
-			Temporary: resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests ||
-				(resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0"),
-			msg: fmt.Sprintf("github: %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(text)))}
+			Temporary: resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests || limited,
+			msg:       fmt.Sprintf("github: %s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(text)))}
 	}
 	if out == nil {
 		return nil
@@ -158,8 +159,7 @@ func (c *Client) Repository(ctx context.Context, fullName string) (*Repo, error)
 	var inst struct {
 		ID int64 `json:"id"`
 	}
-	owner, name, _ := strings.Cut(fullName, "/")
-	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name)
+	path := repoPath(fullName)
 	if err := c.do(ctx, http.MethodGet, path+"/installation", "Bearer "+jwtToken, &inst); err != nil {
 		if errors.Is(err, errNotFound) {
 			return nil, ErrNotInstalled

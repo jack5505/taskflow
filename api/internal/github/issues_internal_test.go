@@ -151,6 +151,9 @@ func TestIssuesFollowTask(t *testing.T) {
 	require.Equal(t, "closed", in.State)
 	require.Equal(t, "completed", in.StateReason)
 	require.Equal(t, task.PRClosed, e.issue(t, tk).State)
+	require.NoError(t, e.db.Model(&task.Task{}).Where("id = ?", tk.ID).Update("description", "  ").Error)
+	require.NoError(t, e.event(t, events.TaskUpdated, tk))
+	require.True(t, strings.HasPrefix(e.gh.get(1).Body, "["), "пустое описание — без разделителя")
 	require.EqualValues(t, 1, e.events(t, events.GitHubPRChanged, tk), "состояние issue сменилось")
 
 	require.NoError(t, e.db.Model(&task.Task{}).Where("id = ?", tk.ID).Update("status", task.StatusInProgress).Error)

@@ -91,8 +91,10 @@ func (c *Client) FindIssue(ctx context.Context, installationID int64, repo, mark
 	return nil, nil
 }
 
-// badAssignee — 422 на запрос с исполнителем: повторяем без него.
+// badAssignee — 422 из-за исполнителя (GitHub называет поле assignees в ответе): повторяем без
+// него. Другие ошибки проверки не повторяются и исполнителя не снимают.
 func badAssignee(err error, in IssueInput) bool {
 	var e *APIError
-	return len(in.Assignees) > 0 && errors.As(err, &e) && e.Status == http.StatusUnprocessableEntity
+	return len(in.Assignees) > 0 && errors.As(err, &e) && e.Status == http.StatusUnprocessableEntity &&
+		strings.Contains(strings.ToLower(e.msg), "assignee")
 }

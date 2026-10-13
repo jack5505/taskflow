@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 
 	"github.com/jack5505/taskflow/api/internal/events"
@@ -56,8 +57,9 @@ func (s *Issues) handle(ctx context.Context, env events.Envelope) error {
 	err := s.Sync(ctx, p.TaskID, env.Type == events.TaskCreated)
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && !apiErr.Temporary || errors.Is(err, errNotFound) {
-		// Нет прав, репозиторий или issue удалены, GitHub отклонил данные: повтор не поможет.
-		slog.WarnContext(ctx, "github: issue sync skipped", "task_id", p.TaskID, "event", env.Type, "err", err)
+		// Нет прав (например, установка не приняла право Issues), репозиторий или issue удалены,
+		// GitHub отклонил данные: повтор не поможет. Ошибка — в лог уровня error, чтобы её заметили.
+		slog.ErrorContext(ctx, "github: issue sync failed", "task_id", p.TaskID, "event", env.Type, "err", err)
 		return nil
 	}
 	return err
@@ -118,14 +120,18 @@ func (s *Issues) Sync(ctx context.Context, taskID uuid.UUID, create bool) error 
 	})
 }
 
-// publish создаёт issue задачи; если прошлая попытка его уже создала (связь не успела
-// записаться), находит его по метке в описании и приводит к нужному виду.
+// publish создаёт issue задачи. На повторе события прошлая попытка могла его уже создать (связь
+// не успела записаться): тогда сначала ищем его по метке в описании среди последних issues.
 func (s *Issues) publish(ctx context.Context, target *project.IssueTarget, src *task.IssueSource, in IssueInput) (*Issue, error) {
-	iss, err := s.client.FindIssue(ctx, target.InstallationID, target.Repo, marker(src.ID))
-	if err != nil {
-		return nil, err
+	var iss *Issue
+	if retried(ctx) {
+		var err error
+		if iss, err = s.client.FindIssue(ctx, target.InstallationID, target.Repo, marker(src.ID)); err != nil {
+			return nil, err
+		}
 	}
 	if iss == nil {
+		var err error
 		if iss, err = s.client.CreateIssue(ctx, target.InstallationID, target.Repo, in); err != nil {
 			return nil, err
 		}
@@ -141,7 +147,7 @@ func (s *Issues) publish(ctx context.Context, target *project.IssueTarget, src *
 func (s *Issues) input(tx *gorm.DB, src *task.IssueSource) (IssueInput, error) {
 	in := IssueInput{Title: src.Key + ": " + src.Title, State: "open", Assignees: []string{}}
 	desc := ""
-	if src.Description != nil {
+	if src.Description != nil && strings.TrimSpace(*src.Description) != "" {
 		desc = strings.TrimSpace(*src.Description) + "\n\n---\n"
 	}
 	in.Body = fmt.Sprintf("%s[%s в TaskFlow](%s/tasks/%s)\n\n%s", desc, src.Key, s.baseURL, src.Key, marker(src.ID))
@@ -161,6 +167,12 @@ func (s *Issues) input(tx *gorm.DB, src *task.IssueSource) (IssueInput, error) {
 		}
 	}
 	return in, nil
+}
+
+// retried — событие обрабатывается повторно; вне asynq (тесты, ручной вызов) — считаем, что да.
+func retried(ctx context.Context) bool {
+	n, ok := asynq.GetRetryCount(ctx)
+	return !ok || n > 0
 }
 
 // marker — метка задачи в описании issue: по ней находится issue, созданный без записанной связи.

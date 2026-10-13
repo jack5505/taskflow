@@ -31,6 +31,16 @@ func TestIssueClient(t *testing.T) {
 		case r.URL.Path == "/repos/acme/limited/issues/1":
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			http.Error(w, `{"message":"API rate limit exceeded"}`, http.StatusForbidden)
+		case r.URL.Path == "/repos/acme/limited/issues/2":
+			w.Header().Set("X-RateLimit-Remaining", "4000")
+			http.Error(w, `{"message":"You have exceeded a secondary rate limit"}`, http.StatusForbidden)
+		case r.URL.Path == "/repos/acme/limited/issues/3":
+			mu.Lock()
+			bodies = append(bodies, nil)
+			mu.Unlock()
+			http.Error(w, `{"message":"Validation Failed","errors":[{"field":"state_reason"}]}`, http.StatusUnprocessableEntity)
+		case r.URL.Path == "/repos/acme/limited/issues/4":
+			http.Error(w, `{"message":"Must have admin rights"}`, http.StatusForbidden)
 		case r.Method == "GET" && r.URL.Path == "/repos/acme/x/issues":
 			require.Equal(t, "all", r.URL.Query().Get("state"))
 			_ = json.NewEncoder(w).Encode([]map[string]any{{"number": 3, "html_url": "u3", "body": "a"},
@@ -42,7 +52,7 @@ func TestIssueClient(t *testing.T) {
 			bodies = append(bodies, b)
 			mu.Unlock()
 			if a, _ := b["assignees"].([]any); len(a) > 0 {
-				http.Error(w, `{"message":"Validation Failed"}`, http.StatusUnprocessableEntity)
+				http.Error(w, `{"message":"Validation Failed","errors":[{"field":"assignees","code":"invalid"}]}`, http.StatusUnprocessableEntity)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 5, "html_url": "https://github.com/acme/x/issues/5"})
@@ -70,6 +80,14 @@ func TestIssueClient(t *testing.T) {
 	require.True(t, errors.As(err, &apiErr))
 	require.True(t, apiErr.Temporary, "лимит запросов — повторить позже")
 	require.True(t, strings.Contains(err.Error(), "rate limit"))
+	err = c.UpdateIssue(ctx, 7, "acme/limited", 2, github.IssueInput{Assignees: []string{}})
+	require.True(t, errors.As(err, &apiErr) && apiErr.Temporary, "вторичный лимит — тоже повтор")
+	err = c.UpdateIssue(ctx, 7, "acme/limited", 4, github.IssueInput{Assignees: []string{}})
+	require.True(t, errors.As(err, &apiErr) && !apiErr.Temporary, "нет прав — не повторять")
+	n := len(bodies)
+	err = c.UpdateIssue(ctx, 7, "acme/limited", 3, github.IssueInput{Assignees: []string{"octo"}})
+	require.Error(t, err)
+	require.Len(t, bodies, n+1, "422 не из-за исполнителя — без повтора")
 
 	found, err := c.FindIssue(ctx, 7, "acme/x", "<!-- m -->")
 	require.NoError(t, err)

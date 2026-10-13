@@ -11,6 +11,7 @@ import (
 	"github.com/jack5505/taskflow/api/internal/apierr"
 	"github.com/jack5505/taskflow/api/internal/audit"
 	"github.com/jack5505/taskflow/api/internal/project"
+	"github.com/jack5505/taskflow/api/internal/task"
 	"github.com/jack5505/taskflow/api/internal/user"
 )
 
@@ -60,6 +61,10 @@ func (s *Service) Bind(ctx context.Context, a *project.Access, fullName string, 
 	if !repoName.MatchString(fullName) || strings.HasSuffix(fullName, "/.") || strings.HasSuffix(fullName, "/..") {
 		return nil, fieldError("repo", "ожидается owner/name репозитория GitHub")
 	}
+	if bound := a.Project.GitHubRepo; bound != nil && strings.EqualFold(*bound, fullName) && a.Project.GitHubIssues != issues {
+		// Только переключатель публикации: GitHub не спрашиваем — выключить можно и без App.
+		return s.update(ctx, a, bound, a.Project.GitHubInstallationID, issues, "")
+	}
 	repo, err := s.client.Repository(ctx, fullName)
 	if errors.Is(err, ErrNotInstalled) {
 		return nil, fieldError("repo", "GitHub App не установлен в этот репозиторий или репозитория нет")
@@ -67,18 +72,27 @@ func (s *Service) Bind(ctx context.Context, a *project.Access, fullName string, 
 	if err != nil {
 		return nil, err
 	}
+	// Переименованный в GitHub прежний репозиторий отвечает по старому имени уже с новым: связи
+	// задач переходят на новое имя, issues продолжают следовать за задачами.
+	renamed := ""
+	if old := a.Project.GitHubRepo; old != nil && !strings.EqualFold(*old, repo.FullName) {
+		if prev, err := s.client.Repository(ctx, *old); err == nil && strings.EqualFold(prev.FullName, repo.FullName) {
+			renamed = *old
+		}
+	}
 	// Имя — как в GitHub: с ним приходят вебхуки (repository.full_name).
-	return s.update(ctx, a, &repo.FullName, &repo.InstallationID, issues)
+	return s.update(ctx, a, &repo.FullName, &repo.InstallationID, issues, renamed)
 }
 
 // Unbind отвязывает репозиторий проекта и выключает публикацию; не привязан — ничего не меняется.
 func (s *Service) Unbind(ctx context.Context, a *project.Access) (*project.Project, error) {
-	return s.update(ctx, a, nil, nil, false)
+	return s.update(ctx, a, nil, nil, false, "")
 }
 
 // update — под блокировкой проекта: права менеджера и архив перепроверяются, репозиторий
 // записывается с журналом.
-func (s *Service) update(ctx context.Context, a *project.Access, repo *string, inst *int64, issues bool) (*project.Project, error) {
+// renamed — прежнее имя того же репозитория (переименован в GitHub): связи задач переходят на repo.
+func (s *Service) update(ctx context.Context, a *project.Access, repo *string, inst *int64, issues bool, renamed string) (*project.Project, error) {
 	var p *project.Project
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
@@ -105,6 +119,11 @@ func (s *Service) update(ctx context.Context, a *project.Access, repo *string, i
 		}
 		if err != nil {
 			return err
+		}
+		if renamed != "" && old != nil && strings.EqualFold(*old, renamed) {
+			if err := task.RenameLinksRepo(tx, p.ID, renamed, *repo); err != nil {
+				return err
+			}
 		}
 		p.GitHubRepo, p.GitHubInstallationID, p.GitHubIssues = repo, inst, issues
 		if !samePtr(old, repo) || !sameID(oldInst, inst) {
