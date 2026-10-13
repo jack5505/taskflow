@@ -2,11 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { api } from "../api";
 import type { TaskMyTask } from "../api/client";
-import { errorText } from "../api/errors";
 import { formatSpentEstimate } from "../lib/duration";
 import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
 import { myTasksQueryKey } from "./logic";
+import { LoadError } from "../ui/LoadError";
 
 /**
  * Блок «Мои задачи» (ТЗ §7.2): открытые задачи пользователя по всем проектам. Порядок задаёт
@@ -22,7 +22,7 @@ export function MyTasks() {
     <section className="block">
       <h2>Мои задачи</h2>
       {tasks.isPending && <p className="muted">Загрузка…</p>}
-      {tasks.isError && <p role="alert">{errorText(tasks.error)}</p>}
+      {tasks.isError && <LoadError error={tasks.error} onRetry={() => void tasks.refetch()} />}
       {tasks.data && tasks.data.length === 0 && <p className="muted">Открытых задач нет.</p>}
       {tasks.data && tasks.data.length > 0 && (
         <table className="table">

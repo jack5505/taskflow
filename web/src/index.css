@@ -1126,6 +1126,113 @@ button.primary:hover:not(:disabled) {
   margin: 0;
 }
 
+/* Модальное окно на <dialog> (ui/Modal.tsx): фон — ::backdrop, содержимое — панель */
+.modal-dialog {
+  width: 480px;
+  max-width: calc(100vw - var(--space-8));
+  max-height: calc(100vh - var(--space-12));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-drag);
+}
+
+.modal-body {
+  max-height: calc(100vh - var(--space-12));
+  padding: var(--space-5);
+  overflow: auto;
+}
+
+.modal-dialog::backdrop {
+  background: var(--backdrop);
+}
+
+.confirm h2 {
+  margin-bottom: var(--space-1);
+  font-size: var(--fs-xl);
+}
+
+.confirm-body {
+  color: var(--muted);
+}
+
+/* Сообщения после действий (ui/Toast.tsx): внизу справа, над содержимым */
+.toast-stack {
+  position: fixed;
+  z-index: 200;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 380px;
+  pointer-events: none;
+}
+
+.toasts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--text);
+  color: var(--surface);
+  box-shadow: var(--shadow-drag);
+  pointer-events: auto;
+  animation: toast-in 160ms ease-out;
+}
+
+.toast-error {
+  background: var(--danger);
+}
+
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast button.link {
+  color: inherit;
+}
+
+.toast-action {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.toast-close {
+  opacity: 0.75;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+.load-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 /* Карточка задачи (ТЗ §7.5) */
 .task-page nav[aria-label="Путь"] {
   margin-bottom: var(--space-2);
@@ -1176,6 +1283,18 @@ button.primary:hover:not(:disabled) {
 
 button.danger {
   color: var(--danger);
+}
+
+/* Кнопка необратимого действия в окне подтверждения */
+button.danger-solid {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--on-accent);
+}
+
+button.danger-solid:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(0.9);
 }
 
 button.link {

@@ -38,6 +38,8 @@ import {
 } from "./transitions";
 import { TransitionDialog } from "./TransitionDialog";
 import { ProjectHeader } from "../projects/ProjectHeader";
+import { useToast } from "../ui/Toast";
+import { LoadError } from "../ui/LoadError";
 
 
 interface Move {
@@ -130,7 +132,7 @@ export function BoardPage() {
   const actor = actorFor(me.data, project.data);
   const timerKey = me.data?.timer?.task_key;
 
-  const [actionError, setActionError] = useState("");
+  const toast = useToast();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [dragging, setDragging] = useState<TaskListItem | null>(null);
 
@@ -173,22 +175,27 @@ export function BoardPage() {
     ...moveOptions,
     onError: (e, m) => {
       moveOptions.rollback(m);
-      setActionError(`${m.task.key}: ${errorText(e)}`);
+      toast.error(`${m.task.key}: ${errorText(e)}`);
     },
+    onSuccess: (_r, m) => toast.success(`${m.task.key}: ${statusLabel(m.to)}`),
     onSettled: (_r, _e, m) => settled(m),
   });
   // Переход из окна: ошибка — в окне, успех закрывает окно.
   const dialogMove = useMutation({
     ...moveOptions,
     onError: (_e, m) => moveOptions.rollback(m),
-    onSuccess: () => setDialog(null),
+    onSuccess: (_r, m) => {
+      setDialog(null);
+      toast.success(`${m.task.key}: ${statusLabel(m.to)}`);
+    },
     onSettled: (_r, _e, m) => settled(m),
   });
 
   const take = useMutation({
     mutationFn: (t: TaskListItem) => api.api.v1TasksTakeCreate(t.key!),
     // 409 TASK_ALREADY_TAKEN: сервер пишет, кто уже взял задачу.
-    onError: (e, t) => setActionError(`${t.key}: ${errorText(e)}`),
+    onError: (e, t) => toast.error(`${t.key}: ${errorText(e)}`),
+    onSuccess: (_r, t) => toast.success(`${t.key} взята в работу`),
     onSettled: () => refresh(),
   });
 
@@ -197,7 +204,6 @@ export function BoardPage() {
   const canDrag = (t: TaskListItem) => BOARD_COLUMNS.some((c) => c !== t.status && allowed(t, c));
 
   const startTransition = (t: TaskListItem, to: Status) => {
-    setActionError("");
     const assigneeActive = t.assignee_id ? memberById.get(t.assignee_id)?.is_active : undefined;
     const prompt = transitionPrompt(t.status as Status, to, assigneeActive);
     if (prompt) {
@@ -214,7 +220,6 @@ export function BoardPage() {
     useSensor(KeyboardSensor),
   );
   const onDragStart = (e: DragStartEvent) => {
-    setActionError("");
     setDragging((e.active.data.current?.task as TaskListItem | undefined) ?? null);
   };
   const onDragEnd = (e: DragEndEvent) => {
@@ -256,7 +261,12 @@ export function BoardPage() {
         )}
       </ProjectHeader>
 
-      {loadError && <p role="alert">{errorText(loadError)}</p>}
+      {loadError && (
+        <LoadError
+          error={loadError}
+          onRetry={() => [project, projects, members, tasks].forEach((q) => q.isError && void q.refetch())}
+        />
+      )}
       {loading && !loadError && <p className="muted">Загрузка…</p>}
 
       {projects.isSuccess && !sprint && (
@@ -269,14 +279,6 @@ export function BoardPage() {
       {sprint && (
         <>
           <BoardFilters filter={filter} onChange={setFilter} members={members.data ?? []} />
-          {actionError && (
-            <p role="alert" className="board-error">
-              {actionError}{" "}
-              <button type="button" className="link" onClick={() => setActionError("")}>
-                Скрыть
-              </button>
-            </p>
-          )}
           {tasks.isPending && tasks.fetchStatus !== "idle" && <p className="muted">Загрузка задач…</p>}
           <DndContext
             sensors={sensors}
@@ -303,7 +305,6 @@ export function BoardPage() {
                           onTake={
                             free
                               ? () => {
-                                  setActionError("");
                                   take.mutate(t);
                                 }
                               : undefined

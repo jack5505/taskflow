@@ -8,6 +8,7 @@ import { formatDateTime } from "../lib/format";
 import { MarkdownEditor, MarkdownView } from "./Markdown";
 import { commentsQueryKey } from "./keys";
 import { canManageComment } from "./perms";
+import { useConfirm } from "../ui/Confirm";
 
 const MAX_COMMENT = 5000;
 // Поле ввода ограничено, как тело запроса на сервере; правило 1–5000 символов проверяет bodyError.
@@ -41,6 +42,7 @@ function CommentItem({
   taskKey: string;
   timeZone?: string;
 }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<string | null>(null);
   const [localError, setLocalError] = useState("");
@@ -82,7 +84,9 @@ function CommentItem({
               type="button"
               className="link danger"
               disabled={remove.isPending}
-              onClick={() => window.confirm("Удалить комментарий?") && remove.mutate()}
+              onClick={async () =>
+                (await confirm({ title: "Удалить комментарий?", confirmLabel: "Удалить", danger: true })) && remove.mutate()
+              }
             >
               Удалить
             </button>

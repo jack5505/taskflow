@@ -6,8 +6,10 @@ import { useTimeZone } from "../auth/hooks";
 import { boardQueryKey } from "../board/cards";
 import { formatDateTime } from "../lib/format";
 import { myTasksQueryKey } from "../projects/logic";
-import { historyQueryKey, taskQueryKey } from "../task/keys";
+import { historyQueryKey, taskQueryKey, trashQueryKey } from "../task/keys";
 import { trashDeleter } from "./logic";
+import { useToast } from "../ui/Toast";
+import { LoadError } from "../ui/LoadError";
 
 /**
  * Корзина (§7.9, только администратор системы): удалённые задачи проекта — ключ, название, кто
@@ -15,9 +17,10 @@ import { trashDeleter } from "./logic";
  * следующая страница — по next_cursor.
  */
 export function TrashTab({ projectKey, readOnly }: { projectKey: string; readOnly: boolean }) {
+  const toast = useToast();
   const qc = useQueryClient();
   const timeZone = useTimeZone();
-  const queryKey = ["project-trash", projectKey];
+  const queryKey = trashQueryKey(projectKey);
 
   const trash = useInfiniteQuery({
     queryKey,
@@ -33,6 +36,7 @@ export function TrashTab({ projectKey, readOnly }: { projectKey: string; readOnl
   const restore = useMutation({
     mutationFn: (key: string) => api.api.v1TasksRestoreCreate(key),
     onSuccess: (_, key) => {
+      toast.success(`Задача ${key} восстановлена`);
       qc.invalidateQueries({ queryKey });
       qc.invalidateQueries({ queryKey: taskQueryKey(key) });
       qc.invalidateQueries({ queryKey: historyQueryKey(key) });
@@ -43,7 +47,7 @@ export function TrashTab({ projectKey, readOnly }: { projectKey: string; readOnl
   });
 
   if (trash.isPending) return <p className="muted">Загрузка…</p>;
-  if (trash.isError) return <p role="alert">{errorText(trash.error)}</p>;
+  if (trash.isError) return <LoadError error={trash.error} onRetry={() => void trash.refetch()} />;
   if (rows.length === 0) return <p className="muted">Корзина пуста.</p>;
   return (
     <>

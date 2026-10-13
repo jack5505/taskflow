@@ -23,6 +23,9 @@ import {
   type WorklogDraft,
 } from "./worklog";
 import { DateField } from "../ui/DateField";
+import { useConfirm } from "../ui/Confirm";
+import { useToast } from "../ui/Toast";
+import { LoadError } from "../ui/LoadError";
 
 /**
  * После списания, правки или удаления: список записей и задача (списано, остаток) перечитываются,
@@ -49,6 +52,8 @@ interface DialogProps {
 
 /** Окно «Списать время» (§6.3) и правки записи (§6.5). */
 export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: DialogProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const key = task.key ?? "";
   const today = todayIn(timeZone);
@@ -79,6 +84,7 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
     onSuccess: () => {
       worklogsChanged(queryClient, key);
       onClose();
+      toast.success(worklog ? "Запись времени изменена" : `Время списано на ${key}`);
     },
   });
 
@@ -87,9 +93,10 @@ export function WorklogDialog({ task, worklog, manager, timeZone, onClose }: Dia
   const dirty = worklog
     ? draft.duration !== formatDuration(worklog.minutes) || draft.workDate !== worklog.work_date || draft.comment !== (worklog.comment ?? "")
     : draft.duration.trim() !== "" || draft.comment.trim() !== "";
-  const dismiss = () => {
+  const dismiss = async () => {
     if (save.isPending) return;
-    if (dirty && !window.confirm("Закрыть без сохранения?")) return;
+    if (dirty && !(await confirm({ title: "Закрыть без сохранения?", body: "Введённое пропадёт.", confirmLabel: "Закрыть" })))
+      return;
     onClose();
   };
 
@@ -201,12 +208,17 @@ function WorklogRow({
   timeZone?: string;
   onEdit: () => void;
 }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const key = task.key ?? "";
   const perms = worklogPerms(w, actor, { readOnly, cancelled: task.status === "cancelled", today });
   const remove = useMutation({
     mutationFn: () => api.api.v1WorklogsDelete(w.id!),
-    onSuccess: () => worklogsChanged(queryClient, key),
+    onSuccess: () => {
+      worklogsChanged(queryClient, key);
+      toast.success("Запись времени удалена");
+    },
   });
   return (
     <tr data-testid="worklog-row" data-worklog-id={w.id}>
@@ -238,7 +250,10 @@ function WorklogRow({
             className="link danger"
             data-testid="worklog-delete"
             disabled={remove.isPending}
-            onClick={() => window.confirm(`Удалить запись ${formatDuration(w.minutes)}?`) && remove.mutate()}
+            onClick={async () =>
+              (await confirm({ title: `Удалить запись ${formatDuration(w.minutes)}?`, confirmLabel: "Удалить", danger: true })) &&
+              remove.mutate()
+            }
           >
             Удалить
           </button>
@@ -272,7 +287,7 @@ export function Worklogs({ task, actor, readOnly, sprintClosed, timeZone }: Prop
     <p className="notice">Спринт задачи завершён: записи времени не добавляются, не изменяются и не удаляются.</p>
   );
   if (list.isPending) return <p className="muted">Загрузка…</p>;
-  if (list.isError) return <p role="alert">{errorText(list.error)}</p>;
+  if (list.isError) return <LoadError error={list.error} onRetry={() => void list.refetch()} />;
   if (list.data.length === 0)
     return (
       <>

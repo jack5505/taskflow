@@ -7,6 +7,7 @@ import type { Actor } from "../board/transitions";
 import { formatBytes, formatDateTime } from "../lib/format";
 import { attachmentsQueryKey } from "./keys";
 import { MAX_ATTACHMENT_BYTES, canManageAttachment, isPreviewable } from "./perms";
+import { useConfirm } from "../ui/Confirm";
 
 /** Ссылка на файл, подписанная на 10 минут (§3.9): берём заново, если старше 8 минут. */
 function useDownloadLink(id: string | undefined, enabled: boolean) {
@@ -32,6 +33,7 @@ function AttachmentItem({
   taskKey: string;
   timeZone?: string;
 }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const preview = isPreviewable(a.mime_type);
   const link = useDownloadLink(a.id, preview);
@@ -84,9 +86,10 @@ function AttachmentItem({
               type="button"
               className="link danger"
               disabled={remove.isPending}
-              onClick={() => {
+              onClick={async () => {
                 setError("");
-                if (window.confirm(`Удалить файл «${a.file_name}»?`)) remove.mutate();
+                if (await confirm({ title: `Удалить файл «${a.file_name}»?`, confirmLabel: "Удалить", danger: true }))
+                  remove.mutate();
               }}
             >
               Удалить

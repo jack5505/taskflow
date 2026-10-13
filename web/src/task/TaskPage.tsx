@@ -17,13 +17,12 @@ import {
 } from "../board/transitions";
 import { statusLabel } from "../lib/status";
 import { actorFor, useActiveSprint, useProject, useProjectMembers } from "../projects/hooks";
-import { myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { TimerButton } from "../timer/TimerButton";
 import { canStartTimer } from "../timer/timer";
 import { useSprints } from "../backlog/useSprints";
 import { Attachments } from "./Attachments";
 import { Comments } from "./Comments";
-import { commentsQueryKey, historyQueryKey, projectKeyOf, taskQueryKey, worklogsQueryKey } from "./keys";
+import { commentsQueryKey, historyQueryKey, projectKeyOf, taskQueryKey, trashQueryKey, worklogsQueryKey } from "./keys";
 import { ConflictDialog, type Conflict } from "./ConflictDialog";
 import { describeHistory, type ValueContext } from "./history";
 import { MarkdownEditor, MarkdownView } from "./Markdown";
@@ -33,6 +32,10 @@ import { InlineEdit, TaskFields, type Save, type SaveResult } from "./TaskFields
 import { canAddWorklog } from "./worklog";
 import { WorklogDialog, Worklogs } from "./Worklogs";
 import { Icon, TypeIcon } from "../ui/Icon";
+import { useConfirm } from "../ui/Confirm";
+import { useToast } from "../ui/Toast";
+import { LoadError } from "../ui/LoadError";
+import { isSystemAdmin, myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 
 type Tab = "comments" | "history" | "attachments" | "worklog";
 const tabs: { id: Tab; label: string }[] = [
@@ -176,6 +179,7 @@ function History({ taskKey, ctx }: { taskKey: string; ctx: ValueContext }) {
 
 /** Карточка задачи (ТЗ §7.5): /tasks/{key}. */
 export function TaskPage() {
+  const confirm = useConfirm();
   const { key = "" } = useParams();
   const projectKey = projectKeyOf(key);
   const navigate = useNavigate();
@@ -192,7 +196,7 @@ export function TaskPage() {
   const { sprint: activeSprint } = useActiveSprint(projectKey, project.data);
 
   const [tab, setTab] = useState<Tab>("comments");
-  const [actionError, setActionError] = useState("");
+  const toast = useToast();
   const [saveError, setSaveError] = useState("");
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -285,17 +289,22 @@ export function TaskPage() {
     onSuccess: (next) => {
       setDialog(null);
       changed(next);
+      toast.success(`${key}: ${statusLabel(next.status)}`);
       // Причина возврата или отмены сохраняется комментарием.
       void queryClient.invalidateQueries({ queryKey: commentsQueryKey(key) });
     },
+    // Из окна ошибка показывается в окне.
     onError: (e) => {
-      if (!dialog) setActionError(errorText(e));
+      if (!dialog) toast.error(errorText(e));
     },
   });
   const take = useMutation({
     mutationFn: async () => (await api.api.v1TasksTakeCreate(key)).data,
-    onSuccess: (next) => changed(next),
-    onError: (e) => setActionError(errorText(e)),
+    onSuccess: (next) => {
+      changed(next);
+      toast.success(`${key} взята в работу`);
+    },
+    onError: (e) => toast.error(errorText(e)),
   });
   const remove = useMutation({
     mutationFn: () => api.api.v1TasksDelete(key),
@@ -303,20 +312,47 @@ export function TaskPage() {
       changed();
       queryClient.removeQueries({ queryKey: taskQueryKey(key) });
       void navigate(`/projects/${projectKey}`);
+      // Восстановить удалённую задачу может только администратор системы (§4) — ему и «Отменить».
+      toast.success(
+        `Задача ${key} удалена`,
+        isSystemAdmin(me.data)
+          ? {
+              label: "Отменить",
+              onClick: () =>
+                void api.api.v1TasksRestoreCreate(key).then(
+                  () => {
+                    changed();
+                    // Пользователь уже на доске: перечитать её сразу, а не при следующем заходе.
+                    void queryClient.invalidateQueries({ queryKey: boardQueryKey(projectKey) });
+                    void queryClient.invalidateQueries({ queryKey: trashQueryKey(projectKey) });
+                    toast.success(`Задача ${key} восстановлена`);
+                  },
+                  (e: unknown) => toast.error(errorText(e)),
+                ),
+            }
+          : undefined,
+      );
     },
-    onError: (e) => setActionError(errorText(e)),
+    onError: (e) => toast.error(errorText(e)),
   });
   const restore = useMutation({
     mutationFn: async () => (await api.api.v1TasksRestoreCreate(key)).data,
-    onSuccess: (next) => changed(next),
-    onError: (e) => setActionError(errorText(e)),
+    onSuccess: (next) => {
+      changed(next);
+      toast.success(`Задача ${key} восстановлена`);
+    },
+    onError: (e) => toast.error(errorText(e)),
   });
 
   if (task.isPending) return <p className="muted">Загрузка…</p>;
   if (task.isError || !t || !perms)
     return (
       <section>
-        <p role="alert">{task.isError ? errorText(task.error) : "Задача не найдена"}</p>
+        {task.isError ? (
+          <LoadError error={task.error} onRetry={() => void task.refetch()} />
+        ) : (
+          <p role="alert">Задача не найдена</p>
+        )}
         <Link to="/" className="back-link">
           <Icon name="arrow-left" />К проектам
         </Link>
@@ -335,7 +371,6 @@ export function TaskPage() {
 
   const startTransition = (to: Status) => {
     if (statusMenu.current) statusMenu.current.open = false;
-    setActionError("");
     transition.reset();
     const assigneeActive = t.assignee_id ? memberList.find((m) => m.user_id === t.assignee_id)?.is_active : undefined;
     const prompt = transitionPrompt(status, to, assigneeActive);
@@ -397,7 +432,6 @@ export function TaskPage() {
               className="primary"
               disabled={busy}
               onClick={() => {
-                setActionError("");
                 take.mutate();
               }}
             >
@@ -415,7 +449,14 @@ export function TaskPage() {
               type="button"
               className="danger"
               disabled={busy}
-              onClick={() => window.confirm(`Удалить задачу ${t.key}?`) && remove.mutate()}
+              onClick={async () =>
+                (await confirm({
+                  title: `Удалить задачу ${t.key}?`,
+                  body: "Задача пропадёт с доски, из бэклога и бота, таймер на ней остановится. Записи времени останутся в отчётах; восстановить может администратор.",
+                  confirmLabel: "Удалить",
+                  danger: true,
+                })) && remove.mutate()
+              }
             >
               Удалить
             </button>
@@ -428,7 +469,6 @@ export function TaskPage() {
         </div>
       </div>
 
-      {actionError && <p role="alert">{actionError}</p>}
       {saveError && (
         <p role="alert">
           Не сохранено: {saveError}{" "}
