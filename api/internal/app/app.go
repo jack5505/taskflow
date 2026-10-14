@@ -28,7 +28,7 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 	authSvc := auth.NewService(cfg, g, rdb).WithQueue(jobs)
 	authH := auth.NewHandlers(authSvc, auth.SecureCookies(cfg.BaseURL))
 	requireAuth := authH.RequireAuth()
-	projects := project.NewService(g)
+	projects := project.NewService(g).WithInvites(authSvc, cfg.BaseURL)
 	tasks := task.NewService(g, projects).WithAttachments(cfg.AttachmentsDir, cfg.AttachmentMaxBytes, cfg.JWTSecret)
 	srv := httpserver.New(cfg, g, rdb)
 	githubReady := false // вкладка «GitHub» в вебе — только если её маршруты есть
@@ -51,7 +51,7 @@ func NewServer(cfg *config.Config, g *gorm.DB, rdb *redis.Client, jobs *asynq.Cl
 	return srv.
 		Mount(authH.Register).
 		Mount(users.NewHandlers(users.NewService(g, authSvc), requireAuth).Register).
-		Mount(project.NewHandlers(projects, requireAuth).Register).
+		Mount(project.NewHandlers(projects, requireAuth).WithInvites(authH).Register).
 		Mount(telegram.NewGroupHandlers(telegram.NewGroups(g, cfg.TelegramBotUsername), projects, requireAuth, cfg.TelegramEnabled()).Register).
 		Mount(task.NewHandlers(tasks, projects, requireAuth).Register).
 		Mount(sprint.NewHandlers(sprint.NewService(g, projects), projects, requireAuth).Register).

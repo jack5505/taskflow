@@ -80,6 +80,9 @@ func newView(p *Project, role string) View {
 type Service struct {
 	db  *gorm.DB
 	now func() time.Time
+	// Регистрация по ссылке-приглашению (WithInvites).
+	registrar Registrar
+	baseURL   string
 }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db, now: time.Now} }
@@ -297,6 +300,10 @@ func (s *Service) Update(ctx context.Context, a *Access, in UpdateInput) (*Proje
 				if err := events.Publish(tx, events.ProjectArchived, map[string]any{"project_id": p.ID, "key": p.Key, "at": s.now()}); err != nil {
 					return err
 				}
+				// Ссылки-приглашения архив отзывает: после возврата из архива они не оживают (§7.1).
+				if err := revokeProjectInvites(tx, p.ID, s.now()); err != nil {
+					return err
+				}
 			}
 		}
 		if len(updates) == 0 {
@@ -364,6 +371,10 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 		if err := tx.Model(&p).Updates(map[string]any{"deleted_at": s.now(), "telegram_chat_id": nil, "telegram_chat_title": nil,
 			"github_repo": nil, "github_installation_id": nil, "github_issues": false}).Error; err != nil {
 			return fmt.Errorf("project: delete: %w", err)
+		}
+		// Как и архив, удаление отзывает ссылки-приглашения: восстановление их не оживляет (§7.1).
+		if err := revokeProjectInvites(tx, p.ID, s.now()); err != nil {
+			return err
 		}
 		if err := audit.Write(tx, audit.Record{ProjectID: &p.ID, Action: audit.ProjectDeleted, EntityType: "project",
 			EntityID: p.ID.String(), Old: map[string]any{"telegram_chat_id": p.TelegramChatID}}); err != nil {

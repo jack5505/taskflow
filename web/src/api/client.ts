@@ -181,6 +181,40 @@ export interface ProjectActiveSprint {
   start_date?: string;
 }
 
+export interface ProjectCreatedInvite {
+  created_at?: string;
+  created_by?: string;
+  created_by_name?: string;
+  expires_at?: string;
+  id?: string;
+  joined_count?: number;
+  role?: "manager" | "member";
+  url?: string;
+}
+
+export interface ProjectInviteInfo {
+  expires_at?: string;
+  project_key?: string;
+  project_name?: string;
+  role?: "manager" | "member";
+}
+
+export interface ProjectInviteView {
+  created_at?: string;
+  created_by?: string;
+  created_by_name?: string;
+  expires_at?: string;
+  id?: string;
+  joined_count?: number;
+  role?: "manager" | "member";
+}
+
+export interface ProjectJoinResult {
+  added?: boolean;
+  project_key?: string;
+  role?: "manager" | "member";
+}
+
 export interface ProjectListItem {
   active_sprint?: ProjectActiveSprint;
   created_at?: string;
@@ -238,6 +272,10 @@ export interface ProjectView {
   updated_at?: string;
 }
 
+export interface ProjectCreateInviteRequest {
+  role: "manager" | "member";
+}
+
 export interface ProjectCreateRequest {
   /** @maxLength 2000 */
   description?: string;
@@ -258,6 +296,18 @@ export interface ProjectCreateRequest {
 export interface ProjectPutMemberRequest {
   /** допустимость проверяет сервис — одно правило и для бота */
   role: "manager" | "member";
+}
+
+export interface ProjectRegisterRequest {
+  /** @maxLength 200 */
+  display_name: string;
+  /** @maxLength 254 */
+  email: string;
+  /**
+   * @minLength 10
+   * @maxLength 72
+   */
+  password: string;
 }
 
 export interface ProjectUpdateRequest {
@@ -1371,6 +1421,62 @@ export class Api<
       }),
 
     /**
+     * @description Без входа. Ссылка отозвана, истекла, проект в архиве или удалён — 404 (§7.1).
+     *
+     * @tags invites
+     * @name V1InvitesDetail
+     * @summary Приглашение по ссылке
+     * @request GET:/api/v1/invites/{token}
+     */
+    v1InvitesDetail: (token: string, params: RequestParams = {}) =>
+      this.request<ProjectInviteInfo, ApierrResponse>({
+        path: `/api/v1/invites/${token}`,
+        method: "GET",
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Уже участник — роль не меняется (added=false).
+     *
+     * @tags invites
+     * @name V1InvitesAcceptCreate
+     * @summary Присоединиться к проекту по ссылке
+     * @request POST:/api/v1/invites/{token}/accept
+     * @secure
+     */
+    v1InvitesAcceptCreate: (token: string, params: RequestParams = {}) =>
+      this.request<ProjectJoinResult, ApierrResponse>({
+        path: `/api/v1/invites/${token}/accept`,
+        method: "POST",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Без входа. Создаёт пользователя, делает его участником проекта с ролью из ссылки и входит: ответ и cookie refresh_token — как у /auth/login (§7.1). Email письмом не подтверждается. Занятый email — 400 по полю email. Не больше 10 попыток в час с одного IP.
+     *
+     * @tags invites
+     * @name V1InvitesRegisterCreate
+     * @summary Зарегистрироваться по ссылке-приглашению
+     * @request POST:/api/v1/invites/{token}/register
+     */
+    v1InvitesRegisterCreate: (
+      token: string,
+      body: ProjectRegisterRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<AuthSessionResponse, ApierrResponse>({
+        path: `/api/v1/invites/${token}/register`,
+        method: "POST",
+        body: body,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
      * @description Текущий пользователь, его личные уведомления §8.7 (все ключи, с умолчаниями), проекты и роли, запущенный таймер (пока всегда null — появится вместе с таймером).
      *
      * @tags me
@@ -1781,6 +1887,69 @@ export class Api<
     v1ProjectsGithubDelete: (key: string, params: RequestParams = {}) =>
       this.request<void, ApierrResponse>({
         path: `/api/v1/projects/${key}/github`,
+        method: "DELETE",
+        secure: true,
+        ...params,
+      }),
+
+    /**
+     * @description Неотозванные и неистёкшие ссылки, новые первыми (§7.1, §7.9). Токен не возвращается: полная ссылка есть только в ответе на создание.
+     *
+     * @tags projects
+     * @name V1ProjectsInvitesList
+     * @summary Ссылки-приглашения проекта
+     * @request GET:/api/v1/projects/{key}/invites
+     * @secure
+     */
+    v1ProjectsInvitesList: (key: string, params: RequestParams = {}) =>
+      this.request<ProjectInviteView[], ApierrResponse>({
+        path: `/api/v1/projects/${key}/invites`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description Ссылка с ролью в проекте, действует 7 дней или до отзыва; по ней может присоединиться любое число людей (§7.1). Полная ссылка (url) возвращается только здесь.
+     *
+     * @tags projects
+     * @name V1ProjectsInvitesCreate
+     * @summary Создать ссылку-приглашение
+     * @request POST:/api/v1/projects/{key}/invites
+     * @secure
+     */
+    v1ProjectsInvitesCreate: (
+      key: string,
+      body: ProjectCreateInviteRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<ProjectCreatedInvite, ApierrResponse>({
+        path: `/api/v1/projects/${key}/invites`,
+        method: "POST",
+        body: body,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * @description По отозванной ссылке больше никто не присоединится; уже вступившие остаются в проекте.
+     *
+     * @tags projects
+     * @name V1ProjectsInvitesDelete
+     * @summary Отозвать ссылку-приглашение
+     * @request DELETE:/api/v1/projects/{key}/invites/{id}
+     * @secure
+     */
+    v1ProjectsInvitesDelete: (
+      key: string,
+      id: string,
+      params: RequestParams = {},
+    ) =>
+      this.request<void, ApierrResponse>({
+        path: `/api/v1/projects/${key}/invites/${id}`,
         method: "DELETE",
         secure: true,
         ...params,

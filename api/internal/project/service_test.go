@@ -50,10 +50,10 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = rdb.Close() })
 	cfg := &config.Config{JWTSecret: "0123456789abcdef0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: time.Hour}
 	authSvc := auth.NewService(cfg, g, rdb)
-	svc := project.NewService(g)
+	svc := project.NewService(g).WithInvites(authSvc, inviteBaseURL)
 	authH := auth.NewHandlers(authSvc, false)
 	srv := httpserver.New(&config.Config{Env: "test"}, g, rdb).Mount(authH.Register).
-		Mount(project.NewHandlers(svc, authH.RequireAuth()).Register)
+		Mount(project.NewHandlers(svc, authH.RequireAuth()).WithInvites(authH).Register)
 	return &fixture{db: g, auth: authSvc, svc: svc, r: srv.Router()}
 }
 

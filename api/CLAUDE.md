@@ -22,7 +22,7 @@ migrations/          SQL golang-migrate: YYYYMMDDHHMMSS_name.{up,down}.sql
 | --- | --- |
 | `user` | `users` |
 | `auth` | `refresh_tokens`, `password_tokens` |
-| `project` | `projects`, `project_members` |
+| `project` | `projects`, `project_members`, `project_invites` |
 | `task` | `tasks`, `task_history`, `comments`, `attachments`, `worklogs`, `active_timers`, `github_links` |
 | `sprint` | `sprints`, `sprint_log`, `sprint_start_scope`, `sprint_daily_snapshots` |
 | `notification` | `notifications`, `due_reminders` |

@@ -38,6 +38,8 @@ const (
 	MemberAdded       = "member.added"
 	MemberRoleChanged = "member.role_changed"
 	MemberRemoved     = "member.removed"
+	InviteCreated     = "invite.created" // ссылка-приглашение в проект (§7.1)
+	InviteRevoked     = "invite.revoked"
 
 	UserCreated     = "user.created"
 	UserUpdated     = "user.updated"

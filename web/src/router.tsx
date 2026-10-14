@@ -4,6 +4,7 @@ import { AppLayout } from "./pages/AppLayout";
 import { AuthLayout } from "./pages/AuthLayout";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { HomePage } from "./pages/HomePage";
+import { JoinPage } from "./pages/JoinPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PasswordSetPage } from "./pages/PasswordSetPage";
 import { BacklogPage } from "./backlog/BacklogPage";
@@ -13,7 +14,8 @@ import { ReportsPage } from "./reports/ReportsPage";
 import { ProfilePage } from "./profile/ProfilePage";
 import { SettingsPage } from "./settings/SettingsPage";
 
-// Адреса страниц. /password-set — путь из письма (api/internal/auth: baseURL + /password-set?token=…).
+// Адреса страниц. /password-set — путь из письма (api/internal/auth: baseURL + /password-set?token=…),
+// /join/<токен> — ссылка-приглашение (api/internal/project: baseURL + /join/<токен>).
 export const router = createBrowserRouter([
   {
     element: <AuthLayout />,
@@ -27,6 +29,8 @@ export const router = createBrowserRouter([
       },
       // Доступна и с открытой сессией: ссылку из письма могут открыть в любом состоянии.
       { path: "/password-set", element: <PasswordSetPage /> },
+      // Ссылка-приглашение (§7.1): без сессии — регистрация, с сессией — «Присоединиться».
+      { path: "/join/:token", element: <JoinPage /> },
     ],
   },
   {

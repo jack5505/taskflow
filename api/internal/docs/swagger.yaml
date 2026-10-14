@@ -281,6 +281,74 @@ definitions:
         example: "2026-10-01"
         type: string
     type: object
+  project.CreatedInvite:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      joined_count:
+        type: integer
+      role:
+        enum:
+        - manager
+        - member
+        type: string
+      url:
+        type: string
+    type: object
+  project.InviteInfo:
+    properties:
+      expires_at:
+        type: string
+      project_key:
+        type: string
+      project_name:
+        type: string
+      role:
+        enum:
+        - manager
+        - member
+        type: string
+    type: object
+  project.InviteView:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      joined_count:
+        type: integer
+      role:
+        enum:
+        - manager
+        - member
+        type: string
+    type: object
+  project.JoinResult:
+    properties:
+      added:
+        type: boolean
+      project_key:
+        type: string
+      role:
+        enum:
+        - manager
+        - member
+        type: string
+    type: object
   project.ListItem:
     properties:
       active_sprint:
@@ -391,6 +459,16 @@ definitions:
       updated_at:
         type: string
     type: object
+  project.createInviteRequest:
+    properties:
+      role:
+        enum:
+        - manager
+        - member
+        type: string
+    required:
+    - role
+    type: object
   project.createRequest:
     properties:
       description:
@@ -421,6 +499,23 @@ definitions:
         type: string
     required:
     - role
+    type: object
+  project.registerRequest:
+    properties:
+      display_name:
+        maxLength: 200
+        type: string
+      email:
+        maxLength: 254
+        type: string
+      password:
+        maxLength: 72
+        minLength: 10
+        type: string
+    required:
+    - display_name
+    - email
+    - password
     type: object
   project.updateRequest:
     properties:
@@ -1906,6 +2001,106 @@ paths:
       summary: Webhook GitHub App
       tags:
       - github
+  /api/v1/invites/{token}:
+    get:
+      description: Без входа. Ссылка отозвана, истекла, проект в архиве или удалён
+        — 404 (§7.1).
+      parameters:
+      - description: токен из ссылки
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/project.InviteInfo'
+        "404":
+          description: 'NOT_FOUND: ссылка недействительна'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Приглашение по ссылке
+      tags:
+      - invites
+  /api/v1/invites/{token}/accept:
+    post:
+      description: Уже участник — роль не меняется (added=false).
+      parameters:
+      - description: токен из ссылки
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/project.JoinResult'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: пользователя исключили из проекта после создания
+            ссылки'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: ссылка недействительна'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Присоединиться к проекту по ссылке
+      tags:
+      - invites
+  /api/v1/invites/{token}/register:
+    post:
+      consumes:
+      - application/json
+      description: 'Без входа. Создаёт пользователя, делает его участником проекта
+        с ролью из ссылки и входит: ответ и cookie refresh_token — как у /auth/login
+        (§7.1). Email письмом не подтверждается. Занятый email — 400 по полю email.
+        Не больше 10 попыток в час с одного IP.'
+      parameters:
+      - description: токен из ссылки
+        in: path
+        name: token
+        required: true
+        type: string
+      - description: имя, email, пароль (не короче 10 символов)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.registerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.SessionResponse'
+        "400":
+          description: VALIDATION_FAILED, в том числе email занят
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: ссылка недействительна'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "429":
+          description: 'RATE_LIMITED: details.retry_after_seconds'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      summary: Зарегистрироваться по ссылке-приглашению
+      tags:
+      - invites
   /api/v1/me:
     get:
       description: Текущий пользователь, его личные уведомления §8.7 (все ключи, с
@@ -2538,6 +2733,131 @@ paths:
       summary: Привязать репозиторий GitHub
       tags:
       - github
+  /api/v1/projects/{key}/invites:
+    get:
+      description: 'Неотозванные и неистёкшие ссылки, новые первыми (§7.1, §7.9).
+        Токен не возвращается: полная ссылка есть только в ответе на создание.'
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/project.InviteView'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Ссылки-приглашения проекта
+      tags:
+      - projects
+    post:
+      consumes:
+      - application/json
+      description: Ссылка с ролью в проекте, действует 7 дней или до отзыва; по ней
+        может присоединиться любое число людей (§7.1). Полная ссылка (url) возвращается
+        только здесь.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: роль
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/project.createInviteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/project.CreatedInvite'
+        "400":
+          description: VALIDATION_FAILED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Создать ссылку-приглашение
+      tags:
+      - projects
+  /api/v1/projects/{key}/invites/{id}:
+    delete:
+      description: По отозванной ссылке больше никто не присоединится; уже вступившие
+        остаются в проекте.
+      parameters:
+      - description: ключ проекта
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: id ссылки
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "403":
+          description: 'FORBIDDEN: не менеджер'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "404":
+          description: 'NOT_FOUND: нет проекта или действующей ссылки'
+          schema:
+            $ref: '#/definitions/apierr.Response'
+        "409":
+          description: PROJECT_ARCHIVED
+          schema:
+            $ref: '#/definitions/apierr.Response'
+      security:
+      - BearerAuth: []
+      summary: Отозвать ссылку-приглашение
+      tags:
+      - projects
   /api/v1/projects/{key}/members:
     get:
       parameters:

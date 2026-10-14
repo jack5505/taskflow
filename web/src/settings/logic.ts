@@ -106,6 +106,8 @@ export const AUDIT_ACTIONS: { value: string; label: string }[] = [
   { value: "member.added", label: "Участник добавлен" },
   { value: "member.role_changed", label: "Роль изменена" },
   { value: "member.removed", label: "Участник исключён" },
+  { value: "invite.created", label: "Ссылка-приглашение создана" },
+  { value: "invite.revoked", label: "Ссылка-приглашение отозвана" },
   { value: "task.deleted", label: "Задача удалена" },
   { value: "task.restored", label: "Задача восстановлена" },
   { value: "worklog.updated", label: "Чужая запись времени изменена" },
@@ -200,4 +202,16 @@ export function bindCodeFrom(d: Partial<GroupBindCode>): GroupBindCode {
 export function groupLabel(p: { telegram_chat_id?: number; telegram_chat_title?: string }): string | null {
   if (!p.telegram_chat_id) return null;
   return p.telegram_chat_title ? `«${p.telegram_chat_title}»` : `id чата ${p.telegram_chat_id}`;
+}
+
+export type Role = "manager" | "member";
+
+/** Роли участника проекта (§2) — для списков участников и ссылок-приглашений. */
+export const ROLES: { value: Role; label: string }[] = [
+  { value: "member", label: "Исполнитель" },
+  { value: "manager", label: "Менеджер" },
+];
+
+export function roleLabel(role: string | undefined): string {
+  return ROLES.find((r) => r.value === role)?.label ?? role ?? "";
 }
