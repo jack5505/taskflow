@@ -715,6 +715,21 @@ button.primary:hover:not(:disabled) {
   gap: var(--space-2);
 }
 
+/* Ссылки-приглашения во вкладке «Участники» (settings/InvitesPanel.tsx) */
+.invites-panel {
+  max-width: 720px;
+}
+
+.invite-created {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.invite-created label {
+  flex: 1;
+}
+
 /* Доска (ТЗ §7.3) */
 /* Заголовок страниц проекта (projects/ProjectHeader.tsx) */
 .project-head {

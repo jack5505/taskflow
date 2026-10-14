@@ -11,6 +11,7 @@ import { memberErrorText } from "./logic";
 import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
+import { InvitesPanel } from "./InvitesPanel";
 
 type Role = "manager" | "member";
 
@@ -27,8 +28,9 @@ interface Props {
 }
 
 /**
- * Участники (§7.9): роли, добавление существующего пользователя, исключение. Администратор
- * системы здесь же заводит пользователя (§7.1) и деактивирует его во всей системе (§3.1).
+ * Участники (§7.9): роли, добавление существующего пользователя, ссылки-приглашения (§7.1),
+ * исключение. Администратор системы здесь же заводит пользователя (§7.1) и деактивирует его
+ * во всей системе (§3.1).
  */
 export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
   const toast = useToast();
@@ -161,6 +163,7 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
       </table>
 
       {editable && <AddMember projectKey={projectKey} members={list} onAdded={refresh} />}
+      {editable && <InvitesPanel projectKey={projectKey} />}
       {editable && admin && <CreateUser projectKey={projectKey} onCreated={refresh} />}
     </>
   );
