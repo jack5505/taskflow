@@ -41,6 +41,15 @@ func revokeInvite(tx *gorm.DB, projectID, id uuid.UUID, now time.Time) (bool, er
 	return res.RowsAffected == 1, nil
 }
 
+// revokeProjectInvites отзывает все действующие ссылки проекта (архивация, удаление).
+func revokeProjectInvites(tx *gorm.DB, projectID uuid.UUID, now time.Time) error {
+	if err := tx.Exec(`UPDATE project_invites SET revoked_at = ?, updated_at = ? WHERE project_id = ? AND revoked_at IS NULL`,
+		now, now, projectID).Error; err != nil {
+		return fmt.Errorf("project: revoke project invites: %w", err)
+	}
+	return nil
+}
+
 // countInviteJoin — ещё один человек присоединился по ссылке.
 func countInviteJoin(tx *gorm.DB, id uuid.UUID) error {
 	if err := tx.Exec(`UPDATE project_invites SET joined_count = joined_count + 1, updated_at = now() WHERE id = ?`, id).Error; err != nil {

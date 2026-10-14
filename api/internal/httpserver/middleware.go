@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,7 +46,7 @@ func accessLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		// Путь берём до обработчика: NoRoute для SPA переписывает его на "/".
-		method, path := c.Request.Method, c.Request.URL.Path
+		method, path := c.Request.Method, redactPath(c.Request.URL.Path)
 		c.Next()
 		attrs := []any{
 			"method", method,
@@ -58,6 +59,25 @@ func accessLog() gin.HandlerFunc {
 		}
 		logx.From(c.Request.Context()).Info("http", attrs...)
 	}
+}
+
+// secretPaths — пути, где следующий сегмент — секрет ссылки-приглашения (§7.1): в базе только его
+// хеш, в лог он тоже не попадает.
+var secretPaths = []string{"/api/v1/invites/", "/join/"}
+
+// redactPath заменяет токен ссылки в пути на «***».
+func redactPath(path string) string {
+	for _, prefix := range secretPaths {
+		rest, ok := strings.CutPrefix(path, prefix)
+		if !ok {
+			continue
+		}
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			return prefix + "***" + rest[i:]
+		}
+		return prefix + "***"
+	}
+	return path
 }
 
 // recovery превращает панику в 500 по формату §9.3 и пишет стек в лог.

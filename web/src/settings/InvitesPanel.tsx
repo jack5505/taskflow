@@ -8,10 +8,8 @@ import { formatDate } from "../lib/format";
 import { useConfirm } from "../ui/Confirm";
 import { LoadError } from "../ui/LoadError";
 import { useToast } from "../ui/Toast";
+import { ROLES, roleLabel, type Role } from "./logic";
 
-type Role = "manager" | "member";
-
-const ROLE_LABEL: Record<string, string> = { member: "Исполнитель", manager: "Менеджер" };
 
 const invitesQueryKey = (key: string) => ["project-invites", key] as const;
 
@@ -77,8 +75,11 @@ export function InvitesPanel({ projectKey }: { projectKey: string }) {
       </p>
       <form className="actions" onSubmit={submit}>
         <select aria-label="Роль по ссылке" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-          <option value="member">Исполнитель</option>
-          <option value="manager">Менеджер</option>
+          {ROLES.map((r) => (
+            <option key={r.value} value={r.value}>
+              {r.label}
+            </option>
+          ))}
         </select>
         <button type="submit" className="primary" disabled={create.isPending}>
           {create.isPending ? "Создаём…" : "Создать ссылку"}
@@ -88,7 +89,7 @@ export function InvitesPanel({ projectKey }: { projectKey: string }) {
       {created?.url && (
         <div className="invite-created">
           <label>
-            Новая ссылка ({ROLE_LABEL[created.role ?? ""]}) — скопируйте её сейчас: потом полностью она не показывается
+            Новая ссылка ({roleLabel(created.role)}) — скопируйте её сейчас: потом полностью она не показывается
             <input readOnly value={created.url} onFocus={(e) => e.currentTarget.select()} />
           </label>
           <button type="button" onClick={() => void copy(created.url ?? "")}>
@@ -112,7 +113,7 @@ export function InvitesPanel({ projectKey }: { projectKey: string }) {
           <tbody>
             {list.map((inv) => (
               <tr key={inv.id}>
-                <td>{ROLE_LABEL[inv.role ?? ""]}</td>
+                <td>{roleLabel(inv.role)}</td>
                 <td>{inv.created_by_name || "—"}</td>
                 <td>{formatDate(inv.expires_at, timeZone)}</td>
                 <td>{inv.joined_count ?? 0}</td>

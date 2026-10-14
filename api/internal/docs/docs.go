@@ -775,6 +775,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/apierr.Response"
                         }
                     },
+                    "403": {
+                        "description": "FORBIDDEN: пользователя исключили из проекта после создания ссылки",
+                        "schema": {
+                            "$ref": "#/definitions/apierr.Response"
+                        }
+                    },
                     "404": {
                         "description": "NOT_FOUND: ссылка недействительна",
                         "schema": {

@@ -53,3 +53,15 @@ func parseCursor(c string) (*pageCursor, error) {
 	}
 	return &pageCursor{at, id}, nil
 }
+
+// RemovedSince — исключали ли пользователя userID из проекта начиная с момента since (по журналу
+// member.removed). Нужен ссылкам-приглашениям: исключённый после создания ссылки по ней не
+// возвращается (§7.1).
+func RemovedSince(db *gorm.DB, projectID, userID uuid.UUID, since time.Time) (bool, error) {
+	var n int64
+	if err := db.Raw(`SELECT count(*) FROM audit_logs WHERE project_id = ? AND action = ? AND entity_type = 'user'
+		AND entity_id = ? AND created_at >= ?`, projectID, MemberRemoved, userID.String(), since).Scan(&n).Error; err != nil {
+		return false, fmt.Errorf("audit: removed since: %w", err)
+	}
+	return n > 0, nil
+}

@@ -40,7 +40,8 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.PUT("/:key/members/:user_id", h.putMember)
 	g.DELETE("/:key/members/:user_id", h.removeMember)
 	g.GET("/:key/audit", h.auditLog)
-	if h.sessions != nil {
+	// Ссылки-приглашения — только когда и сервис, и обработчики собраны с WithInvites.
+	if h.sessions != nil && h.svc.registrar != nil {
 		h.registerInvites(api)
 	}
 }

@@ -199,6 +199,7 @@ func (h *Handlers) registerByInvite(c *gin.Context) {
 // @Param        token  path      string  true  "токен из ссылки"
 // @Success      200    {object}  JoinResult
 // @Failure      401    {object}  apierr.Response
+// @Failure      403    {object}  apierr.Response  "FORBIDDEN: пользователя исключили из проекта после создания ссылки"
 // @Failure      404    {object}  apierr.Response  "NOT_FOUND: ссылка недействительна"
 // @Router       /api/v1/invites/{token}/accept [post]
 func (h *Handlers) acceptInvite(c *gin.Context) {

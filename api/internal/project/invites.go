@@ -23,6 +23,7 @@ var (
 	// ErrInviteInvalid — ссылки нет, она отозвана или истекла, проект в архиве или удалён (§7.1).
 	ErrInviteInvalid  = apierr.NotFound("Ссылка-приглашение недействительна: попросите менеджера проекта прислать новую")
 	ErrInviteNotFound = apierr.NotFound("Ссылка-приглашение не найдена")
+	ErrInviteRemoved  = apierr.Forbidden("Вас исключили из проекта после создания этой ссылки: попросите менеджера прислать новую")
 	errEmailTaken     = fieldError("email", "уже зарегистрирован: войдите и примите приглашение")
 )
 
@@ -245,8 +246,9 @@ func (s *Service) Register(ctx context.Context, token string, in RegisterInput) 
 	if err := s.registrar.TakeRegisterAttempt(ctx, in.IP); err != nil {
 		return nil, err
 	}
-	// Недействительная ссылка — 404 раньше ошибок формы и до дорогого bcrypt.
-	if _, err := s.InviteInfo(ctx, token); err != nil {
+	// Недействительная ссылка — 404 раньше ошибок формы и до дорогого bcrypt; проект и повторная
+	// проверка — в joinTx под замком.
+	if _, err := s.validInvite(s.db.WithContext(ctx), token); err != nil {
 		return nil, err
 	}
 	name, ok := user.NormalizeDisplayName(in.DisplayName)
@@ -316,6 +318,15 @@ func (s *Service) joinTx(tx *gorm.DB, token string, userID uuid.UUID) (*JoinResu
 	}
 	if current != "" {
 		return &JoinResult{ProjectKey: p.Key, Role: current}, nil
+	}
+	// Исключённый после создания ссылки по ней не возвращается: исключение не должно отменяться
+	// тем, что у человека осталась многоразовая ссылка (§7.1).
+	removed, err := audit.RemovedSince(tx, p.ID, userID, inv.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if removed {
+		return nil, ErrInviteRemoved
 	}
 	if err := tx.Create(&Member{ProjectID: p.ID, UserID: userID, Role: inv.Role}).Error; err != nil {
 		return nil, fmt.Errorf("project: join: %w", err)

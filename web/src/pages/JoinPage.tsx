@@ -7,8 +7,8 @@ import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { useAuthStatus, useMe } from "../auth/hooks";
 import { signIn } from "../auth/session";
 import { MIN_PASSWORD, newPasswordError } from "../lib/password";
+import { roleLabel } from "../settings/logic";
 
-const ROLE_LABEL: Record<string, string> = { member: "исполнитель", manager: "менеджер" };
 
 // Регистрация и вступление по ссылке-приглашению /join/<токен> (ТЗ §7.1). Без сессии —
 // форма регистрации; с сессией — кнопка «Присоединиться». Роль уже состоящего в проекте
@@ -42,7 +42,7 @@ function Heading({ info }: { info: ProjectInviteInfo }) {
     <>
       <h2>Приглашение в проект «{info.project_name}»</h2>
       <p>
-        Роль в проекте: <strong>{ROLE_LABEL[info.role ?? ""]}</strong>
+        Роль в проекте: <strong>{roleLabel(info.role).toLowerCase()}</strong>
       </p>
     </>
   );

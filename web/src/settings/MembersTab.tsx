@@ -7,18 +7,12 @@ import { errorText, fieldErrors, parseApiError } from "../api/errors";
 import { membersQueryKey, projectQueryKey, useProjectMembers } from "../projects/hooks";
 import { projectsQueryKey } from "../projects/logic";
 import { usersQueryKey, useUsers } from "./hooks";
-import { memberErrorText } from "./logic";
+import { memberErrorText, ROLES, type Role } from "./logic";
 import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
 import { InvitesPanel } from "./InvitesPanel";
 
-type Role = "manager" | "member";
-
-const ROLES: { value: Role; label: string }[] = [
-  { value: "member", label: "Исполнитель" },
-  { value: "manager", label: "Менеджер" },
-];
 
 interface Props {
   projectKey: string;

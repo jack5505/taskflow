@@ -203,3 +203,15 @@ export function groupLabel(p: { telegram_chat_id?: number; telegram_chat_title?:
   if (!p.telegram_chat_id) return null;
   return p.telegram_chat_title ? `«${p.telegram_chat_title}»` : `id чата ${p.telegram_chat_id}`;
 }
+
+export type Role = "manager" | "member";
+
+/** Роли участника проекта (§2) — для списков участников и ссылок-приглашений. */
+export const ROLES: { value: Role; label: string }[] = [
+  { value: "member", label: "Исполнитель" },
+  { value: "manager", label: "Менеджер" },
+];
+
+export function roleLabel(role: string | undefined): string {
+  return ROLES.find((r) => r.value === role)?.label ?? role ?? "";
+}

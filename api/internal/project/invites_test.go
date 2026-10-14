@@ -88,7 +88,7 @@ func TestInviteRegisterJoinsProject(t *testing.T) {
 	require.NoError(t, f.db.Raw(`SELECT action FROM audit_logs WHERE actor_id = ? ORDER BY created_at, action`, u.ID).Scan(&actions).Error)
 	require.ElementsMatch(t, []string{audit.UserCreated, audit.MemberAdded}, actions, "актор аудита — сам новый пользователь")
 
-	rec, body = f.do(t, "GET", "/api/v1/projects/"+p.Key+"/invites", mToken, "")
+	rec, _ = f.do(t, "GET", "/api/v1/projects/"+p.Key+"/invites", mToken, "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var list []project.InviteView
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
@@ -278,4 +278,48 @@ func TestRevokeRacesWithJoin(t *testing.T) {
 			require.Equal(t, 0, count)
 		}
 	}
+}
+
+func TestRemovedMemberCannotRejoinByOldLink(t *testing.T) {
+	f := newFixture(t)
+	manager, mToken := f.user(t, false)
+	other, oToken := f.user(t, false)
+	p := f.project(t, map[*user.User]string{manager: project.RoleManager})
+	_, raw := createInvite(t, f, p.Key, mToken, project.RoleMember)
+
+	rec, _ := f.do(t, "POST", "/api/v1/invites/"+raw+"/accept", oToken, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	rec, _ = f.do(t, "DELETE", "/api/v1/projects/"+p.Key+"/members/"+other.ID.String(), mToken, "")
+	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	rec, body := f.do(t, "POST", "/api/v1/invites/"+raw+"/accept", oToken, "")
+	require.Equal(t, http.StatusForbidden, rec.Code, "исключённый по старой ссылке не возвращается")
+	require.Equal(t, apierr.CodeForbidden, errCode(body))
+
+	_, fresh := createInvite(t, f, p.Key, mToken, project.RoleMember)
+	rec, _ = f.do(t, "POST", "/api/v1/invites/"+fresh+"/accept", oToken, "")
+	require.Equal(t, http.StatusOK, rec.Code, "по новой ссылке — можно")
+}
+
+func TestArchiveAndDeleteRevokeInvites(t *testing.T) {
+	f := newFixture(t)
+	manager, mToken := f.user(t, false)
+	_, adminToken := f.user(t, true)
+	p := f.project(t, map[*user.User]string{manager: project.RoleManager})
+	_, raw := createInvite(t, f, p.Key, mToken, project.RoleMember)
+
+	rec, _ := f.do(t, "PATCH", "/api/v1/projects/"+p.Key, adminToken, `{"is_archived":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec, _ = f.do(t, "PATCH", "/api/v1/projects/"+p.Key, adminToken, `{"is_archived":false}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec, _ = f.do(t, "GET", "/api/v1/invites/"+raw, "", "")
+	require.Equal(t, http.StatusNotFound, rec.Code, "после возврата из архива ссылка не оживает")
+
+	_, raw = createInvite(t, f, p.Key, mToken, project.RoleMember)
+	rec, _ = f.do(t, "DELETE", "/api/v1/projects/"+p.Key, adminToken, "")
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	rec, _ = f.do(t, "POST", "/api/v1/projects/"+p.Key+"/restore", adminToken, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec, _ = f.do(t, "GET", "/api/v1/invites/"+raw, "", "")
+	require.Equal(t, http.StatusNotFound, rec.Code, "после восстановления ссылка не оживает")
 }
