@@ -2,11 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
   useDroppable,
-  useSensor,
-  useSensors,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
@@ -40,7 +36,7 @@ import { TransitionDialog } from "./TransitionDialog";
 import { ProjectHeader } from "../projects/ProjectHeader";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
-import { keyboardCodes, useReducedMotion } from "../ui/dnd";
+import { useDragSensors, useReducedMotion } from "../ui/dnd";
 
 
 interface Move {
@@ -225,11 +221,7 @@ export function BoardPage() {
   };
 
   const reducedMotion = useReducedMotion();
-  const sensors = useSensors(
-    // Небольшой порог: щелчок по кнопке на карточке не начинает перетаскивание.
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { keyboardCodes }),
-  );
+  const sensors = useDragSensors();
   const onDragStart = (e: DragStartEvent) => {
     setDragging((e.active.data.current?.task as TaskListItem | undefined) ?? null);
   };

@@ -51,7 +51,7 @@ export function CreateTask() {
         }}
       >
         <Icon name="plus" />
-        Создать задачу
+        <span className="create-label">Создать задачу</span>
         {current !== null && (
           <kbd className="kbd" aria-hidden="true">
             C
