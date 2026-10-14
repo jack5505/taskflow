@@ -148,33 +148,35 @@ function History({ taskKey, ctx }: { taskKey: string; ctx: ValueContext }) {
   if (history.isError) return <p role="alert">{errorText(history.error)}</p>;
   if (history.data.length === 0) return <p className="muted">Изменений нет.</p>;
   return (
-    <table className="table history">
-      <thead>
-        <tr>
-          <th>Когда</th>
-          <th>Кто</th>
-          <th>Изменение</th>
-        </tr>
-      </thead>
-      <tbody>
-        {history.data.map((h) => {
-          const line = describeHistory(h, ctx);
-          return (
-            <tr key={line.id}>
-              <td className="nowrap">{line.when}</td>
-              <td>
-                {line.who}
-                {line.source && <span className="badge">{line.source}</span>}
-              </td>
-              <td>
-                {line.text}
-                {line.note && <div className="muted">{line.note}</div>}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="table-scroll">
+      <table className="table history">
+        <thead>
+          <tr>
+            <th>Когда</th>
+            <th>Кто</th>
+            <th>Изменение</th>
+          </tr>
+        </thead>
+        <tbody>
+          {history.data.map((h) => {
+            const line = describeHistory(h, ctx);
+            return (
+              <tr key={line.id}>
+                <td className="nowrap">{line.when}</td>
+                <td>
+                  {line.who}
+                  {line.source && <span className="badge">{line.source}</span>}
+                </td>
+                <td>
+                  {line.text}
+                  {line.note && <div className="muted">{line.note}</div>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

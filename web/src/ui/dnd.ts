@@ -22,12 +22,14 @@ export const keyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Spac
  * 8 px): обычное касание прокручивает страницу и колонки. Клавиатура — пробелом.
  */
 export function useDragSensors() {
-  return useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { keyboardCodes }),
-  );
+  return useSensors(useSensor(MouseSensor, mouse), useSensor(TouchSensor, touch), useSensor(KeyboardSensor, keyboard));
 }
+
+// Настройки — постоянные объекты: useSensor запоминает датчик по ним, новые на каждой отрисовке
+// (таймер в шапке перерисовывает доску раз в секунду) пересоздавали бы датчики.
+const mouse = { activationConstraint: { distance: 5 } };
+const touch = { activationConstraint: { delay: 250, tolerance: 8 } };
+const keyboard = { keyboardCodes };
 
 /**
  * Перетаскиваемый элемент без своей роли кнопки: внутри него ссылка, а кнопка со ссылкой внутри —

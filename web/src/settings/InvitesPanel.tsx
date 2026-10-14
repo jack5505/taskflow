@@ -100,43 +100,45 @@ export function InvitesPanel({ projectKey }: { projectKey: string }) {
 
       {invites.isError && <LoadError error={invites.error} onRetry={() => void invites.refetch()} />}
       {list.length > 0 && (
-        <table className="table" aria-label="Действующие ссылки">
-          <thead>
-            <tr>
-              <th>Роль</th>
-              <th>Создал</th>
-              <th>Действует до</th>
-              <th>Присоединились</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {list.map((inv) => (
-              <tr key={inv.id}>
-                <td>{roleLabel(inv.role)}</td>
-                <td>{inv.created_by_name || "—"}</td>
-                <td>{formatDate(inv.expires_at, timeZone)}</td>
-                <td>{inv.joined_count ?? 0}</td>
-                <td className="row-actions">
-                  <button
-                    type="button"
-                    disabled={revoke.isPending}
-                    onClick={async () =>
-                      (await confirm({
-                        title: "Отозвать ссылку?",
-                        body: "По ней больше никто не присоединится. Уже вступившие останутся в проекте.",
-                        confirmLabel: "Отозвать",
-                        danger: true,
-                      })) && revoke.mutate(inv.id ?? "")
-                    }
-                  >
-                    Отозвать
-                  </button>
-                </td>
+        <div className="table-scroll">
+          <table className="table" aria-label="Действующие ссылки">
+            <thead>
+              <tr>
+                <th>Роль</th>
+                <th>Создал</th>
+                <th>Действует до</th>
+                <th>Присоединились</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {list.map((inv) => (
+                <tr key={inv.id}>
+                  <td>{roleLabel(inv.role)}</td>
+                  <td>{inv.created_by_name || "—"}</td>
+                  <td>{formatDate(inv.expires_at, timeZone)}</td>
+                  <td>{inv.joined_count ?? 0}</td>
+                  <td className="row-actions">
+                    <button
+                      type="button"
+                      disabled={revoke.isPending}
+                      onClick={async () =>
+                        (await confirm({
+                          title: "Отозвать ссылку?",
+                          body: "По ней больше никто не присоединится. Уже вступившие останутся в проекте.",
+                          confirmLabel: "Отозвать",
+                          danger: true,
+                        })) && revoke.mutate(inv.id ?? "")
+                      }
+                    >
+                      Отозвать
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );

@@ -25,36 +25,38 @@ export function MyTasks() {
       {tasks.isError && <LoadError error={tasks.error} onRetry={() => void tasks.refetch()} />}
       {tasks.data && tasks.data.length === 0 && <p className="muted">Открытых задач нет.</p>}
       {tasks.data && tasks.data.length > 0 && (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Ключ</th>
-              <th>Название</th>
-              <th>Проект</th>
-              <th>Статус</th>
-              <th>Срок</th>
-              <th>Списано / оценка</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tasks.data.map((t) => (
-              <tr key={t.key}>
-                <td className="nowrap">{t.key}</td>
-                <td>
-                  <Link to={`/tasks/${t.key}`}>{t.title}</Link>
-                </td>
-                <td>
-                  <Link to={`/projects/${t.project_key}`}>{t.project_name}</Link>
-                </td>
-                <td className="nowrap">{statusLabel(t.status)}</td>
-                <td className={t.overdue ? "nowrap overdue" : "nowrap"} title={t.overdue ? "Просрочена" : undefined}>
-                  {formatDate(t.due_date) || "—"}
-                </td>
-                <td className="nowrap">{formatSpentEstimate(t.spent_minutes, t.estimate_minutes)}</td>
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Ключ</th>
+                <th>Название</th>
+                <th>Проект</th>
+                <th>Статус</th>
+                <th>Срок</th>
+                <th>Списано / оценка</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {tasks.data.map((t) => (
+                <tr key={t.key}>
+                  <td className="nowrap">{t.key}</td>
+                  <td>
+                    <Link to={`/tasks/${t.key}`}>{t.title}</Link>
+                  </td>
+                  <td>
+                    <Link to={`/projects/${t.project_key}`}>{t.project_name}</Link>
+                  </td>
+                  <td className="nowrap">{statusLabel(t.status)}</td>
+                  <td className={t.overdue ? "nowrap overdue" : "nowrap"} title={t.overdue ? "Просрочена" : undefined}>
+                    {formatDate(t.due_date) || "—"}
+                  </td>
+                  <td className="nowrap">{formatSpentEstimate(t.spent_minutes, t.estimate_minutes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
