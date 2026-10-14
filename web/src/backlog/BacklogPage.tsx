@@ -2,13 +2,9 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   DndContext,
   DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
   pointerWithin,
   rectIntersection,
   useDroppable,
-  useSensor,
-  useSensors,
   type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
@@ -52,7 +48,7 @@ import { ProjectHeader } from "../projects/ProjectHeader";
 import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
-import { keyboardCodes, useReducedMotion } from "../ui/dnd";
+import { useDragSensors, useReducedMotion } from "../ui/dnd";
 
 const moveKey = ["backlog-move"];
 
@@ -280,10 +276,7 @@ export function BacklogPage() {
   };
 
   const reducedMotion = useReducedMotion();
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { keyboardCodes }),
-  );
+  const sensors = useDragSensors();
   const fromSection = dragging ? sectionOf(dragging) : null;
   // Исполнитель меняет только порядок: чужие секции во время перетаскивания закрыты (§2).
   const dropDisabled = (sectionId: string) => !!fromSection && !manager && sectionId !== fromSection;

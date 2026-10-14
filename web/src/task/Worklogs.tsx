@@ -298,41 +298,43 @@ export function Worklogs({ task, actor, readOnly, sprintClosed, timeZone }: Prop
   return (
     <>
       {closedNote}
-      <table className="table worklogs" data-testid="worklog-list">
-        <thead>
-          <tr>
-            <th>Кто</th>
-            <th>Дата</th>
-            <th>Длительность</th>
-            <th>Источник</th>
-            <th>Комментарий</th>
-            <th aria-label="Действия" />
-          </tr>
-        </thead>
-        <tbody>
-          {list.data.map((w) => (
-            <WorklogRow
-              key={w.id}
-              w={w}
-              task={task}
-              actor={actor}
-              readOnly={readOnly}
-              today={today}
-              timeZone={timeZone}
-              onEdit={() => setEditing(w)}
-            />
-          ))}
-        </tbody>
-        <tfoot>
-          <tr>
-            <th colSpan={2}>Всего</th>
-            <th className="nowrap" data-testid="worklog-total">
-              {formatDuration(total)}
-            </th>
-            <th colSpan={3} />
-          </tr>
-        </tfoot>
-      </table>
+      <div className="table-scroll">
+        <table className="table worklogs" data-testid="worklog-list">
+          <thead>
+            <tr>
+              <th>Кто</th>
+              <th>Дата</th>
+              <th>Длительность</th>
+              <th>Источник</th>
+              <th>Комментарий</th>
+              <th aria-label="Действия" />
+            </tr>
+          </thead>
+          <tbody>
+            {list.data.map((w) => (
+              <WorklogRow
+                key={w.id}
+                w={w}
+                task={task}
+                actor={actor}
+                readOnly={readOnly}
+                today={today}
+                timeZone={timeZone}
+                onEdit={() => setEditing(w)}
+              />
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th colSpan={2}>Всего</th>
+              <th className="nowrap" data-testid="worklog-total">
+                {formatDuration(total)}
+              </th>
+              <th colSpan={3} />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
       {editing && (
         <WorklogDialog
           task={task}

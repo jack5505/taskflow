@@ -1,4 +1,4 @@
-/* Оформление без UI-библиотек. Ширина от 1024 px, мобильной вёрстки нет (ТЗ §7).
+/* Оформление без UI-библиотек. Адаптивно от 360 px (ТЗ §7): телефонная раскладка — в конце файла.
    Все цвета, размеры шрифта, отступы, радиусы и тени — переменные ниже; литералы в правилах запрещает
    stylelint (кроме этого блока). */
 /* stylelint-disable color-no-hex, function-disallowed-list */
@@ -90,7 +90,7 @@
 
 body {
   margin: 0;
-  min-width: 1024px;
+  min-width: 320px;
 }
 
 h1,
@@ -324,7 +324,7 @@ button.primary:hover:not(:disabled) {
   gap: var(--space-2);
 }
 
-/* На узком экране (от 1024 px, §7) подсказка клавиши уступает место остальной шапке */
+/* На узком экране подсказка клавиши уступает место остальной шапке */
 @media (width < 1200px) {
   .create-button .kbd {
     display: none;
@@ -589,6 +589,10 @@ button.primary:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 600;
+}
+
+.table-scroll {
+  overflow-x: auto;
 }
 
 .table {
@@ -974,7 +978,11 @@ button.primary:hover:not(:disabled) {
 
 .task-drag.draggable {
   cursor: grab;
-  touch-action: none;
+  /* Касание прокручивает: перетаскивание пальцем — после долгого нажатия (ui/dnd.ts); меню
+     ссылки и выделение текста долгому нажатию не мешают. */
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .task-card.dragging {
@@ -1145,7 +1153,7 @@ button.primary:hover:not(:disabled) {
 .modal-dialog {
   width: 480px;
   max-width: calc(100vw - var(--space-8));
-  max-height: calc(100vh - var(--space-12));
+  max-height: calc(100dvh - var(--space-12));
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -1156,7 +1164,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .modal-body {
-  max-height: calc(100vh - var(--space-12));
+  max-height: calc(100dvh - var(--space-12));
   padding: var(--space-5);
   overflow: auto;
 }
@@ -1747,7 +1755,10 @@ button.link.danger {
 
 .backlog-row.draggable {
   cursor: grab;
-  touch-action: none;
+  /* Касание прокручивает, долгое нажатие перетаскивает — как у карточки доски. */
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .backlog-row.dragging {
@@ -1960,4 +1971,183 @@ button.link.danger {
 
 .link-code-value.expired {
   text-decoration: line-through;
+}
+
+/* Телефон (ТЗ §7, §11 п. 14): шапка в две строки, всё в одну колонку, широкое прокручивается
+   внутри своего блока, а не страницей */
+@media (width < 768px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 0 var(--space-3);
+    height: auto;
+    padding: var(--space-2) var(--space-4) 0;
+  }
+
+  .topbar-nav {
+    order: 3;
+    flex-basis: 100%;
+    gap: var(--space-4);
+    height: 40px;
+    overflow-x: auto;
+  }
+
+  /* Инструменты сжимаются и переносятся: запущенный таймер не раздвигает шапку шире экрана.
+     Панель уведомлений открывается от правого края инструментов, а не от колокольчика. */
+  .topbar-tools {
+    position: relative;
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .header-timer,
+  .timer-control {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  /* Таймер — после колокольчика, «+» и аватара: не помещается — уходит строкой ниже целиком */
+  .topbar-tools .header-timer {
+    order: 1;
+  }
+
+  .timer-flash {
+    flex-basis: 100%;
+  }
+
+  .bell {
+    position: static;
+  }
+
+  /* Подпись «Создать задачу» прячется как .visually-hidden: значок «+» на виду, текст — для чтецов */
+  .create-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+
+  .topbar-project-name {
+    max-width: 140px;
+  }
+
+  .content {
+    padding: var(--space-4);
+  }
+
+  .auth {
+    padding: var(--space-6) var(--space-4) 0;
+  }
+
+  .auth-card {
+    width: 100%;
+    max-width: 380px;
+    padding: var(--space-5);
+  }
+
+  .board {
+    grid-template-columns: repeat(4, minmax(260px, 1fr));
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .board > * {
+    scroll-snap-align: start;
+  }
+
+  .task-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Поля задачи (статус, исполнитель, срок) — сразу под заголовком, до описания и обсуждения */
+  .task-side {
+    order: -1;
+  }
+
+  .backlog-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .backlog-row > :nth-child(3),
+  .backlog-row > :nth-child(4) {
+    display: none;
+  }
+
+  .board-filters .search {
+    width: 100%;
+  }
+
+  .bell-panel {
+    width: calc(100vw - 2 * var(--space-4));
+  }
+
+  .dropdown-menu {
+    max-width: calc(100vw - 2 * var(--space-4));
+  }
+
+  .toast-stack {
+    right: var(--space-3);
+    bottom: var(--space-3);
+    left: var(--space-3);
+    width: auto;
+  }
+
+  .modal-dialog,
+  .modal-dialog.create-task,
+  .modal-dialog.conflict {
+    width: calc(100dvw - var(--space-4));
+    max-width: none;
+  }
+
+  .form-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel,
+  .invites-panel {
+    max-width: none;
+  }
+
+  .invite-created {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actions,
+  .block-head,
+  .tabs {
+    flex-wrap: wrap;
+  }
+
+  .report-filters label {
+    max-width: 100%;
+  }
+
+  .report-filters select {
+    width: 100%;
+  }
+
+  input,
+  select,
+  textarea {
+    max-width: 100%;
+  }
+
+  .task-header {
+    flex-wrap: wrap;
+  }
+
+  .task-heading {
+    flex-basis: calc(100% - 60px);
+    font-size: var(--fs-xl);
+  }
+
+  .task-buttons {
+    flex-wrap: wrap;
+    width: 100%;
+  }
 }

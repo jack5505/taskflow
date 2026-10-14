@@ -95,66 +95,68 @@ export function MembersTab({ projectKey, me, admin, readOnly }: Props) {
           {error}
         </p>
       )}
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Имя</th>
-            <th>Email</th>
-            <th>Роль</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {list.map((m) => (
-            <tr key={m.user_id}>
-              <td>
-                {m.display_name}
-                {m.is_active === false && <span className="badge">деактивирован</span>}
-              </td>
-              <td>{m.email}</td>
-              <td>
-                {editable ? (
-                  <select
-                    aria-label={`Роль: ${m.display_name}`}
-                    value={m.role}
-                    disabled={busy}
-                    onChange={(e) => setRole.mutate({ userId: m.user_id ?? "", role: e.target.value as Role })}
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r.value} value={r.value}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  ROLES.find((r) => r.value === m.role)?.label
-                )}
-              </td>
-              <td className="row-actions">
-                {editable && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={async () =>
-                      (await confirm({
-                        title: `Исключить ${m.display_name} из проекта?`,
-                        body: "Его задачи в проекте освободятся, доступ к проекту пропадёт. Записи времени останутся.",
-                        confirmLabel: "Исключить",
-                        danger: true,
-                      })) && remove.mutate(m.user_id ?? "")
-                    }
-                  >
-                    Исключить
-                  </button>
-                )}
-                {admin && m.user_id !== me.id && (
-                  <DeactivateButton member={m} busy={busy} onToggle={(active) => setActive.mutate({ userId: m.user_id ?? "", active })} />
-                )}
-              </td>
+      <div className="table-scroll">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Имя</th>
+              <th>Email</th>
+              <th>Роль</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {list.map((m) => (
+              <tr key={m.user_id}>
+                <td>
+                  {m.display_name}
+                  {m.is_active === false && <span className="badge">деактивирован</span>}
+                </td>
+                <td>{m.email}</td>
+                <td>
+                  {editable ? (
+                    <select
+                      aria-label={`Роль: ${m.display_name}`}
+                      value={m.role}
+                      disabled={busy}
+                      onChange={(e) => setRole.mutate({ userId: m.user_id ?? "", role: e.target.value as Role })}
+                    >
+                      {ROLES.map((r) => (
+                        <option key={r.value} value={r.value}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    ROLES.find((r) => r.value === m.role)?.label
+                  )}
+                </td>
+                <td className="row-actions">
+                  {editable && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={async () =>
+                        (await confirm({
+                          title: `Исключить ${m.display_name} из проекта?`,
+                          body: "Его задачи в проекте освободятся, доступ к проекту пропадёт. Записи времени останутся.",
+                          confirmLabel: "Исключить",
+                          danger: true,
+                        })) && remove.mutate(m.user_id ?? "")
+                      }
+                    >
+                      Исключить
+                    </button>
+                  )}
+                  {admin && m.user_id !== me.id && (
+                    <DeactivateButton member={m} busy={busy} onToggle={(active) => setActive.mutate({ userId: m.user_id ?? "", active })} />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {editable && <AddMember projectKey={projectKey} members={list} onAdded={refresh} />}
       {editable && <InvitesPanel projectKey={projectKey} />}

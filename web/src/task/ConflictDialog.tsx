@@ -39,26 +39,28 @@ export function ConflictDialog({ conflict, ctx, pending, error, onRetry, onDisca
         <p className="muted">
           Ваши изменения не сохранены. Ниже — что поменялось с тех пор, как вы открыли карточку, и что меняете вы.
         </p>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Поле</th>
-              <th>Было</th>
-              <th>Сейчас (чужая правка)</th>
-              <th>Ваше</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.field} className={r.clash ? "clash" : undefined}>
-                <th scope="row">{fieldLabels[r.field] ?? r.field}</th>
-                <td>{v(r.field, r.before)}</td>
-                <td>{r.changedByOthers ? v(r.field, r.theirs) : <span className="muted">без изменений</span>}</td>
-                <td>{r.inMine ? v(r.field, r.mine) : <span className="muted">—</span>}</td>
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Поле</th>
+                <th>Было</th>
+                <th>Сейчас (чужая правка)</th>
+                <th>Ваше</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.field} className={r.clash ? "clash" : undefined}>
+                  <th scope="row">{fieldLabels[r.field] ?? r.field}</th>
+                  <td>{v(r.field, r.before)}</td>
+                  <td>{r.changedByOthers ? v(r.field, r.theirs) : <span className="muted">без изменений</span>}</td>
+                  <td>{r.inMine ? v(r.field, r.mine) : <span className="muted">—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         {rows.some((r) => r.clash) && (
           <p className="hint">Выделенные поля изменили оба: повтор заменит чужое значение вашим.</p>
         )}

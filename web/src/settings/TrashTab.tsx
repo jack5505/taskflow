@@ -52,42 +52,44 @@ export function TrashTab({ projectKey, readOnly }: { projectKey: string; readOnl
   return (
     <>
       {restore.isError && <p role="alert">{errorText(restore.error)}</p>}
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Ключ</th>
-            <th>Название</th>
-            <th>Кто удалил</th>
-            <th>Когда</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((t) => (
-            <tr key={t.key}>
-              <td className="nowrap">
-                <Link to={`/tasks/${t.key}`} className="card-key">
-                  {t.key}
-                </Link>
-              </td>
-              <td>{t.title}</td>
-              <td>{trashDeleter(t)}</td>
-              <td className="nowrap">{formatDateTime(t.deleted_at, timeZone)}</td>
-              <td>
-                {!readOnly && (
-                  <button
-                    type="button"
-                    disabled={restore.isPending}
-                    onClick={() => restore.mutate(t.key ?? "")}
-                  >
-                    Восстановить
-                  </button>
-                )}
-              </td>
+      <div className="table-scroll">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Ключ</th>
+              <th>Название</th>
+              <th>Кто удалил</th>
+              <th>Когда</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.key}>
+                <td className="nowrap">
+                  <Link to={`/tasks/${t.key}`} className="card-key">
+                    {t.key}
+                  </Link>
+                </td>
+                <td>{t.title}</td>
+                <td>{trashDeleter(t)}</td>
+                <td className="nowrap">{formatDateTime(t.deleted_at, timeZone)}</td>
+                <td>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      disabled={restore.isPending}
+                      onClick={() => restore.mutate(t.key ?? "")}
+                    >
+                      Восстановить
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {trash.hasNextPage && (
         <button type="button" disabled={trash.isFetchingNextPage} onClick={() => trash.fetchNextPage()}>
           {trash.isFetchingNextPage ? "Загрузка…" : "Показать ещё"}

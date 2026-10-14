@@ -67,35 +67,37 @@ export function AuditTab({ projectKey }: { projectKey: string }) {
       {audit.isPending && <p className="muted">Загрузка…</p>}
       {audit.isSuccess && rows.length === 0 && <p className="muted">Записей нет.</p>}
       {rows.length > 0 && (
-        <table className="table history">
-          <thead>
-            <tr>
-              <th>Когда</th>
-              <th>Кто</th>
-              <th>Действие</th>
-              <th>Над чем</th>
-              <th>Изменения</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((e) => (
-              <tr key={e.id}>
-                <td className="nowrap">{formatDateTime(e.created_at, timeZone)}</td>
-                <td>
-                  {userName(users.data, e.actor_id)}
-                  {e.source && <span className="badge">{auditSourceLabel(e.source)}</span>}
-                </td>
-                <td>{auditActionLabel(e.action)}</td>
-                <td>{auditEntity(e, (id) => userName(users.data, id))}</td>
-                <td>
-                  {auditChanges(e).map((line) => (
-                    <div key={line}>{line}</div>
-                  ))}
-                </td>
+        <div className="table-scroll">
+          <table className="table history">
+            <thead>
+              <tr>
+                <th>Когда</th>
+                <th>Кто</th>
+                <th>Действие</th>
+                <th>Над чем</th>
+                <th>Изменения</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((e) => (
+                <tr key={e.id}>
+                  <td className="nowrap">{formatDateTime(e.created_at, timeZone)}</td>
+                  <td>
+                    {userName(users.data, e.actor_id)}
+                    {e.source && <span className="badge">{auditSourceLabel(e.source)}</span>}
+                  </td>
+                  <td>{auditActionLabel(e.action)}</td>
+                  <td>{auditEntity(e, (id) => userName(users.data, id))}</td>
+                  <td>
+                    {auditChanges(e).map((line) => (
+                      <div key={line}>{line}</div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {audit.hasNextPage && (
         <button type="button" disabled={audit.isFetchingNextPage} onClick={() => audit.fetchNextPage()}>

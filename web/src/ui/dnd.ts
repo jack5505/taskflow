@@ -1,4 +1,12 @@
-import type { DraggableAttributes, DraggableSyntheticListeners } from "@dnd-kit/core";
+import {
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
+} from "@dnd-kit/core";
 import { useSyncExternalStore } from "react";
 
 /**
@@ -7,6 +15,21 @@ import { useSyncExternalStore } from "react";
  * положить.
  */
 export const keyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] };
+
+/**
+ * Датчики перетаскивания доски и бэклога (ТЗ §7). Мышь — после сдвига на 5 px: щелчок по кнопке
+ * на карточке не начинает перетаскивание. Палец — после долгого нажатия (250 мс, дрожание до
+ * 8 px): обычное касание прокручивает страницу и колонки. Клавиатура — пробелом.
+ */
+export function useDragSensors() {
+  return useSensors(useSensor(MouseSensor, mouse), useSensor(TouchSensor, touch), useSensor(KeyboardSensor, keyboard));
+}
+
+// Настройки — постоянные объекты: useSensor запоминает датчик по ним, новые на каждой отрисовке
+// (таймер в шапке перерисовывает доску раз в секунду) пересоздавали бы датчики.
+const mouse = { activationConstraint: { distance: 5 } };
+const touch = { activationConstraint: { delay: 250, tolerance: 8 } };
+const keyboard = { keyboardCodes };
 
 /**
  * Перетаскиваемый элемент без своей роли кнопки: внутри него ссылка, а кнопка со ссылкой внутри —

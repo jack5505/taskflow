@@ -100,34 +100,36 @@ export function SprintArchivePage() {
       {sprints.isPending && !loadError && <p className="muted">Загрузка…</p>}
       {sprints.isSuccess && closed.length === 0 && <p className="muted">Завершённых спринтов пока нет.</p>}
       {closed.length > 0 && (
-        <table className="table archive-table">
-          <thead>
-            <tr>
-              <th>Спринт</th>
-              <th>Даты</th>
-              <th>Завершён</th>
-              <th>Задач</th>
-              <th>Оценка</th>
-            </tr>
-          </thead>
-          <tbody>
-            {closed.map((s) => (
-              <tr key={s.id} className={s.id === selected?.id ? "selected" : undefined}>
-                <td>
-                  <button type="button" className="link" onClick={() => setParams({ sprint: s.id! })}>
-                    {s.name}
-                  </button>
-                </td>
-                <td className="nowrap">
-                  {formatDate(s.start_date)} — {formatDate(s.end_date)}
-                </td>
-                <td className="nowrap">{formatDate(s.closed_at, tz)}</td>
-                <td>{s.tasks_count ?? 0}</td>
-                <td className="nowrap">{formatDuration(s.estimate_minutes ?? 0)}</td>
+        <div className="table-scroll">
+          <table className="table archive-table">
+            <thead>
+              <tr>
+                <th>Спринт</th>
+                <th>Даты</th>
+                <th>Завершён</th>
+                <th>Задач</th>
+                <th>Оценка</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {closed.map((s) => (
+                <tr key={s.id} className={s.id === selected?.id ? "selected" : undefined}>
+                  <td>
+                    <button type="button" className="link" onClick={() => setParams({ sprint: s.id! })}>
+                      {s.name}
+                    </button>
+                  </td>
+                  <td className="nowrap">
+                    {formatDate(s.start_date)} — {formatDate(s.end_date)}
+                  </td>
+                  <td className="nowrap">{formatDate(s.closed_at, tz)}</td>
+                  <td>{s.tasks_count ?? 0}</td>
+                  <td className="nowrap">{formatDuration(s.estimate_minutes ?? 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {selected && <ClosedSprint key={selected.id} projectKey={key} sprint={selected} members={memberById} />}
     </section>
