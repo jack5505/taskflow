@@ -20,6 +20,7 @@ import (
 type Handlers struct {
 	svc         *Service
 	requireAuth gin.HandlerFunc
+	sessions    SessionResponder // ссылки-приглашения (WithInvites); nil — без них
 }
 
 func NewHandlers(svc *Service, requireAuth gin.HandlerFunc) *Handlers {
@@ -39,6 +40,9 @@ func (h *Handlers) Register(api *gin.RouterGroup) {
 	g.PUT("/:key/members/:user_id", h.putMember)
 	g.DELETE("/:key/members/:user_id", h.removeMember)
 	g.GET("/:key/audit", h.auditLog)
+	if h.sessions != nil {
+		h.registerInvites(api)
+	}
 }
 
 // access — проект из пути и роль текущего пользователя; не участник — 404 (§2).

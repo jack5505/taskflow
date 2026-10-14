@@ -66,9 +66,18 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// trustedProxies — откуда приходит API: loopback и частные сети (nginx, docker).
+var trustedProxies = []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"}
+
 // Router собирает маршруты. Базовый путь API — /api/v1 (ТЗ §9).
 func (s *Server) Router() *gin.Engine {
 	r := gin.New()
+	// IP клиента (лимит регистрации по ссылке, §7.1) — из X-Forwarded-For справа налево до первого
+	// адреса не из частных сетей: nginx сервера и docker-сети доверенные, подделанный клиентом
+	// левый край заголовка не считается.
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		panic(err)
+	}
 	// accessLog снаружи recovery: строка лога пишется и для запроса, который упал с паникой.
 	r.Use(requestID(), securityHeaders(), accessLog(), recovery())
 	r.HandleMethodNotAllowed = true

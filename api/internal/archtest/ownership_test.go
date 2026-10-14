@@ -21,6 +21,7 @@ var owners = map[string]string{
 	"password_tokens":        "auth",
 	"projects":               "project",
 	"project_members":        "project",
+	"project_invites":        "project",
 	"tasks":                  "task",
 	"task_history":           "task",
 	"comments":               "task",

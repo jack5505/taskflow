@@ -106,6 +106,8 @@ export const AUDIT_ACTIONS: { value: string; label: string }[] = [
   { value: "member.added", label: "Участник добавлен" },
   { value: "member.role_changed", label: "Роль изменена" },
   { value: "member.removed", label: "Участник исключён" },
+  { value: "invite.created", label: "Ссылка-приглашение создана" },
+  { value: "invite.revoked", label: "Ссылка-приглашение отозвана" },
   { value: "task.deleted", label: "Задача удалена" },
   { value: "task.restored", label: "Задача восстановлена" },
   { value: "worklog.updated", label: "Чужая запись времени изменена" },

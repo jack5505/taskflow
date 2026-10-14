@@ -80,6 +80,9 @@ func newView(p *Project, role string) View {
 type Service struct {
 	db  *gorm.DB
 	now func() time.Time
+	// Регистрация по ссылке-приглашению (WithInvites).
+	registrar Registrar
+	baseURL   string
 }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db, now: time.Now} }
