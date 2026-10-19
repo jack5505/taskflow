@@ -91,6 +91,7 @@ function Column({
   return (
     <section ref={setNodeRef} className={cls} aria-label={statusLabel(status)}>
       <h3>
+        <span className={`status-dot status-${status}`} aria-hidden="true" />
         {statusLabel(status)} <span className="muted">{count}</span>
       </h3>
       {state === "forbidden" && <p className="drop-hint">Сюда нельзя</p>}

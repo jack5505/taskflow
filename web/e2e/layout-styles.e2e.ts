@@ -13,8 +13,8 @@ test("стили бэклога, шапки, отчётов и профиля п
   await login(page);
   await page.goto(`/projects/${key}/backlog`);
   await expect(page.locator(".backlog-row", { hasText: t.key })).toHaveCSS("display", "grid");
-  // Текущий раздел подчёркнут цветом акцента (--accent).
-  await expect(page.locator(".topbar-nav a.active")).toHaveCSS("border-bottom-color", "rgb(9, 105, 218)");
+  // Текущий раздел — на подложке (--surface-hover светлой темы).
+  await expect(page.locator(".topbar-nav a.active")).toHaveCSS("background-color", "rgb(240, 241, 243)");
 
   await page.goto("/reports");
   await expect(page.locator(".report-hours").first()).toHaveCSS("display", "block");

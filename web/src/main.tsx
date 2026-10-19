@@ -6,6 +6,9 @@ import { refreshSession } from "./api";
 import { parseApiError } from "./api/errors";
 import { subscribe, getStatus } from "./auth/session";
 import { router } from "./router";
+// Шрифты — файлами из сборки: CSP пускает шрифты только со своего адреса.
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "./index.css";
 
 // Состояние сервера живёт в TanStack Query (web/CLAUDE.md): кэш, повторы и отмена запросов — его забота.

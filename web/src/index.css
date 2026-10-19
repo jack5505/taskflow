@@ -3,28 +3,38 @@
    stylelint (кроме этого блока). */
 /* stylelint-disable color-no-hex, function-disallowed-list */
 :root {
-  /* Цвета */
-  --text: #1f2328;
-  --muted: #656d76;
-  --bg: #f6f8fa;
+  /* Цвета. Светлая тема; тёмная — блок ниже, по настройке системы. --accent и --danger — для
+     текста и рамок, --accent-bg и --danger-bg — заливки под белым текстом (--on-accent). */
+  color-scheme: light dark;
+  --text: #1a1b1e;
+  --muted: #5f636b;
+  --bg: #f7f7f8;
   --surface: #fff;
-  --surface-hover: #f3f4f6;
-  --border: #d0d7de;
-  --accent: #0969da;
-  --accent-hover: #0550ae;
-  --accent-soft: #ddf4ff;
+  --surface-hover: #f0f1f3;
+  --border: #e3e4e8;
+  --border-strong: #cdd0d6;
+  --accent: #5257d6;
+  --accent-bg: #5257d6;
+  --accent-bg-hover: #4348c4;
+  --accent-soft: #ecedfc;
   --on-accent: #fff;
-  --danger: #cf222e;
-  --danger-soft: #ffebe9;
-  --warning-soft: #fff8c5;
-  --column-bg: #eaeef2;
+  --danger: #c4302b;
+  --danger-bg: #c4302b;
+  --danger-soft: #fcebea;
+  --warning-soft: #fff4e0;
+  --column-bg: #f0f1f3;
   --type-task: #2f6fdb;
-  --type-bug: var(--danger);
-  --type-feature: #1a7f37;
+  --type-bug: var(--danger-bg);
+  --type-feature: #2f7d3a;
   --priority-low: var(--muted);
-  --priority-medium: #9a6700;
-  --priority-high: #bc4c00;
+  --priority-medium: #9a5b00;
+  --priority-high: #c2410c;
   --priority-critical: var(--danger);
+  /* Значок статуса в заголовке колонки доски */
+  --status-todo: var(--muted);
+  --status-in-progress: #9a5b00;
+  --status-review: var(--accent);
+  --status-done: #2f7d3a;
   /* Аватары: цвет по id пользователя (ui/avatar.ts), белые инициалы читаются на каждом */
   --avatar-1: #8250df;
   --avatar-2: #0f7b6c;
@@ -39,8 +49,9 @@
   --backdrop: rgb(0 0 0 / 0.35);
 
   /* Шрифт: размеры строго из шкалы */
-  --font: system-ui, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Geist и Geist Mono — из сборки (main.tsx): CSP пускает шрифты только со своего адреса */
+  --font: "Geist Variable", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
   --fs-3xs: 10px;
   --fs-2xs: 11px;
   --fs-xs: 12px;
@@ -73,14 +84,46 @@
   --radius-sm: 4px;
   --radius: 6px;
   --radius-lg: 8px;
+  --radius-xl: 10px;
   --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04);
   --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.1);
   --shadow-drag: 0 8px 20px rgb(0 0 0 / 0.15);
   --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
 
-  font: var(--fs-base) / 1.5 var(--font);
+  font: var(--fs-md) / 1.5 var(--font);
   color: var(--text);
   background: var(--bg);
+}
+
+/* Тёмная тема: те же переменные, другие значения. Текст — не ниже 4.5:1 к своему фону. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e8e9ec;
+    --muted: #9a9ea6;
+    --bg: #0e0f11;
+    --surface: #16171a;
+    --surface-hover: #222328;
+    --border: #2a2c31;
+    --border-strong: #3a3d44;
+    --accent: #a3a7ff;
+    --accent-bg: #5e63e6;
+    --accent-bg-hover: #5257d6;
+    --accent-soft: #25274d;
+    --danger: #ff7a72;
+    --danger-bg: #c93a33;
+    --danger-soft: #3b1e1f;
+    --warning-soft: #33270f;
+    --column-bg: #1b1c20;
+    --priority-medium: #e5a44b;
+    --priority-high: #f08a4b;
+    --status-in-progress: #e5a44b;
+    --status-done: #5bbe6a;
+    --backdrop: rgb(0 0 0 / 0.6);
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-popover: 0 8px 24px rgb(0 0 0 / 0.5);
+    --shadow-drag: 0 12px 32px rgb(0 0 0 / 0.55);
+  }
 }
 /* stylelint-enable color-no-hex, function-disallowed-list */
 
@@ -199,13 +242,15 @@ button:disabled {
 }
 
 button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent-bg);
   color: var(--on-accent);
+  font-weight: 500;
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--accent-bg-hover);
+  border-color: var(--accent-bg-hover);
 }
 
 [role="alert"] {
@@ -265,14 +310,14 @@ button.primary:hover:not(:disabled) {
 .topbar {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-5);
   height: 52px;
-  padding: 0 var(--space-6);
+  padding: 0 var(--space-5);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 
-/* Разделы в шапке: текущий подчёркнут, «Проекты» — бледнее, когда открыт проект внутри них */
+/* Разделы в шапке: текущий — на подложке, «Проекты» — без подложки, когда открыт проект внутри них */
 .topbar .brand,
 .topbar-tools {
   flex: none;
@@ -281,8 +326,8 @@ button.primary:hover:not(:disabled) {
 .topbar-nav {
   display: flex;
   flex: 1 1 auto;
-  align-items: stretch;
-  gap: var(--space-5);
+  align-items: center;
+  gap: var(--space-1);
   height: 100%;
   min-width: 0;
 }
@@ -292,23 +337,36 @@ button.primary:hover:not(:disabled) {
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  border-bottom: 2px solid transparent;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius);
   color: var(--muted);
   font-weight: 500;
   text-decoration: none;
 }
 
 .topbar-nav a:hover {
+  background: var(--surface-hover);
   color: var(--text);
 }
 
 .topbar-nav a.active {
-  border-bottom-color: var(--accent);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
 .topbar-nav a.active-parent {
   color: var(--text);
+}
+
+/* Ключ проекта в шапке и заголовке проекта — бейджем */
+.topbar-project .card-key,
+.project-title .card-key {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: 500;
 }
 
 .topbar-project-name {
@@ -332,11 +390,10 @@ button.primary:hover:not(:disabled) {
 }
 
 .kbd {
-  padding: 0 var(--space-1);
-  border: 1px solid currentcolor;
+  padding: 0 5px;
   border-radius: var(--radius-sm);
-  font: var(--fs-2xs) / 1.4 var(--font-mono);
-  opacity: 0.75;
+  background: color-mix(in srgb, currentcolor 18%, transparent);
+  font: var(--fs-2xs) / 1.5 var(--font-mono);
 }
 
 /* Меню пользователя: аватар, по щелчку — имя, «Профиль», «Выйти» */
@@ -396,8 +453,9 @@ button.primary:hover:not(:disabled) {
 }
 
 .topbar .brand {
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lg);
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 
@@ -417,25 +475,30 @@ button.primary:hover:not(:disabled) {
 }
 
 .header-timer.running {
-  padding: 2px var(--space-1) 2px var(--space-3);
+  padding: 3px 3px 3px var(--space-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--accent-soft);
+  border-radius: var(--radius-pill);
+  background: var(--column-bg);
 }
 
 .header-timer button {
   padding: 2px var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
 }
 
 .timer-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--danger);
+  background: var(--accent-bg);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .timer-clock {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-weight: 500;
   min-width: 64px;
 }
 
@@ -457,7 +520,7 @@ button.primary:hover:not(:disabled) {
 
 .timer-indicator {
   display: inline-flex;
-  color: var(--danger);
+  color: var(--accent);
 }
 
 .bell {
@@ -478,7 +541,7 @@ button.primary:hover:not(:disabled) {
   min-width: 18px;
   padding: 0 var(--space-1);
   border-radius: var(--radius-pill);
-  background: var(--danger);
+  background: var(--danger-bg);
   color: var(--on-accent);
   font-size: var(--fs-2xs);
   line-height: 18px;
@@ -748,27 +811,34 @@ button.primary:hover:not(:disabled) {
   margin-bottom: 0;
 }
 
+.project-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  letter-spacing: -0.015em;
+}
+
+/* Вкладки проекта: текущая подчёркнута акцентом */
 .project-tabs {
   display: flex;
-  gap: var(--space-1);
+  gap: var(--space-5);
 }
 
 .project-tabs a {
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius);
+  padding: var(--space-1) 0 6px;
   color: var(--muted);
   font-weight: 500;
+  box-shadow: inset 0 -2px 0 transparent;
 }
 
 .project-tabs a:hover {
-  background: var(--surface-hover);
   color: var(--text);
   text-decoration: none;
 }
 
 .project-tabs a.active {
-  background: var(--column-bg);
   color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent-bg);
 }
 
 .project-head-extra {
@@ -819,6 +889,7 @@ button.primary:hover:not(:disabled) {
 .chip {
   padding: var(--space-1) var(--space-3);
   border-radius: 0;
+  color: var(--muted);
   font-size: var(--fs-sm);
 }
 
@@ -846,12 +917,19 @@ button.primary:hover:not(:disabled) {
 }
 
 .dropdown summary {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--control-py) var(--control-px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  color: var(--muted);
   cursor: pointer;
   list-style: none;
+}
+
+.dropdown summary:hover,
+.dropdown[open] summary {
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .dropdown summary::after {
@@ -907,14 +985,48 @@ button.primary:hover:not(:disabled) {
   min-height: 200px;
   padding: var(--space-2);
   border: 2px solid transparent;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--column-bg);
 }
 
 .board-column h3 {
-  margin: var(--space-1) var(--space-1) var(--space-2);
-  font-size: var(--fs-md);
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-1) 6px var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/* Значок статуса: пустой круг, заполнен наполовину, на три четверти, целиком */
+.status-dot {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--status-color);
+  border-radius: 50%;
+}
+
+.status-dot.status-todo {
+  --status-color: var(--status-todo);
+}
+
+.status-dot.status-in_progress {
+  --status-color: var(--status-in-progress);
+
+  background: linear-gradient(90deg, var(--status-color) 50%, transparent 50%);
+}
+
+.status-dot.status-review {
+  --status-color: var(--status-review);
+
+  background: conic-gradient(var(--status-color) 0 75%, transparent 75% 100%);
+}
+
+.status-dot.status-done {
+  --status-color: var(--status-done);
+
+  background: var(--status-color);
 }
 
 .board-column.drop-allowed {
@@ -964,10 +1076,20 @@ button.primary:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: 10px var(--space-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.task-card:hover {
+  border-color: var(--border-strong);
+}
+
+.task-title a {
+  color: var(--text);
+  font-weight: 500;
 }
 
 .task-drag {
@@ -996,9 +1118,30 @@ button.primary:hover:not(:disabled) {
 
 .task-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--fs-sm);
+  gap: var(--space-1) var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+/* Ключ и «списано / оценка» не рвутся: не помещаются — строка карточки переносится целиком */
+.task-foot .card-key,
+.task-foot-end .muted {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task-foot .due {
+  font-variant-numeric: tabular-nums;
+}
+
+.task-foot .due.overdue {
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  font-weight: 500;
 }
 
 .task-foot-end {
@@ -1146,7 +1289,14 @@ button.primary:hover:not(:disabled) {
 .task-card .take {
   align-self: flex-start;
   padding: 3px var(--space-3);
-  font-size: var(--fs-sm);
+  background: transparent;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.task-card .take:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* Модальное окно на <dialog> (ui/Modal.tsx): фон — ::backdrop, содержимое — панель */
@@ -1215,7 +1365,8 @@ button.primary:hover:not(:disabled) {
 }
 
 .toast-error {
-  background: var(--danger);
+  background: var(--danger-bg);
+  color: var(--on-accent);
 }
 
 .toast-text {
@@ -1310,13 +1461,13 @@ button.danger {
 
 /* Кнопка необратимого действия в окне подтверждения */
 button.danger-solid {
-  border-color: var(--danger);
-  background: var(--danger);
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
   color: var(--on-accent);
 }
 
 button.danger-solid:hover:not(:disabled) {
-  background: var(--danger);
+  background: var(--danger-bg);
   filter: brightness(0.9);
 }
 
@@ -1956,13 +2107,13 @@ button.link.danger {
 .link-code-open {
   padding: var(--control-py) var(--control-px);
   border-radius: var(--radius);
-  background: var(--accent);
+  background: var(--accent-bg);
   color: var(--on-accent);
   text-decoration: none;
 }
 
 .link-code-open:hover {
-  background: var(--accent-hover);
+  background: var(--accent-bg-hover);
 }
 
 .link-code .expired {
@@ -1986,7 +2137,7 @@ button.link.danger {
   .topbar-nav {
     order: 3;
     flex-basis: 100%;
-    gap: var(--space-4);
+    gap: var(--space-1);
     height: 40px;
     overflow-x: auto;
   }
