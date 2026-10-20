@@ -360,7 +360,8 @@ button.primary:hover:not(:disabled) {
 
 /* Ключ проекта в шапке и заголовке проекта — бейджем */
 .topbar-project .card-key,
-.project-title .card-key {
+.project-title .card-key,
+.card-head .card-key {
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   background: var(--accent-soft);
@@ -643,15 +644,36 @@ button.primary:hover:not(:disabled) {
   margin-left: auto;
 }
 
+/* Вкладки (ui/Tabs.tsx и фильтр проектов): текст без рамки, текущая подчёркнута акцентом */
 .tabs {
   display: flex;
-  gap: var(--space-1);
+  gap: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  padding: var(--space-2) 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tab:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
 }
 
 .tab.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent-bg);
+}
+
+/* Подчёркивание — тоже box-shadow: без этого правила оно перекрыло бы кольцо фокуса */
+.tab:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .table-scroll {
@@ -663,6 +685,7 @@ button.primary:hover:not(:disabled) {
   border-collapse: collapse;
   background: var(--surface);
   border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
 }
 
 .table th,
@@ -674,12 +697,35 @@ button.primary:hover:not(:disabled) {
 }
 
 .table th {
-  font-weight: 600;
-  background: var(--bg);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  background: var(--surface);
+}
+
+.table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+/* «Мои задачи»: название — основным цветом, проект — приглушённым */
+.my-tasks td a {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.my-tasks td + td + td a {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .nowrap {
   white-space: nowrap;
+}
+
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .overdue {
@@ -699,8 +745,9 @@ button.primary:hover:not(:disabled) {
   gap: var(--space-2);
   padding: var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 
 .card.clickable {
@@ -709,13 +756,14 @@ button.primary:hover:not(:disabled) {
 
 .card.clickable:hover,
 .card.clickable:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .card h3 {
   margin: 0;
   font-size: var(--fs-lg);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .card-head {
@@ -732,8 +780,9 @@ button.primary:hover:not(:disabled) {
 .badge {
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
-  background: var(--bg);
+  background: var(--surface);
   border: 1px solid var(--border);
+  color: var(--muted);
   font-size: var(--fs-xs);
 }
 
@@ -741,6 +790,8 @@ button.primary:hover:not(:disabled) {
   display: flex;
   gap: var(--space-6);
   margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 
 .card-stats dt {
@@ -763,7 +814,7 @@ button.primary:hover:not(:disabled) {
   margin-bottom: var(--space-4);
   padding: var(--space-5);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--surface);
 }
 
@@ -1003,7 +1054,7 @@ button.primary:hover:not(:disabled) {
   font-weight: 500;
 }
 
-/* Значок статуса: пустой круг, заполнен наполовину, на три четверти, целиком */
+/* Значок статуса: пустой круг, заполнен наполовину, на три четверти, целиком; отменённая — пунктиром */
 .status-dot {
   flex: none;
   width: 11px;
@@ -1026,6 +1077,12 @@ button.primary:hover:not(:disabled) {
   --status-color: var(--status-review);
 
   background: conic-gradient(var(--status-color) 0 75%, transparent 75% 100%);
+}
+
+.status-dot.status-cancelled {
+  --status-color: var(--muted);
+
+  border-style: dashed;
 }
 
 .status-dot.status-done {
@@ -1424,18 +1481,20 @@ button.primary:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  margin: var(--space-2) 0 var(--space-4);
+  margin: var(--space-2) 0 var(--space-5);
 }
 
 .task-heading {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-2xl);
+  font-size: var(--fs-3xl);
+  letter-spacing: -0.02em;
+  line-height: 1.3;
 }
 
 .task-heading input {
   width: 100%;
-  font-size: var(--fs-2xl);
+  font-size: var(--fs-3xl);
 }
 
 .task-buttons {
@@ -1447,19 +1506,38 @@ button.primary:hover:not(:disabled) {
 .task-buttons .dropdown-menu {
   left: auto;
   right: 0;
-  padding: var(--space-1) 0;
+  min-width: 300px;
+  padding: var(--space-1);
+  border-color: var(--border-strong);
+  border-radius: var(--radius-xl);
+}
+
+/* Кнопка статуса: значок и название текущего статуса */
+.task-buttons .dropdown summary,
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-weight: 500;
 }
 
 .menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
+  white-space: nowrap;
+  padding: var(--space-2) 10px;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius);
+  background: none;
   text-align: left;
 }
 
 .status-badge {
   padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
   font-size: var(--fs-md);
 }
 
@@ -1528,6 +1606,7 @@ button.link.danger {
 
 .task-side {
   max-width: none;
+  padding: var(--space-4);
 }
 
 .task-fields {
@@ -1549,6 +1628,7 @@ button.link.danger {
   flex-wrap: wrap;
   gap: var(--space-1);
   align-items: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .task-fields select,
@@ -1564,21 +1644,21 @@ button.link.danger {
 
 .progress {
   width: 100%;
-  height: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  border: 1px solid var(--border);
+  height: 6px;
+  border-radius: 3px;
+  background: var(--column-bg);
   overflow: hidden;
 }
 
 .progress span {
   display: block;
   height: 100%;
-  background: var(--accent);
+  border-radius: 3px;
+  background: var(--accent-bg);
 }
 
 .progress.over span {
-  background: var(--danger);
+  background: var(--danger-bg);
 }
 
 .task-main .tabs {
@@ -1597,7 +1677,21 @@ button.link.danger {
   overflow: auto;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);
-  background: var(--bg);
+  background: var(--column-bg);
+  font-family: var(--font-mono);
+}
+
+.markdown code {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--column-bg);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
 }
 
 .md-editor {
@@ -1608,6 +1702,25 @@ button.link.danger {
 
 .md-editor .tabs {
   align-items: center;
+  gap: 2px;
+  border-bottom: 0;
+}
+
+/* «Текст / Предпросмотр» — переключатель, а не вкладки страницы */
+.md-editor .tab {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+}
+
+.md-editor .tab.active {
+  background: var(--column-bg);
+  box-shadow: none;
+}
+
+.md-editor .hint {
+  margin-left: auto;
+  font-size: var(--fs-xs);
 }
 
 .md-editor textarea {
@@ -1617,9 +1730,9 @@ button.link.danger {
 
 .md-preview {
   min-height: 80px;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
@@ -1636,8 +1749,21 @@ button.link.danger {
 
 .comment-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+
+.comment-head .muted {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Пометка «из Telegram» — акцентом */
+.comment-head .badge {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .comment-actions {
@@ -2281,9 +2407,13 @@ button.link.danger {
   }
 
   .actions,
-  .block-head,
-  .tabs {
+  .block-head {
     flex-wrap: wrap;
+  }
+
+  /* Вкладки не переносятся: подчёркнутый ряд прокручивается внутри себя */
+  .tabs {
+    overflow-x: auto;
   }
 
   .report-filters label {
@@ -2312,5 +2442,11 @@ button.link.danger {
   .task-buttons {
     flex-wrap: wrap;
     width: 100%;
+  }
+
+  /* Кнопка статуса на телефоне — у левого края: меню открывается вправо, а не за экран */
+  .task-buttons .dropdown-menu {
+    right: auto;
+    left: 0;
   }
 }
