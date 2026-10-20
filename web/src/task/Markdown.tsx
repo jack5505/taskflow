@@ -30,7 +30,7 @@ export function MarkdownEditor(p: EditorProps) {
   const mode = preview ? "preview" : "text";
   return (
     <div className="md-editor">
-      <Tabs label={p.label} idPrefix={id} tabs={MD_TABS} value={mode} onChange={(m) => setPreview(m === "preview")}>
+      <Tabs label={p.label} className="tabs-segmented" idPrefix={id} tabs={MD_TABS} value={mode} onChange={(m) => setPreview(m === "preview")}>
         <span className="muted hint">Markdown</span>
       </Tabs>
       <div {...tabPanel(id, mode)}>

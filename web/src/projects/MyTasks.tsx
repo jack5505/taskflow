@@ -45,12 +45,12 @@ export function MyTasks() {
                   <td>
                     <Link to={`/tasks/${t.key}`}>{t.title}</Link>
                   </td>
-                  <td>
+                  <td className="my-tasks-project">
                     <Link to={`/projects/${t.project_key}`}>{t.project_name}</Link>
                   </td>
                   <td className="nowrap">
                     <span className="status-cell">
-                      <StatusDot status={t.status ?? ""} />
+                      <StatusDot status={t.status} />
                       {statusLabel(t.status)}
                     </span>
                   </td>
