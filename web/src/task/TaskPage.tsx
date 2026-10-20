@@ -35,6 +35,7 @@ import { Icon, TypeIcon } from "../ui/Icon";
 import { useConfirm } from "../ui/Confirm";
 import { useToast } from "../ui/Toast";
 import { LoadError } from "../ui/LoadError";
+import { StatusDot } from "../ui/StatusDot";
 import { isSystemAdmin, myTasksQueryKey, projectsQueryKey } from "../projects/logic";
 import { Tabs, nextTab, tabPanel } from "../ui/Tabs";
 
@@ -438,17 +439,24 @@ export function TaskPage() {
         <div className="task-buttons">
           {transitions.length > 0 ? (
             <details className="dropdown" ref={statusMenu} onKeyDown={menuKeys}>
-              <summary aria-label={`Статус: ${statusLabel(status)}. Сменить`}>{statusLabel(status)}</summary>
+              <summary aria-label={`Статус: ${statusLabel(status)}. Сменить`}>
+                <StatusDot status={status} />
+                {statusLabel(status)}
+              </summary>
               <div className="dropdown-menu">
                 {transitions.map((to) => (
                   <button key={to} type="button" className="menu-item" disabled={busy} onClick={() => startTransition(to)}>
+                    <StatusDot status={to} />
                     {transitionLabel(status, to)} <span className="muted">→ {statusLabel(to)}</span>
                   </button>
                 ))}
               </div>
             </details>
           ) : (
-            <span className="badge status-badge">{statusLabel(status)}</span>
+            <span className="badge status-badge">
+              <StatusDot status={status} />
+              {statusLabel(status)}
+            </span>
           )}
           {perms.take && (
             <button

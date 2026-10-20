@@ -23,6 +23,7 @@ import { BoardCard, CardBody } from "./BoardCard";
 import { applyMove, boardQueryKey, groupByStatus, moveKey } from "./cards";
 import { daysLeftText, sprintDaysLeft, today } from "../backlog/logic";
 import { BoardFilters } from "./BoardFilters";
+import { StatusDot } from "../ui/StatusDot";
 import { emptyFilter, filterFromParams, isFilterEmpty, paramsFromFilter, tasksQuery, type BoardFilter } from "./filters";
 import {
   BOARD_COLUMNS,
@@ -91,7 +92,7 @@ function Column({
   return (
     <section ref={setNodeRef} className={cls} aria-label={statusLabel(status)}>
       <h3>
-        <span className={`status-dot status-${status}`} aria-hidden="true" />
+        <StatusDot status={status} />
         {statusLabel(status)} <span className="muted">{count}</span>
       </h3>
       {state === "forbidden" && <p className="drop-hint">Сюда нельзя</p>}

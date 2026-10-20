@@ -7,6 +7,7 @@ import { formatDate } from "../lib/format";
 import { statusLabel } from "../lib/status";
 import { myTasksQueryKey } from "./logic";
 import { LoadError } from "../ui/LoadError";
+import { StatusDot } from "../ui/StatusDot";
 
 /**
  * Блок «Мои задачи» (ТЗ §7.2): открытые задачи пользователя по всем проектам. Порядок задаёт
@@ -26,7 +27,7 @@ export function MyTasks() {
       {tasks.data && tasks.data.length === 0 && <p className="muted">Открытых задач нет.</p>}
       {tasks.data && tasks.data.length > 0 && (
         <div className="table-scroll">
-          <table className="table">
+          <table className="table my-tasks">
             <thead>
               <tr>
                 <th>Ключ</th>
@@ -40,14 +41,19 @@ export function MyTasks() {
             <tbody>
               {tasks.data.map((t) => (
                 <tr key={t.key}>
-                  <td className="nowrap">{t.key}</td>
+                  <td className="nowrap card-key">{t.key}</td>
                   <td>
                     <Link to={`/tasks/${t.key}`}>{t.title}</Link>
                   </td>
-                  <td>
+                  <td className="my-tasks-project">
                     <Link to={`/projects/${t.project_key}`}>{t.project_name}</Link>
                   </td>
-                  <td className="nowrap">{statusLabel(t.status)}</td>
+                  <td className="nowrap">
+                    <span className="status-cell">
+                      <StatusDot status={t.status} />
+                      {statusLabel(t.status)}
+                    </span>
+                  </td>
                   <td className={t.overdue ? "nowrap overdue" : "nowrap"} title={t.overdue ? "Просрочена" : undefined}>
                     {formatDate(t.due_date) || "—"}
                   </td>
