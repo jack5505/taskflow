@@ -841,6 +841,11 @@ button.primary:hover:not(:disabled) {
   box-shadow: inset 0 -2px 0 var(--accent-bg);
 }
 
+/* Подчёркивание — тоже box-shadow: без этого правила оно перекрыло бы кольцо фокуса */
+.project-tabs a:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 .project-head-extra {
   display: flex;
   align-items: center;
@@ -1128,9 +1133,12 @@ button.primary:hover:not(:disabled) {
 /* Ключ и «списано / оценка» не рвутся: не помещаются — строка карточки переносится целиком */
 .task-foot .card-key,
 .task-foot-end .muted {
+  white-space: nowrap;
+}
+
+.task-foot-end .muted {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .task-foot .due {
@@ -2137,9 +2145,13 @@ button.link.danger {
   .topbar-nav {
     order: 3;
     flex-basis: 100%;
-    gap: var(--space-1);
     height: 40px;
     overflow-x: auto;
+  }
+
+  /* Разделы не сжимаются уже своего текста: не помещаются — ряд прокручивается */
+  .topbar-nav a {
+    flex: none;
   }
 
   /* Инструменты сжимаются и переносятся: запущенный таймер не раздвигает шапку шире экрана.

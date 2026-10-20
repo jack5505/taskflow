@@ -15,6 +15,12 @@ test("стили бэклога, шапки, отчётов и профиля п
   await expect(page.locator(".backlog-row", { hasText: t.key })).toHaveCSS("display", "grid");
   // Текущий раздел — на подложке (--surface-hover светлой темы).
   await expect(page.locator(".topbar-nav a.active")).toHaveCSS("background-color", "rgb(240, 241, 243)");
+  // Тёмная тема: блок @media (prefers-color-scheme: dark) переопределяет переменные.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveCSS("background-color", "rgb(14, 15, 17)");
+  await expect(page.locator(".topbar")).toHaveCSS("background-color", "rgb(22, 23, 26)");
+  await expect(page.locator(".topbar-nav a.active")).toHaveCSS("background-color", "rgb(34, 35, 40)");
+  await page.emulateMedia({ colorScheme: "light" });
 
   await page.goto("/reports");
   await expect(page.locator(".report-hours").first()).toHaveCSS("display", "block");
