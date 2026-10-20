@@ -358,16 +358,23 @@ button.primary:hover:not(:disabled) {
   color: var(--text);
 }
 
-/* Ключ проекта в шапке и заголовке проекта — бейджем */
+/* Плашка: ключ проекта (акцентом) и просроченный срок на карточке (красным). Форма одна,
+   цвет — в правилах ниже. */
+.topbar-project .card-key,
+.project-title .card-key,
+.card-head .card-key,
+.task-foot .due.overdue {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+
 .topbar-project .card-key,
 .project-title .card-key,
 .card-head .card-key {
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
   background: var(--accent-soft);
   color: var(--accent);
   font-size: var(--fs-2xs);
-  font-weight: 500;
 }
 
 .topbar-project-name {
@@ -1203,10 +1210,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .task-foot .due.overdue {
-  padding: 0 5px;
-  border-radius: var(--radius-sm);
   background: var(--danger-soft);
-  font-weight: 500;
 }
 
 .task-foot-end {
