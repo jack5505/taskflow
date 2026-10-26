@@ -2037,7 +2037,7 @@ button.link.danger {
 
 .backlog-row {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr) 120px 180px 70px;
+  grid-template-columns: 110px minmax(0, 1fr) 140px 130px 180px 70px;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -2086,6 +2086,43 @@ button.link.danger {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Статус задачи: значок + подпись, под ними — время завершения (если задача закрыта). */
+.row-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.row-done-at {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.row-updated {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* На узком экране время изменения уступает место названию: иначе к ~800 px на него не остаётся места */
+@media (width < 1024px) {
+  .backlog-row {
+    grid-template-columns: 110px minmax(0, 1fr) 140px 180px 70px;
+  }
+
+  .row-updated {
+    display: none;
+  }
 }
 
 .date-range {
@@ -2371,7 +2408,8 @@ button.link.danger {
   }
 
   .backlog-row > :nth-child(3),
-  .backlog-row > :nth-child(4) {
+  .backlog-row > :nth-child(4),
+  .backlog-row > :nth-child(5) {
     display: none;
   }
 

@@ -67,7 +67,7 @@ function ClosedSprint({ projectKey, sprint, members }: { projectKey: string; spr
           <ul className="backlog-rows">
             {tasks.data.map((t) => (
               <li key={t.id} className="backlog-row">
-                <RowCells task={t} assignee={members.get(t.assignee_id)} linked />
+                <RowCells task={t} assignee={members.get(t.assignee_id)} linked timeZone={tz} />
               </li>
             ))}
           </ul>
