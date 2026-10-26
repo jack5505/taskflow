@@ -9,7 +9,7 @@ import { TypeIcon } from "../ui/Icon";
 import { StatusDot } from "../ui/StatusDot";
 import { splitDraggable } from "../ui/dnd";
 
-/** Ячейки строки задачи (§7.4): ключ, название, статус, исполнитель, оценка. */
+/** Ячейки строки задачи (§7.4): ключ, название, статус, последнее изменение, исполнитель, оценка. */
 export function RowCells({
   task: t,
   assignee,
@@ -51,6 +51,10 @@ export function RowCells({
           </time>
         )}
       </span>
+      {/* Последнее изменение задачи: любое поле, статус, перенос между секциями. */}
+      <time className="row-updated muted" dateTime={t.updated_at} title="Последнее изменение">
+        {formatDateTime(t.updated_at, timeZone)}
+      </time>
       <span className="row-assignee muted">
         <Avatar id={t.assignee_id} name={assignee?.display_name || assignee?.email} size="sm" decorative />
         <span className="row-assignee-name">

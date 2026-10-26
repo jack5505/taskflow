@@ -2037,7 +2037,7 @@ button.link.danger {
 
 .backlog-row {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr) 120px 180px 70px;
+  grid-template-columns: 110px minmax(0, 1fr) 140px 130px 180px 70px;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -2104,6 +2104,12 @@ button.link.danger {
 
 .row-done-at {
   font-size: var(--fs-xs);
+}
+
+.row-updated {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .date-range {
@@ -2389,7 +2395,8 @@ button.link.danger {
   }
 
   .backlog-row > :nth-child(3),
-  .backlog-row > :nth-child(4) {
+  .backlog-row > :nth-child(4),
+  .backlog-row > :nth-child(5) {
     display: none;
   }
 
