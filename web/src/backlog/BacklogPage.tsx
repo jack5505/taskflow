@@ -400,6 +400,7 @@ export function BacklogPage() {
                       assignee={t.assignee_id ? memberById.get(t.assignee_id) : undefined}
                       draggable={canReorder}
                       dropDisabled={dropDisabled(s.id)}
+                      timeZone={tz}
                     />
                   ))}
                 </ul>
@@ -413,6 +414,7 @@ export function BacklogPage() {
                   task={dragging}
                   assignee={dragging.assignee_id ? memberById.get(dragging.assignee_id) : undefined}
                   linked={false}
+                  timeZone={tz}
                 />
               </div>
             )}
