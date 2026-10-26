@@ -2104,6 +2104,8 @@ button.link.danger {
 
 .row-done-at {
   font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .row-updated {

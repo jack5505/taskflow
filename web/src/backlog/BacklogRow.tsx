@@ -21,7 +21,7 @@ export function RowCells({
   assignee?: ProjectMemberView;
   linked: boolean;
   linkProps?: Record<string, unknown>;
-  timeZone?: string;
+  timeZone: string | undefined;
 }) {
   return (
     <>
@@ -77,7 +77,7 @@ export function BacklogRow(props: {
   assignee?: ProjectMemberView;
   draggable: boolean;
   dropDisabled: boolean;
-  timeZone?: string;
+  timeZone: string | undefined;
 }) {
   const id = props.task.id!;
   const drag = useDraggable({ id, data: { task: props.task }, disabled: !props.draggable });
