@@ -2,9 +2,11 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Link } from "react-router";
 import type { ProjectMemberView, TaskListItem } from "../api/client";
 import { formatDuration } from "../lib/duration";
+import { formatDateTime } from "../lib/format";
 import { statusLabel } from "../lib/status";
 import { Avatar } from "../ui/Avatar";
 import { TypeIcon } from "../ui/Icon";
+import { StatusDot } from "../ui/StatusDot";
 import { splitDraggable } from "../ui/dnd";
 
 /** Ячейки строки задачи (§7.4): ключ, название, статус, исполнитель, оценка. */
@@ -13,11 +15,13 @@ export function RowCells({
   assignee,
   linked,
   linkProps,
+  timeZone,
 }: {
   task: TaskListItem;
   assignee?: ProjectMemberView;
   linked: boolean;
   linkProps?: Record<string, unknown>;
+  timeZone?: string;
 }) {
   return (
     <>
@@ -35,7 +39,18 @@ export function RowCells({
           t.title
         )}
       </span>
-      <span className={`muted status-${t.status}`}>{statusLabel(t.status)}</span>
+      {/* Значок статуса + подпись; для завершённой задачи — когда она попала в конечный статус. */}
+      <span className="row-status">
+        <span className="status-label muted">
+          <StatusDot status={t.status} />
+          {statusLabel(t.status)}
+        </span>
+        {t.completed_at && (
+          <time className="row-done-at muted" dateTime={t.completed_at} title="Завершена">
+            {formatDateTime(t.completed_at, timeZone)}
+          </time>
+        )}
+      </span>
       <span className="row-assignee muted">
         <Avatar id={t.assignee_id} name={assignee?.display_name || assignee?.email} size="sm" decorative />
         <span className="row-assignee-name">
@@ -58,6 +73,7 @@ export function BacklogRow(props: {
   assignee?: ProjectMemberView;
   draggable: boolean;
   dropDisabled: boolean;
+  timeZone?: string;
 }) {
   const id = props.task.id!;
   const drag = useDraggable({ id, data: { task: props.task }, disabled: !props.draggable });
@@ -75,7 +91,7 @@ export function BacklogRow(props: {
       className={cls}
       {...(dnd ? dnd.wrapper : {})}
     >
-      <RowCells task={props.task} assignee={props.assignee} linked linkProps={dnd?.link} />
+      <RowCells task={props.task} assignee={props.assignee} linked linkProps={dnd?.link} timeZone={props.timeZone} />
     </li>
   );
 }
