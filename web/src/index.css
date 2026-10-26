@@ -2114,6 +2114,17 @@ button.link.danger {
   white-space: nowrap;
 }
 
+/* На узком экране время изменения уступает место названию: иначе к ~800 px на него не остаётся места */
+@media (width < 1024px) {
+  .backlog-row {
+    grid-template-columns: 110px minmax(0, 1fr) 140px 180px 70px;
+  }
+
+  .row-updated {
+    display: none;
+  }
+}
+
 .date-range {
   display: flex;
   gap: var(--space-3);
